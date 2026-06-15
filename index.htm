@@ -1,0 +1,161 @@
+<%@ page language="abap" %>
+<html>
+<head>
+  <title>Monitoring Production</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f0fdfa;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .header {
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .header img {
+      height: 52px;
+      object-fit: contain;
+    }
+
+    .header-text h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: #0f766e;
+      line-height: 1.2;
+    }
+
+    .header-text p {
+      font-size: 0.82rem;
+      color: #5eead4;
+      margin-top: 2px;
+      letter-spacing: 0.03em;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(15, 118, 110, 0.10);
+      padding: 36px 40px;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    .card h2 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #134e4a;
+      margin-bottom: 24px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #ccfbf1;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: #0f766e;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .form-group input[type="text"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #99f6e4;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      color: #134e4a;
+      background: #f0fdfa;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-group input[type="text"]:focus {
+      border-color: #0f766e;
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+    }
+
+    .btn-search {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #0f766e, #16a34a);
+      color: #ffffff;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.97rem;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      margin-top: 8px;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+
+    .btn-search:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+
+    .btn-search:active {
+      transform: translateY(0);
+    }
+
+    .footer {
+      margin-top: 28px;
+      font-size: 0.76rem;
+      color: #99f6e4;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <img src="/sap/bc/bsp/sap/ZCNC_MONITOR_BS/logo.png" alt="Company Logo">
+    <div class="header-text">
+      <h1>Monitoring Production</h1>
+      <p>Sales Order Production Tracking</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>&#128269; Search Production Order</h2>
+    <form method="get" action="main.htm">
+      <div class="form-group">
+        <label>Sales Order</label>
+        <input type="text" name="vbeln" placeholder="e.g. 4500001234">
+      </div>
+      <div class="form-group">
+        <label>Item</label>
+        <input type="text" name="posnr" placeholder="e.g. 000010">
+      </div>
+      <input type="submit" class="btn-search" value="Search Production Data">
+    </form>
+  </div>
+
+  <div class="footer">Monitoring Production System &mdash; Production Supervisor Dashboard</div>
+
+</body>
+</html>

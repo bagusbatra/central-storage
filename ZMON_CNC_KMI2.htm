@@ -1,0 +1,145 @@
+*&---------------------------------------------------------------------*
+*& Report ZMON_CNC_KMI2
+*&---------------------------------------------------------------------*
+*&
+*&---------------------------------------------------------------------*
+REPORT zmon_cnc_kmi2.
+
+TABLES: crhd.
+
+*---------------------------------------------------------------------*
+* Selection Screen
+*---------------------------------------------------------------------*
+
+PARAMETERS: p_vbeln TYPE vbeln_va OBLIGATORY.
+PARAMETERS: p_posnr TYPE posnr_va.
+PARAMETERS: p_werks TYPE werks_d DEFAULT '2000'.
+
+SELECT-OPTIONS:
+  s_arbpl FOR crhd-arbpl.
+
+*---------------------------------------------------------------------*
+* Types
+*---------------------------------------------------------------------*
+
+TYPES: BEGIN OF ty_data,
+        vbeln    TYPE vbeln_va,
+        posnr    TYPE posnr_va,
+        aufnr    TYPE aufnr,
+        matnr    TYPE matnr,
+        maktx    TYPE maktx,
+        arbpl    TYPE crhd-arbpl,
+        dispo    TYPE marc-dispo,
+        target   TYPE afpo-psmng,
+        done     TYPE afpo-wemng,
+        progress TYPE p DECIMALS 2,
+      END OF ty_data.
+
+DATA: gt_data TYPE TABLE OF ty_data.
+
+*---------------------------------------------------------------------*
+* START
+*---------------------------------------------------------------------*
+
+START-OF-SELECTION.
+
+  PERFORM get_data.
+  PERFORM calculate_progress.
+  PERFORM display_alv.
+
+*---------------------------------------------------------------------*
+* GET DATA
+*---------------------------------------------------------------------*
+
+FORM get_data.
+
+SELECT
+  a~kdauf AS vbeln,
+  a~kdpos AS posnr,
+  a~aufnr,
+  a~matnr,
+  e~maktx,
+  d~arbpl,
+  f~dispo,
+  a~psmng AS target,
+  a~wemng AS done
+FROM afpo AS a
+
+INNER JOIN afko AS b
+  ON a~aufnr = b~aufnr
+
+INNER JOIN afvc AS c
+  ON b~aufpl = c~aufpl
+
+INNER JOIN crhd AS d
+  ON c~arbid = d~objid
+
+INNER JOIN marc AS f
+  ON a~matnr = f~matnr
+ AND f~werks = @p_werks
+
+LEFT JOIN makt AS e
+  ON a~matnr = e~matnr
+ AND e~spras = @sy-langu
+
+WHERE
+      a~kdauf = @p_vbeln
+  AND ( @p_posnr IS INITIAL OR a~kdpos = @p_posnr )
+  AND d~werks = @p_werks
+  AND d~arbpl IN @s_arbpl
+
+INTO TABLE @gt_data.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* CALCULATE PROGRESS
+*---------------------------------------------------------------------*
+
+FORM calculate_progress.
+
+FIELD-SYMBOLS: <fs> TYPE ty_data.
+
+LOOP AT gt_data ASSIGNING <fs>.
+
+  IF <fs>-target > 0.
+    <fs>-progress =
+      ( <fs>-done / <fs>-target ) * 100.
+  ELSE.
+    <fs>-progress = 0.
+  ENDIF.
+
+ENDLOOP.
+
+ENDFORM.
+
+*---------------------------------------------------------------------*
+* DISPLAY ALV
+*---------------------------------------------------------------------*
+
+FORM display_alv.
+
+DATA: lo_alv TYPE REF TO cl_salv_table,
+      lo_columns TYPE REF TO cl_salv_columns_table,
+      lo_column TYPE REF TO cl_salv_column.
+
+TRY.
+
+    cl_salv_table=>factory(
+      IMPORTING r_salv_table = lo_alv
+      CHANGING  t_table      = gt_data ).
+
+    lo_columns = lo_alv->get_columns( ).
+
+* Rename progress column
+    lo_column ?= lo_columns->get_column( 'PROGRESS' ).
+    lo_column->set_short_text( 'Prog%' ).
+    lo_column->set_medium_text( 'Progress %' ).
+    lo_column->set_long_text( 'Production Progress %' ).
+
+    lo_alv->display( ).
+
+  CATCH cx_salv_msg.
+ENDTRY.
+
+ENDFORM.
