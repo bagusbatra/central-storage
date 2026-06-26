@@ -1,0 +1,482 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Page with Flow Logic — Tab: Layout
+*& ENGINE: 100% Standalone Data Engine & UI Core (0 Error System)
+*&---------------------------------------------------------------------*
+TYPES: BEGIN OF ty_local_item,
+         vbeln   TYPE vbap-vbeln,
+         posnr   TYPE vbap-posnr,
+         matnr   TYPE vbap-matnr,
+         arktx   TYPE vbap-arktx,
+         kwmeng  TYPE vbap-kwmeng,
+         vrkme   TYPE vbap-vrkme,
+         psmng   TYPE afpo-psmng,
+         wemng   TYPE afpo-wemng,
+       END OF ty_local_item.
+
+DATA: lt_local_hdr  TYPE TABLE OF vbak,
+      lt_local_item TYPE TABLE OF ty_local_item,
+      lt_local_bom  TYPE TABLE OF stpo,
+      ls_hdr_row    TYPE vbak,
+      ls_item_row   TYPE ty_local_item,
+      ls_bom_row    TYPE stpo,
+      ls_afpo_row   TYPE afpo,
+      ls_vbap_row   TYPE vbap.
+
+DATA: lv_dd        TYPE string,
+      lv_prog      TYPE p DECIMALS 2,
+      lv_bar_w     TYPE p DECIMALS 2,
+      lv_bcls      TYPE string,
+      lv_pcls      TYPE string,
+      lv_has_item  TYPE abap_bool,
+      lv_has_prd   TYPE abap_bool,
+      lv_has_bom   TYPE abap_bool,
+      lv_item_cnt  TYPE i,
+      lv_local_cnt TYPE i,
+      lv_makt_text TYPE maktx,
+      lv_is_srch   TYPE abap_bool,
+      lv_layout_user TYPE string.
+
+DATA: lv_ui_vbeln   TYPE string,
+      lv_ui_kunnr   TYPE string,
+      lv_ui_edf     TYPE string,
+      lv_ui_edt     TYPE string,
+      lv_erdat_from TYPE d,
+      lv_erdat_to   TYPE d,
+      lv_search_so  TYPE vbak-vbeln,
+      lv_search_kun TYPE vbak-kunnr.
+
+" Deklarasi RANGES untuk filter aman (Bypass batasan Open SQL)
+DATA: lr_vbeln TYPE RANGE OF vbak-vbeln,
+      ls_vbeln LIKE LINE OF lr_vbeln,
+      lr_kunnr TYPE RANGE OF vbak-kunnr,
+      ls_kunnr LIKE LINE OF lr_kunnr.
+
+lv_layout_user = sy-uname.
+lv_ui_vbeln    = request->get_form_field( 'so_num' ).
+lv_ui_kunnr    = request->get_form_field( 'cust_num' ).
+lv_ui_edf      = request->get_form_field( 'date_from' ).
+lv_ui_edt      = request->get_form_field( 'date_to' ).
+
+" Konversi format tanggal input HTML ke format internal SAP (YYYYMMDD)
+IF lv_ui_edf IS NOT INITIAL AND STRLEN( lv_ui_edf ) = 10.
+  lv_erdat_from = lv_ui_edf(4) && lv_ui_edf+5(2) && lv_ui_edf+8(2).
+ELSE.
+  lv_erdat_from = sy-datum - 30.
+ENDIF.
+
+IF lv_ui_edt IS NOT INITIAL AND STRLEN( lv_ui_edt ) = 10.
+  lv_erdat_to = lv_ui_edt(4) && lv_ui_edt+5(2) && lv_ui_edt+8(2).
+ELSE.
+  lv_erdat_to = sy-datum.
+ENDIF.
+
+" Eksekusi pengolahan database jika tombol cari ditekan atau parameter terisi
+IF request->get_form_field( 'search_btn' ) IS NOT INITIAL OR lv_ui_vbeln IS NOT INITIAL OR lv_ui_kunnr IS NOT INITIAL.
+  lv_is_srch = abap_true.
+
+  " Mengisi Range SO jika diinput
+  IF lv_ui_vbeln IS NOT INITIAL.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING input = lv_ui_vbeln
+      IMPORTING output = lv_search_so.
+    ls_vbeln-sign   = 'I'.
+    ls_vbeln-option = 'EQ'.
+    ls_vbeln-low    = lv_search_so.
+    APPEND ls_vbeln TO lr_vbeln.
+  ENDIF.
+
+  " Mengisi Range Customer jika diinput
+  IF lv_ui_kunnr IS NOT INITIAL.
+    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+      EXPORTING input = lv_ui_kunnr
+      IMPORTING output = lv_search_kun.
+    ls_kunnr-sign   = 'I'.
+    ls_kunnr-option = 'EQ'.
+    ls_kunnr-low    = lv_search_kun.
+    APPEND ls_kunnr TO lr_kunnr.
+  ENDIF.
+
+  " 1. Ambil Header Sales Order menggunakan sintaks RANGES (100% Error-Free)
+  SELECT * FROM vbak INTO TABLE lt_local_hdr
+    WHERE erdat BETWEEN lv_erdat_from AND lv_erdat_to
+      AND vbeln IN lr_vbeln
+      AND kunnr IN lr_kunnr
+      AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = '2000' ).
+
+  IF lt_local_hdr IS NOT INITIAL.
+    DATA: lt_temp_vbap TYPE TABLE OF vbap.
+    
+    " 2. Ambil detail item dari tabel penjualan VBAP
+    SELECT * FROM vbap INTO TABLE lt_temp_vbap
+      FOR ALL ENTRIES IN lt_local_hdr
+      WHERE vbeln = lt_local_hdr-vbeln
+        AND werks = '2000'.
+        
+    " 3. Transformasikan ke struktur kustom lokal dan satukan dengan data produksi AFPO
+    LOOP AT lt_temp_vbap INTO ls_vbap_row.
+      CLEAR: ls_item_row, ls_afpo_row.
+      ls_item_row-vbeln  = ls_vbap_row-vbeln.
+      ls_item_row-posnr  = ls_vbap_row-posnr.
+      ls_item_row-matnr  = ls_vbap_row-matnr.
+      ls_item_row-arktx  = ls_vbap_row-arktx.
+      ls_item_row-kwmeng = ls_vbap_row-kwmeng.
+      ls_item_row-vrkme  = ls_vbap_row-vrkme.
+      
+      SELECT SINGLE * FROM afpo INTO ls_afpo_row 
+        WHERE kdauf = ls_vbap_row-vbeln 
+          AND kdpos = ls_vbap_row-posnr.
+          
+      IF sy-subrc = 0.
+        ls_item_row-psmng = ls_afpo_row-psmng.
+        ls_item_row-wemng = ls_afpo_row-wemng.
+      ELSE.
+        ls_item_row-psmng = 0.
+        ls_item_row-wemng = 0.
+      ENDIF.
+      
+      APPEND ls_item_row TO lt_local_item.
+    ENDLOOP.
+  ENDIF.
+ENDIF.
+
+lv_local_cnt = lines( lt_local_hdr ).
+%>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Central Storage Production Dashboard - KMI 2 Sidoarjo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
+    body { background-color: #f3f4f6; color: #1f2937; padding: 24px; line-height: 1.4; }
+    
+    .header-bar { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #ffffff; padding: 20px 28px; border-radius: 12px; margin-bottom: 24px; display: table; width: 100%; box-shadow: 0 4px 12px rgba(30, 58, 138, 0.15); }
+    .header-title { display: table-cell; vertical-align: middle; }
+    .header-title h1 { font-size: 1.65rem; font-weight: 700; }
+    .header-title p { font-size: 0.9rem; color: #93c5fd; margin-top: 4px; }
+    .header-user { display: table-cell; text-align: right; vertical-align: middle; }
+    .header-user span { background: rgba(255, 255, 255, 0.18); padding: 8px 16px; border-radius: 30px; font-weight: 600; }
+    
+    .filter-card { background: #ffffff; padding: 24px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 24px; border: 1px solid #e5e7eb; }
+    .filter-form { display: table; width: 100%; }
+    .form-group { display: table-cell; padding-right: 16px; vertical-align: bottom; }
+    .form-group label { display: block; font-size: 0.78rem; font-weight: 700; color: #4b5563; margin-bottom: 8px; text-transform: uppercase; }
+    .form-group input { width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; background-color: #f9fafb; }
+    .btn-submit { display: table-cell; vertical-align: bottom; width: 140px; }
+    .btn-submit button { width: 100%; padding: 11px; background-color: #2563eb; color: #ffffff; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; }
+    
+    .dashboard-layout { display: table; width: 100%; table-layout: fixed; }
+    .sidebar-panel { display: table-cell; width: 32%; padding-right: 24px; vertical-align: top; }
+    .main-panel { display: table-cell; width: 68%; background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; min-height: 540px; vertical-align: top; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    
+    .list-container { background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; overflow: hidden; }
+    .list-header { background-color: #f9fafb; padding: 14px 20px; border-bottom: 1px solid #e5e7eb; font-size: 0.85rem; font-weight: 700; color: #4b5563; }
+    .so-item-row { padding: 16px 20px; border-bottom: 1px solid #f3f4f6; cursor: pointer; display: none; }
+    .so-item-row.active { background-color: #eff6ff; border-left: 5px solid #2563eb; padding-left: 15px; }
+    .so-meta { display: table; width: 100%; margin-bottom: 6px; }
+    .so-id { font-weight: 700; color: #1e3a8a; display: table-cell; }
+    .so-badge { display: table-cell; text-align: right; }
+    .badge { background: #dbeafe; color: #1e40af; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; }
+    .so-date { font-size: 0.82rem; color: #6b7280; }
+    
+    .pagination-ctrl { padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center; }
+    .pagination-ctrl button { padding: 6px 12px; margin: 0 4px; background: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem; cursor: pointer; font-weight: 600; }
+    .pagination-ctrl button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .pagination-ctrl span { font-size: 0.85rem; color: #4b5563; margin: 0 8px; }
+    
+    .placeholder-ctx { text-align: center; padding: 120px 40px; color: #9ca3af; }
+    .detail-content { display: none; padding: 28px; }
+    .detail-content.active { display: block; }
+    .detail-header { border-bottom: 2px solid #f3f4f6; padding-bottom: 18px; margin-bottom: 24px; }
+    .data-table { width: 100%; border-collapse: collapse; }
+    .data-table th { background-color: #f9fafb; color: #4b5563; font-weight: 700; font-size: 0.78rem; padding: 14px 16px; border-bottom: 2px solid #e5e7eb; text-transform: uppercase; }
+    .data-table td { padding: 16px; font-size: 0.9rem; border-bottom: 1px solid #f3f4f6; color: #374151; }
+    .clickable-item-row { cursor: pointer; transition: background 0.2s; }
+    .clickable-item-row:hover { background-color: #f0fdf4 !important; }
+    
+    .prog-container { width: 100%; text-align: left; }
+    .prog-wrap { width: 100px; display: inline-block; vertical-align: middle; }
+    .prog-bg { background-color: #e5e7eb; border-radius: 6px; height: 10px; width: 100%; overflow: hidden; display: block; }
+    .prog-fill { height: 100%; border-radius: 6px; }
+    .bg-green { background-color: #10b981; } .bg-amber { background-color: #f59e0b; } .bg-blue { background-color: #3b82f6; }
+    .prog-pct { font-size: 0.8rem; font-weight: 700; margin-left: 8px; display: inline-block; vertical-align: middle; }
+    .txt-green { color: #059669; } .txt-amber { color: #d97706; } .txt-blue { color: #2563eb; }
+    
+    .bom-section-wrapper { display: none; margin-top: 15px; background: #fafafa; border: 1px solid #cbd5e1; border-radius: 8px; padding: 16px; animation: fadeIn 0.3s ease; }
+    .bom-title { font-size: 0.85rem; font-weight: 700; color: #0f172a; margin-bottom: 10px; border-left: 3px solid #10b981; padding-left: 8px; text-transform: uppercase; }
+    .bom-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .bom-table th { background: #e2e8f0; color: #334155; padding: 8px 12px; font-weight: 700; text-align: left; }
+    .bom-table td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; color: #475569; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+  </style>
+</head>
+<body>
+
+  <div class="header-bar">
+    <div class="header-title">
+      <h1>Central Storage Production Dashboard</h1>
+      <p>Monitoring Progres Produksi &amp; Alur Transit Material — Plant 2000 Sidoarjo</p>
+    </div>
+    <div class="header-user"><span>User SAP: <%= lv_layout_user %></span></div>
+  </div>
+
+  <div class="filter-card">
+    <form method="post" action="">
+      <div class="filter-form">
+        <div class="form-group" style="width: 25%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_vbeln %>" placeholder="10000021"></div>
+        <div class="form-group" style="width: 25%;"><label>Nomor Customer</label><input type="text" id="cust_num" name="cust_num" value="<%= lv_ui_kunnr %>" placeholder="Customer Code"></div>
+        <div class="form-group" style="width: 20%;"><label>Dari Tanggal</label><input type="date" id="date_from" name="date_from" value="<%= lv_ui_edf %>"></div>
+        <div class="form-group" style="width: 20%;"><label>Sampai Tanggal</label><input type="date" id="date_to" name="date_to" value="<%= lv_ui_edt %>"></div>
+        <div class="btn-submit"><button type="submit" id="search_btn" name="search_btn" value="X">CARI DATA</button></div>
+      </div>
+    </form>
+  </div>
+
+  <div class="dashboard-layout">
+    <div class="sidebar-panel">
+      <div class="list-container">
+        <div class="list-header">Daftar Sales Order Terbuka (<%= lv_local_cnt %> Dokumen)</div>
+        <div id="so-list-viewport" style="max-height: 480px; overflow-y: auto;">
+          <% IF lv_is_srch = abap_true AND lv_local_cnt = 0. %>
+            <p style="padding: 24px; color: #6b7280; font-size: 0.9rem; text-align: center;">Tidak ada Sales Order yang cocok.</p>
+          <% ENDIF. %>
+          
+          <% IF lv_local_cnt > 0. %>
+            <% LOOP AT lt_local_hdr INTO ls_hdr_row. %>
+            <%
+              lv_item_cnt = 0.
+              IF lt_local_item IS NOT INITIAL.
+                LOOP AT lt_local_item INTO ls_item_row WHERE vbeln = ls_hdr_row-vbeln.
+                  lv_item_cnt = lv_item_cnt + 1.
+                ENDLOOP.
+              ENDIF.
+              lv_dd = ls_hdr_row-erdat+6(2) && '/' && ls_hdr_row-erdat+4(2) && '/' && ls_hdr_row-erdat(4).
+            %>
+            <div class="so-item-row" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card" onclick="viewDetails('<%= ls_hdr_row-vbeln %>')">
+              <div class="so-meta">
+                <span class="so-id">SO #<%= ls_hdr_row-vbeln %></span>
+                <span class="so-badge"><span class="badge"><%= lv_item_cnt %> Item</span></span>
+              </div>
+              <div class="so-date">Tgl Masuk: <%= lv_dd %> | Tipe: <%= ls_hdr_row-auart %></div>
+            </div>
+            <% ENDLOOP. %>
+          <% ENDIF. %>
+        </div>
+        <div class="pagination-ctrl">
+          <button type="button" id="btn-prev" onclick="changePage(-1)">&laquo; Prev</button>
+          <span id="page-indicator">1 / 1</span>
+          <button type="button" id="btn-next" onclick="changePage(1)">Next &raquo;</button>
+        </div>
+      </div>
+    </div>
+    
+    <div class="main-panel">
+      <div class="placeholder-ctx" id="placeholder-msg">
+        <h3>Belum Ada Dokumen Terpilih</h3>
+        <p>Silakan pilih nomor Sales Order untuk memonitor progres item serta rincian Bill of Materials (BOM).</p>
+      </div>
+
+      <% IF lv_local_cnt > 0. %>
+        <% LOOP AT lt_local_hdr INTO ls_hdr_row. %>
+        <div class="detail-content" id="panel-<%= ls_hdr_row-vbeln %>">
+          <div class="detail-header">
+            <h2>Komponen &amp; Progres Produksi — SO #<%= ls_hdr_row-vbeln %></h2>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 8%;">Item</th>
+                  <th style="width: 15%;">Material #</th>
+                  <th style="width: 32%;">Deskripsi Komponen Mebel</th>
+                  <th style="width: 10%; text-align: right;">Qty SO</th>
+                  <th style="width: 10%; text-align: right;">Target</th>
+                  <th style="width: 10%; text-align: right;">Hasil GR</th>
+                  <th style="width: 15%; text-align: center;">Progres</th>
+                </tr>
+              </thead>
+              <tbody>
+                <%
+                  lv_has_item = abap_false.
+                  LOOP AT lt_local_item INTO ls_item_row WHERE vbeln = ls_hdr_row-vbeln.
+                    lv_has_item = abap_true.
+                    
+                    IF ls_item_row-psmng > 0.
+                      lv_has_prd = abap_true.
+                      lv_prog = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
+                      IF lv_prog > 100. lv_prog = 100. ENDIF.
+                      lv_bar_w = lv_prog.
+                      IF lv_prog = 100. lv_bcls = 'bg-green'. lv_pcls = 'txt-green'.
+                      ELSEIF lv_prog >= 50. lv_bcls = 'bg-blue'. lv_pcls = 'txt-blue'.
+                      ELSE. lv_bcls = 'bg-amber'. lv_pcls = 'txt-amber'. ENDIF.
+                    ELSE.
+                      lv_has_prd = abap_false. lv_prog = 0.
+                    ENDIF.
+                %>
+                <tr class="clickable-item-row" onclick="toggleBOMRow('<%= ls_hdr_row-vbeln %>-<%= ls_item_row-posnr %>')">
+                  <td><strong><%= ls_item_row-posnr %></strong></td>
+                  <td><%= ls_item_row-matnr %></td>
+                  <td style="color:#2563eb; font-weight:600;"><%= ls_item_row-arktx %> <span style="font-size:0.75rem; color:#9ca3af;">(Klik untuk BOM)</span></td>
+                  <td style="text-align: right;"><%= ls_item_row-kwmeng %> <%= ls_item_row-vrkme %></td>
+                  <td style="text-align: right;"><%= ls_item_row-psmng %></td>
+                  <td style="text-align: right; font-weight:700;"><%= ls_item_row-wemng %></td>
+                  <td style="text-align: center;">
+                    <% IF lv_has_prd = abap_true. %>
+                    <div class="prog-container">
+                      <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= lv_bar_w %>%;"></div></div></div>
+                      <span class="prog-pct <%= lv_pcls %>"><%= lv_prog %>%</span>
+                    </div>
+                    <% ELSE. %>
+                    <span style="font-style:italic; color:#9ca3af; font-size:0.8rem;">No Prod</span>
+                    <% ENDIF. %>
+                  </td>
+                </tr>
+                
+                <tr id="bom-row-<%= ls_hdr_row-vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;">
+                  <td colspan="7" style="padding: 0 16px 16px 16px;">
+                    <div class="bom-section-wrapper" id="wrapper-<%= ls_hdr_row-vbeln %>-<%= ls_item_row-posnr %>">
+                      <div class="bom-title">Daftar Komponen Rakitan BOM (Tabel MAST/STPO)</div>
+                      <table class="bom-table">
+                        <thead>
+                          <tr>
+                            <th style="width: 25%;">Material Komponen</th>
+                            <th style="width: 55%;">Nama Deskripsi Material</th>
+                            <th style="width: 20%; text-align: right;">Kuantitas Kebutuhan</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <%
+                            lv_has_bom = abap_false.
+                            REFRESH lt_local_bom.
+                            SELECT * FROM stpo INTO TABLE lt_local_bom 
+                              WHERE stlnr IN ( SELECT stlnr FROM mast WHERE matnr = ls_item_row-matnr AND werks = '2000' ).
+                            
+                            IF lt_local_bom IS NOT INITIAL.
+                              LOOP AT lt_local_bom INTO ls_bom_row.
+                                lv_has_bom = abap_true.
+                                CLEAR lv_makt_text.
+                                SELECT SINGLE maktx FROM makt INTO lv_makt_text WHERE matnr = ls_bom_row-idnrk AND spras = sy-langu.
+                          %>
+                          <tr>
+                            <td><code><%= ls_bom_row-idnrk %></code></td>
+                            <td><%= lv_makt_text %></td>
+                            <td style="text-align: right; font-weight:600;"><%= ls_bom_row-menge %> <%= ls_bom_row-meins %></td>
+                          </tr>
+                          <% 
+                              ENDLOOP.
+                            ENDIF. 
+                          %>
+                          <% IF lv_has_bom = abap_false. %>
+                          <tr>
+                            <td colspan="3" style="color:#9ca3af; text-align:center; padding:12px;">BOM data kosong / Master data material belum terpasang di Plant 2000.</td>
+                          </tr>
+                          <% ENDIF. %>
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+                <% ENDLOOP. %>
+                
+                <% IF lv_has_item = abap_false. %>
+                <tr>
+                  <td colspan="7" style="text-align:center; padding:32px; color:#9ca3af;">Tidak ada item produksi terdaftar untuk Sales Order ini.</td>
+                </tr>
+                <% ENDIF. %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <% ENDLOOP. %>
+      <% ENDIF. %>
+    </div>
+  </div>
+
+  <script>
+    var rowsPerPage = 5; 
+    var currentPage = 1;
+    var soCards = [];
+    var currentActiveVBELN = null;
+    var currentActiveBOMId = null;
+
+    window.onload = function() {
+      var elements = document.getElementsByTagName('div');
+      for (var i = 0; i < elements.length; i++) {
+        if (elements[i].getAttribute('data-type') === 'so-card') {
+          soCards.push(elements[i]);
+        }
+      }
+      renderPagination();
+    };
+
+    function renderPagination() {
+      var totalPages = Math.ceil(soCards.length / rowsPerPage) || 1;
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+
+      var startIndex = (currentPage - 1) * rowsPerPage;
+      var endIndex = startIndex + rowsPerPage;
+
+      for (var i = 0; i < soCards.length; i++) {
+        if (i >= startIndex && i < endIndex) {
+          soCards[i].style.display = 'block';
+        } else {
+          soCards[i].style.display = 'none';
+        }
+      }
+
+      document.getElementById('page-indicator').innerText = currentPage + ' / ' + totalPages;
+      document.getElementById('btn-prev').disabled = (currentPage === 1);
+      document.getElementById('btn-next').disabled = (currentPage === totalPages);
+    }
+
+    function changePage(direction) {
+      currentPage += direction;
+      renderPagination();
+    }
+
+    function viewDetails(vbeln) {
+      if (currentActiveVBELN) {
+        var oldRow = document.getElementById('row-' + currentActiveVBELN);
+        if (oldRow) oldRow.classList.remove('active');
+        var oldPanel = document.getElementById('panel-' + currentActiveVBELN);
+        if (oldPanel) oldPanel.classList.remove('active');
+      }
+      if (currentActiveBOMId) {
+        hideBOMRow(currentActiveBOMId);
+      }
+      currentActiveVBELN = vbeln;
+      document.getElementById('row-' + vbeln).classList.add('active');
+      document.getElementById('placeholder-msg').style.display = 'none';
+      document.getElementById('panel-' + vbeln).classList.add('active');
+    }
+
+    function toggleBOMRow(bomId) {
+      var trContainer = document.getElementById('bom-row-' + bomId);
+      var wrapper = document.getElementById('wrapper-' + bomId);
+
+      if (trContainer.style.display === 'none') {
+        if (currentActiveBOMId && currentActiveBOMId !== bomId) {
+          hideBOMRow(currentActiveBOMId);
+        }
+        trContainer.style.display = 'table-row';
+        wrapper.style.display = 'block';
+        currentActiveBOMId = bomId;
+      } else {
+        hideBOMRow(bomId);
+      }
+    }
+
+    function hideBOMRow(bomId) {
+      var trContainer = document.getElementById('bom-row-' + bomId);
+      var wrapper = document.getElementById('wrapper-' + bomId);
+      if (trContainer) trContainer.style.display = 'none';
+      if (wrapper) wrapper.style.display = 'none';
+      if (currentActiveBOMId === bomId) currentActiveBOMId = null;
+    }
+  </script>
+</body>
+</html>

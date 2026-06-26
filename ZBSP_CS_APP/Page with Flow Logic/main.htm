@@ -1,0 +1,12 @@
+*&---------------------------------------------------------------------*
+*& BSP Page with Flow Logic — Tab: Flow Logic (onInitialization)
+*& STATUS: 100% Clean. Tidak boleh ada query di sini jika Page Attributes kosong.
+*&---------------------------------------------------------------------*
+
+DATA: lv_user TYPE sy-uname.
+lv_user = sy-uname.
+
+IF lv_user IS INITIAL.
+  navigation->vhost_authentication( ).
+  RETURN.
+ENDIF.
