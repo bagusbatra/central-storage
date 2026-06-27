@@ -21,8 +21,15 @@ DATA: lt_local_hdr  TYPE TABLE OF vbak,
       ls_hdr_row    TYPE vbak,
       ls_item_row   TYPE ty_local_item,
       ls_bom_row    TYPE stpo,
+      ls_stpo_wk    TYPE stpo,
       ls_afpo_row   TYPE afpo,
-      ls_vbap_row   TYPE vbap.
+      ls_vbap_row   TYPE vbap,
+      lt_afpo_pre   TYPE TABLE OF afpo,
+      lt_mast_pre   TYPE TABLE OF mast,
+      ls_mast_pre   TYPE mast,
+      lt_stpo_pre   TYPE TABLE OF stpo,
+      lt_makt_pre   TYPE TABLE OF makt,
+      ls_makt_pre   TYPE makt.
 
 DATA: lv_dd        TYPE string,
       lv_prog      TYPE p DECIMALS 2,
@@ -114,7 +121,16 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL OR lv_ui_vbeln IS NOT 
       WHERE vbeln = lt_local_hdr-vbeln
         AND werks = '2000'.
         
-    " 3. Transformasikan ke struktur kustom lokal dan satukan dengan data produksi AFPO
+    " 3. Pre-fetch AFPO — satu query untuk semua item (bukan SELECT SINGLE per loop)
+    IF lt_temp_vbap IS NOT INITIAL.
+      SELECT * FROM afpo INTO TABLE lt_afpo_pre
+        FOR ALL ENTRIES IN lt_temp_vbap
+        WHERE kdauf = lt_temp_vbap-vbeln
+          AND kdpos = lt_temp_vbap-posnr.
+      SORT lt_afpo_pre BY kdauf kdpos.
+    ENDIF.
+
+    " 4. Transformasikan ke struktur kustom lokal dan satukan dengan READ TABLE
     LOOP AT lt_temp_vbap INTO ls_vbap_row.
       CLEAR: ls_item_row, ls_afpo_row.
       ls_item_row-vbeln  = ls_vbap_row-vbeln.
@@ -123,11 +139,11 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL OR lv_ui_vbeln IS NOT 
       ls_item_row-arktx  = ls_vbap_row-arktx.
       ls_item_row-kwmeng = ls_vbap_row-kwmeng.
       ls_item_row-vrkme  = ls_vbap_row-vrkme.
-      
-      SELECT SINGLE * FROM afpo INTO ls_afpo_row 
-        WHERE kdauf = ls_vbap_row-vbeln 
-          AND kdpos = ls_vbap_row-posnr.
-          
+
+      READ TABLE lt_afpo_pre INTO ls_afpo_row
+        WITH KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr
+        BINARY SEARCH.
+
       IF sy-subrc = 0.
         ls_item_row-psmng = ls_afpo_row-psmng.
         ls_item_row-wemng = ls_afpo_row-wemng.
@@ -135,9 +151,31 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL OR lv_ui_vbeln IS NOT 
         ls_item_row-psmng = 0.
         ls_item_row-wemng = 0.
       ENDIF.
-      
+
       APPEND ls_item_row TO lt_local_item.
     ENDLOOP.
+
+    " 5. Pre-fetch BOM data — MAST, STPO, MAKT sekaligus sebelum rendering
+    IF lt_local_item IS NOT INITIAL.
+      SELECT * FROM mast INTO TABLE lt_mast_pre
+        FOR ALL ENTRIES IN lt_local_item
+        WHERE matnr = lt_local_item-matnr
+          AND werks = '2000'.
+
+      IF lt_mast_pre IS NOT INITIAL.
+        SELECT * FROM stpo INTO TABLE lt_stpo_pre
+          FOR ALL ENTRIES IN lt_mast_pre
+          WHERE stlnr = lt_mast_pre-stlnr.
+      ENDIF.
+
+      IF lt_stpo_pre IS NOT INITIAL.
+        SELECT * FROM makt INTO TABLE lt_makt_pre
+          FOR ALL ENTRIES IN lt_stpo_pre
+          WHERE matnr = lt_stpo_pre-idnrk
+            AND spras = sy-langu.
+        SORT lt_makt_pre BY matnr.
+      ENDIF.
+    ENDIF.
   ENDIF.
 ENDIF.
 
@@ -362,14 +400,20 @@ lv_local_cnt = lines( lt_local_hdr ).
                           <%
                             lv_has_bom = abap_false.
                             REFRESH lt_local_bom.
-                            SELECT * FROM stpo INTO TABLE lt_local_bom 
-                              WHERE stlnr IN ( SELECT stlnr FROM mast WHERE matnr = ls_item_row-matnr AND werks = '2000' ).
-                            
+                            LOOP AT lt_mast_pre INTO ls_mast_pre WHERE matnr = ls_item_row-matnr.
+                              LOOP AT lt_stpo_pre INTO ls_stpo_wk WHERE stlnr = ls_mast_pre-stlnr.
+                                APPEND ls_stpo_wk TO lt_local_bom.
+                              ENDLOOP.
+                            ENDLOOP.
+
                             IF lt_local_bom IS NOT INITIAL.
                               LOOP AT lt_local_bom INTO ls_bom_row.
                                 lv_has_bom = abap_true.
                                 CLEAR lv_makt_text.
-                                SELECT SINGLE maktx FROM makt INTO lv_makt_text WHERE matnr = ls_bom_row-idnrk AND spras = sy-langu.
+                                READ TABLE lt_makt_pre INTO ls_makt_pre
+                                  WITH KEY matnr = ls_bom_row-idnrk
+                                  BINARY SEARCH.
+                                IF sy-subrc = 0. lv_makt_text = ls_makt_pre-maktx. ENDIF.
                           %>
                           <tr>
                             <td><code><%= ls_bom_row-idnrk %></code></td>

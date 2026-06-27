@@ -31,12 +31,13 @@ DATA: lv_user        TYPE string,
       ls_vbak        TYPE vbak,
       lt_vbap        TYPE TABLE OF vbap,
       ls_vbap        TYPE vbap,
+      lt_afpo        TYPE TABLE OF afpo,
       ls_afpo        TYPE afpo,
       lt_mth         TYPE TABLE OF ty_mth,
       ls_mth         TYPE ty_mth.
 
 lv_user  = sy-uname.
-lv_dfrom = sy-datum - 180.
+lv_dfrom = sy-datum - 30.
 lv_dto   = sy-datum.
 
 SELECT * FROM vbak INTO TABLE lt_vbak
@@ -53,11 +54,20 @@ IF lt_vbak IS NOT INITIAL.
 
   lv_total_item = lines( lt_vbap ).
 
+  " === LAYER 3: Pre-fetch AFPO — satu query untuk semua item (bukan SELECT SINGLE per loop) ===
+  IF lt_vbap IS NOT INITIAL.
+    SELECT * FROM afpo INTO TABLE lt_afpo
+      FOR ALL ENTRIES IN lt_vbap
+      WHERE kdauf = lt_vbap-vbeln
+        AND kdpos = lt_vbap-posnr.
+    SORT lt_afpo BY kdauf kdpos.
+  ENDIF.
+
   LOOP AT lt_vbap INTO ls_vbap.
     CLEAR ls_afpo.
-    SELECT SINGLE * FROM afpo INTO ls_afpo
-      WHERE kdauf = ls_vbap-vbeln
-        AND kdpos = ls_vbap-posnr.
+    READ TABLE lt_afpo INTO ls_afpo
+      WITH KEY kdauf = ls_vbap-vbeln kdpos = ls_vbap-posnr
+      BINARY SEARCH.
     IF sy-subrc = 0 AND ls_afpo-psmng > 0.
       lv_pct = ( ls_afpo-wemng / ls_afpo-psmng ) * 100.
       IF lv_pct >= 100.
@@ -114,6 +124,40 @@ SORT lt_vbak BY erdat DESCENDING.
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
     body { background: #f3f4f6; color: #1f2937; }
+
+    /* ===== LOADING OVERLAY ===== */
+    #ld-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #f3f4f6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity 0.4s ease;
+    }
+    #ld-overlay.ld-hide { opacity: 0; pointer-events: none; }
+    .ld-logo {
+      width: 60px; height: 60px;
+      background: linear-gradient(135deg, #1e3a8a, #2563eb);
+      border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 20px;
+      box-shadow: 0 8px 24px rgba(37,99,235,0.3);
+      font-size: 1.8rem; line-height: 60px; text-align: center;
+    }
+    .ld-spinner {
+      width: 44px; height: 44px;
+      border: 4px solid #dbeafe;
+      border-top-color: #2563eb;
+      border-radius: 50%;
+      animation: ld-spin 0.75s linear infinite;
+      margin-bottom: 20px;
+    }
+    @keyframes ld-spin { to { transform: rotate(360deg); } }
+    .ld-text { font-size: 1rem; font-weight: 600; color: #1e3a8a; margin-bottom: 6px; }
+    .ld-sub  { font-size: 0.8rem; color: #9ca3af; }
 
     .header-bar { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #ffffff; padding: 20px 28px; display: table; width: 100%; box-shadow: 0 4px 12px rgba(30,58,138,0.15); }
     .header-title { display: table-cell; vertical-align: middle; }
@@ -172,6 +216,14 @@ SORT lt_vbak BY erdat DESCENDING.
 </head>
 <body>
 
+  <!-- LOADING OVERLAY -->
+  <div id="ld-overlay">
+    <div class="ld-logo">&#9782;</div>
+    <div class="ld-spinner"></div>
+    <p class="ld-text">Memuat Data Dashboard</p>
+    <p class="ld-sub">Plant 2000 &#8212; Mengambil data produksi 30 hari terakhir...</p>
+  </div>
+
   <div class="header-bar">
     <div class="header-title">
       <h1>Central Storage Production Dashboard</h1>
@@ -195,7 +247,7 @@ SORT lt_vbak BY erdat DESCENDING.
             <span class="stat-icon"><span class="ic-blue">&#128196;</span></span>
           </div>
           <div class="stat-value"><%= lv_total_so %></div>
-          <div class="stat-sub">180 hari terakhir &#8212; Plant 2000</div>
+          <div class="stat-sub">30 hari terakhir &#8212; Plant 2000</div>
         </div>
       </div>
       <div class="stat-cell">
@@ -234,7 +286,7 @@ SORT lt_vbak BY erdat DESCENDING.
       <div class="chart-cell chart-bar-cell">
         <div class="chart-card">
           <div class="chart-title">Sales Order per Bulan</div>
-          <div class="chart-sub">Jumlah SO yang masuk dalam 6 bulan terakhir (Plant 2000)</div>
+          <div class="chart-sub">Jumlah SO yang masuk dalam 30 hari terakhir (Plant 2000)</div>
           <canvas id="barChart" height="220"></canvas>
         </div>
       </div>
@@ -287,7 +339,7 @@ SORT lt_vbak BY erdat DESCENDING.
           <% ENDLOOP. %>
           <% IF lv_total_so = 0. %>
           <tr>
-            <td colspan="6" class="no-data">Tidak ada data Sales Order dalam 180 hari terakhir di Plant 2000.</td>
+            <td colspan="6" class="no-data">Tidak ada data Sales Order dalam 30 hari terakhir di Plant 2000.</td>
           </tr>
           <% ENDIF. %>
         </tbody>
@@ -315,7 +367,7 @@ SORT lt_vbak BY erdat DESCENDING.
       ctx.closePath();
     }
 
-    (function drawBarChart() {
+    function drawBarChart() {
       var canvas = document.getElementById('barChart');
       if (!canvas || !canvas.getContext) { return; }
       canvas.width = canvas.parentElement ? canvas.parentElement.clientWidth - 48 : 500;
@@ -389,9 +441,9 @@ SORT lt_vbak BY erdat DESCENDING.
         var label = monthLabels[i].substring(2);
         ctx.fillText(label, bx + barW / 2, padT + chartH + 18);
       }
-    })();
+    }
 
-    (function drawDonutChart() {
+    function drawDonutChart() {
       var canvas = document.getElementById('donutChart');
       if (!canvas || !canvas.getContext) { return; }
       var ctx  = canvas.getContext('2d');
@@ -450,7 +502,17 @@ SORT lt_vbak BY erdat DESCENDING.
       ctx.fillStyle = '#9ca3af';
       ctx.font = '11px Segoe UI, Arial, sans-serif';
       ctx.fillText('selesai', cx, cy + 20);
-    })();
+    }
+
+    window.onload = function() {
+      drawBarChart();
+      drawDonutChart();
+      var ov = document.getElementById('ld-overlay');
+      if (ov) {
+        ov.classList.add('ld-hide');
+        setTimeout(function() { ov.style.display = 'none'; }, 450);
+      }
+    };
   </script>
 </body>
 </html>
