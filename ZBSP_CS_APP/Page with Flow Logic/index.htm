@@ -5,8 +5,9 @@
 *& ENGINE: Standalone Data Engine — Plant 2000 Central Storage KMI 2
 *&---------------------------------------------------------------------*
 TYPES: BEGIN OF ty_mth,
-         month TYPE string,
-         cnt   TYPE i,
+         month   TYPE string,
+         label   TYPE string,
+         cnt     TYPE i,
        END OF ty_mth.
 
 DATA: lv_user        TYPE string,
@@ -27,6 +28,8 @@ DATA: lv_user        TYPE string,
       lv_recent_dd   TYPE string,
       lv_recent_cnt  TYPE i,
       lv_cnt_str     TYPE string,
+      lv_weekday     TYPE i,
+      lv_week_mon    TYPE d,
       lt_vbak        TYPE TABLE OF vbak,
       ls_vbak        TYPE vbak,
       lt_vbap        TYPE TABLE OF vbap,
@@ -84,8 +87,13 @@ IF lt_vbak IS NOT INITIAL.
     lv_rate = ( lv_done / lv_total_item ) * 100.
   ENDIF.
 
+  " === Agregasi per minggu — group by Senin awal minggu ===
   LOOP AT lt_vbak INTO ls_vbak.
-    CONCATENATE ls_vbak-erdat(4) '-' ls_vbak-erdat+4(2) INTO lv_mm.
+    " 01.01.2024 adalah Senin — hitung offset hari dalam minggu tanpa FM
+    lv_weekday  = ( ls_vbak-erdat - '20240101' ) MOD 7.
+    lv_week_mon = ls_vbak-erdat - lv_weekday.
+    " Sort key: YYYYMMDD agar urutan kronologis saat SORT
+    CONCATENATE lv_week_mon(4) lv_week_mon+4(2) lv_week_mon+6(2) INTO lv_mm.
     READ TABLE lt_mth INTO ls_mth WITH KEY month = lv_mm.
     IF sy-subrc = 0.
       lv_idx = sy-tabix.
@@ -93,6 +101,7 @@ IF lt_vbak IS NOT INITIAL.
       MODIFY lt_mth FROM ls_mth INDEX lv_idx.
     ELSE.
       ls_mth-month = lv_mm.
+      CONCATENATE lv_week_mon+6(2) '/' lv_week_mon+4(2) INTO ls_mth-label.
       ls_mth-cnt   = 1.
       APPEND ls_mth TO lt_mth.
     ENDIF.
@@ -105,7 +114,7 @@ lv_jmonths = '['.
 lv_jcounts = '['.
 lv_sep     = ''.
 LOOP AT lt_mth INTO ls_mth.
-  CONCATENATE lv_jmonths lv_sep '"' ls_mth-month '"' INTO lv_jmonths.
+  CONCATENATE lv_jmonths lv_sep '"' ls_mth-label '"' INTO lv_jmonths.
   lv_cnt_str = ls_mth-cnt.
   CONCATENATE lv_jcounts lv_sep lv_cnt_str INTO lv_jcounts.
   lv_sep = ','.
@@ -285,8 +294,8 @@ SORT lt_vbak BY erdat DESCENDING.
     <div class="chart-grid">
       <div class="chart-cell chart-bar-cell">
         <div class="chart-card">
-          <div class="chart-title">Sales Order per Bulan</div>
-          <div class="chart-sub">Jumlah SO yang masuk dalam 30 hari terakhir (Plant 2000)</div>
+          <div class="chart-title">Sales Order per Minggu</div>
+          <div class="chart-sub">Jumlah SO masuk per minggu dalam 30 hari terakhir (Plant 2000) &#8212; label = Senin awal minggu</div>
           <canvas id="barChart" height="220"></canvas>
         </div>
       </div>
@@ -373,7 +382,7 @@ SORT lt_vbak BY erdat DESCENDING.
       canvas.width = canvas.parentElement ? canvas.parentElement.clientWidth - 48 : 500;
       var ctx = canvas.getContext('2d');
       var W = canvas.width, H = canvas.height;
-      var padL = 46, padR = 20, padT = 28, padB = 42;
+      var padL = 46, padR = 20, padT = 36, padB = 50;
       var chartW = W - padL - padR;
       var chartH = H - padT - padB;
       var n = monthLabels.length;
@@ -412,34 +421,60 @@ SORT lt_vbak BY erdat DESCENDING.
       }
 
       var slotW = chartW / n;
-      var barW  = Math.min(slotW * 0.55, 52);
+      var barW  = Math.min(slotW * 0.62, 56);
 
       for (var i = 0; i < n; i++) {
         var bh  = (monthCounts[i] / tickMax) * chartH;
         var bx  = padL + i * slotW + (slotW - barW) / 2;
         var by  = padT + chartH - bh;
+        var cx  = bx + barW / 2;
 
+        // --- Bar ---
         if (bh > 0) {
           var grad = ctx.createLinearGradient(bx, by, bx, by + bh);
           grad.addColorStop(0, '#60a5fa');
           grad.addColorStop(1, '#1d4ed8');
           ctx.fillStyle = grad;
-          drawRoundRect(ctx, bx, by, barW, bh, 4);
+          drawRoundRect(ctx, bx, by, barW, bh, 5);
           ctx.fill();
         }
 
+        // --- Badge label di atas bar ---
         if (monthCounts[i] > 0) {
+          ctx.font = 'bold 12px Segoe UI, Arial, sans-serif';
+          var badgeTxt = String(monthCounts[i]);
+          var badgeW   = ctx.measureText(badgeTxt).width + 14;
+          var badgeH   = 20;
+          var badgeX   = cx - badgeW / 2;
+          var badgeY   = by - badgeH - 6;
+          // Pill background
+          drawRoundRect(ctx, badgeX, badgeY, badgeW, badgeH, 10);
           ctx.fillStyle = '#1e3a8a';
-          ctx.font = 'bold 11px Segoe UI, Arial, sans-serif';
+          ctx.fill();
+          // Number
+          ctx.fillStyle = '#ffffff';
           ctx.textAlign = 'center';
-          ctx.fillText(monthCounts[i], bx + barW / 2, by - 6);
+          ctx.fillText(badgeTxt, cx, badgeY + badgeH - 5);
         }
 
+        // --- Garis vertikal tipis di bawah bar (zero-height bar marker) ---
+        if (bh === 0) {
+          ctx.beginPath();
+          ctx.strokeStyle = '#e5e7eb';
+          ctx.lineWidth = 1;
+          ctx.moveTo(cx, padT + chartH - 4);
+          ctx.lineTo(cx, padT + chartH);
+          ctx.stroke();
+        }
+
+        // --- X-axis label: "Minggu\nDD/MM" dua baris ---
         ctx.fillStyle = '#6b7280';
-        ctx.font = '10px Segoe UI, Arial, sans-serif';
+        ctx.font = '9px Segoe UI, Arial, sans-serif';
         ctx.textAlign = 'center';
-        var label = monthLabels[i].substring(2);
-        ctx.fillText(label, bx + barW / 2, padT + chartH + 18);
+        ctx.fillText('Minggu', cx, padT + chartH + 14);
+        ctx.font = 'bold 10px Segoe UI, Arial, sans-serif';
+        ctx.fillStyle = '#374151';
+        ctx.fillText(monthLabels[i], cx, padT + chartH + 26);
       }
     }
 
