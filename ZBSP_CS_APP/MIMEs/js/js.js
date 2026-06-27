@@ -1,11 +1,18 @@
 /* =======================================================================
    Dashboard Central Storage KMI 2 — Plant 2000
-   index.htm chart & interaction functions
+   Shared JS for index.htm & monitoring.htm
    Data variables (weekLabels, doneCounts, dll.) dideklarasikan sebagai
    inline <script> di index.htm karena mengandung nilai <%= %> dari ABAP.
    ======================================================================= */
 
 var barState = [];
+
+/* ===== Monitoring shared state ===== */
+var rowsPerPage = 5;
+var currentPage = 1;
+var soCards = [];
+var currentActiveVBELN = null;
+var currentActiveBOMId = null;
 
 /* ------------------------------------------------------------------
    Helper: rounded rectangle (semua sudut)
@@ -237,15 +244,95 @@ function drawDonutChart() {
   ctx.fillText('selesai', cx, cy + 20);
 }
 
+/* ===== Monitoring functions ===== */
+function renderPagination() {
+  var totalPages = Math.ceil(soCards.length / rowsPerPage) || 1;
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+
+  var startIndex = (currentPage - 1) * rowsPerPage;
+  var endIndex = startIndex + rowsPerPage;
+
+  for (var i = 0; i < soCards.length; i++) {
+    if (i >= startIndex && i < endIndex) {
+      soCards[i].style.display = 'block';
+    } else {
+      soCards[i].style.display = 'none';
+    }
+  }
+
+  document.getElementById('page-indicator').innerText = currentPage + ' / ' + totalPages;
+  document.getElementById('btn-prev').disabled = (currentPage === 1);
+  document.getElementById('btn-next').disabled = (currentPage === totalPages);
+}
+
+function changePage(direction) {
+  currentPage += direction;
+  renderPagination();
+}
+
+function viewDetails(vbeln) {
+  if (currentActiveVBELN) {
+    var oldRow = document.getElementById('row-' + currentActiveVBELN);
+    if (oldRow) oldRow.classList.remove('active');
+    var oldPanel = document.getElementById('panel-' + currentActiveVBELN);
+    if (oldPanel) oldPanel.classList.remove('active');
+  }
+  if (currentActiveBOMId) {
+    hideBOMRow(currentActiveBOMId);
+  }
+  currentActiveVBELN = vbeln;
+  document.getElementById('row-' + vbeln).classList.add('active');
+  document.getElementById('placeholder-msg').style.display = 'none';
+  document.getElementById('panel-' + vbeln).classList.add('active');
+}
+
+function toggleBOMRow(bomId) {
+  var trContainer = document.getElementById('bom-row-' + bomId);
+  var wrapper = document.getElementById('wrapper-' + bomId);
+
+  if (trContainer.style.display === 'none') {
+    if (currentActiveBOMId && currentActiveBOMId !== bomId) {
+      hideBOMRow(currentActiveBOMId);
+    }
+    trContainer.style.display = 'table-row';
+    wrapper.style.display = 'block';
+    currentActiveBOMId = bomId;
+  } else {
+    hideBOMRow(bomId);
+  }
+}
+
+function hideBOMRow(bomId) {
+  var trContainer = document.getElementById('bom-row-' + bomId);
+  var wrapper = document.getElementById('wrapper-' + bomId);
+  if (trContainer) trContainer.style.display = 'none';
+  if (wrapper) wrapper.style.display = 'none';
+  if (currentActiveBOMId === bomId) currentActiveBOMId = null;
+}
+
 /* ------------------------------------------------------------------
-   Entry point: gambar chart setelah DOM siap, lalu hapus kelas skeleton
+   Entry point: gambar chart / init monitoring setelah DOM siap
    ------------------------------------------------------------------ */
 window.onload = function() {
+  /* Monitoring page — collect SO cards */
+  var soViewport = document.getElementById('so-list-viewport');
+  if (soViewport) {
+    var elements = document.getElementsByTagName('div');
+    for (var i = 0; i < elements.length; i++) {
+      if (elements[i].getAttribute('data-type') === 'so-card') {
+        soCards.push(elements[i]);
+      }
+    }
+    renderPagination();
+    return;
+  }
+
+  /* Index page — draw charts */
   drawBarChart();
   drawDonutChart();
   document.body.classList.remove('page-loading');
 
-  /* Klik pada bar chart → drill-down ke monitoring.htm */
   var bc = document.getElementById('barChart');
   if (bc) {
     bc.style.cursor = 'pointer';
