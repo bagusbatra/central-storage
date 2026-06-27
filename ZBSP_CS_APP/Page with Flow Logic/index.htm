@@ -3,6 +3,12 @@
 *&---------------------------------------------------------------------*
 *& Dashboard Statistik & Grafik — Central Storage KMI 2 — Plant 2000
 *&---------------------------------------------------------------------*
+TYPES: BEGIN OF ty_cust_info,
+         kunnr  TYPE kna1-kunnr,
+         name1  TYPE kna1-name1,
+         so_cnt TYPE i,
+       END OF ty_cust_info.
+
 TYPES: BEGIN OF ty_mth,
          month  TYPE string,
          label  TYPE string,
@@ -66,6 +72,12 @@ DATA: lv_user         TYPE string,
       lv_leadtime     TYPE p DECIMALS 1,
       lv_backlog_cnt  TYPE i,
       lv_backlog_cls  TYPE string,
+      lt_cust_list    TYPE TABLE OF ty_cust_info,
+      ls_cust_list    TYPE ty_cust_info,
+      lt_cust_kunnr   TYPE TABLE OF kna1-kunnr,
+      ls_cust_kunnr   TYPE kna1-kunnr,
+      lv_cust_search  TYPE string,
+      lv_cust_disp    TYPE i,
       lt_vbak         TYPE TABLE OF vbak,
       ls_vbak         TYPE vbak,
       lt_vbap         TYPE TABLE OF vbap,
@@ -289,6 +301,38 @@ IF lt_vbak IS NOT INITIAL.
   SORT lt_mth BY month ASCENDING.
 ENDIF.
 
+" === Customer list by SO ===
+lv_cust_search = request->get_form_field( 'cust_search' ).
+REFRESH lt_cust_list.
+
+IF lt_vbak IS NOT INITIAL.
+  LOOP AT lt_vbak INTO ls_vbak.
+    CLEAR ls_cust_list.
+    ls_cust_list-kunnr  = ls_vbak-kunnr.
+    ls_cust_list-name1  = ''.
+    ls_cust_list-so_cnt = 1.
+    COLLECT ls_cust_list INTO lt_cust_list.
+  ENDLOOP.
+
+  DATA: lt_kna1 TYPE TABLE OF kna1,
+        ls_kna1 TYPE kna1.
+  SELECT kunnr name1 FROM kna1
+    INTO CORRESPONDING FIELDS OF TABLE lt_kna1
+    FOR ALL ENTRIES IN lt_cust_list
+    WHERE kunnr = lt_cust_list-kunnr.
+  SORT lt_kna1 BY kunnr.
+
+  LOOP AT lt_cust_list INTO ls_cust_list.
+    READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = ls_cust_list-kunnr BINARY SEARCH.
+    IF sy-subrc = 0.
+      ls_cust_list-name1 = ls_kna1-name1.
+    ENDIF.
+    MODIFY lt_cust_list FROM ls_cust_list.
+  ENDLOOP.
+
+  SORT lt_cust_list BY so_cnt DESCENDING.
+ENDIF.
+
 " === KPI Thresholds ===
 IF lv_total_item = 0.
   lv_rate_class = 'kpi-gray'.
@@ -498,6 +542,33 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
       </div>
     </div>
 
+    <!-- CUSTOMER BOXES -->
+    <div style="margin-bottom:24px;">
+      <form method="post" action="index.htm" style="margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="text" name="cust_search" value="<%= lv_cust_search %>" placeholder="Cari nama customer..." style="flex:1;padding:10px 14px;border:1px solid #d1d5db;border-radius:8px;font-size:0.85rem;background:#f9fafb;">
+          <button type="submit" style="padding:10px 20px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;">Cari</button>
+        </div>
+      </form>
+      <div style="display:flex;flex-wrap:wrap;gap:12px;">
+        <%
+          CLEAR lv_cust_disp.
+          LOOP AT lt_cust_list INTO ls_cust_list.
+            IF lv_cust_search IS INITIAL AND lv_cust_disp >= 3. EXIT. ENDIF.
+            lv_cust_disp = lv_cust_disp + 1.
+        %>
+        <a href="monitoring.htm?cust_num=<%= ls_cust_list-kunnr %>&amp;search_btn=X" class="cust-box">
+          <div class="cust-box-code"><%= ls_cust_list-kunnr %></div>
+          <div class="cust-box-name"><%= ls_cust_list-name1 %></div>
+          <div class="cust-box-so"><strong><%= ls_cust_list-so_cnt %></strong> Sales Order</div>
+        </a>
+        <% ENDLOOP. %>
+      </div>
+      <% IF lt_cust_list IS INITIAL. %>
+      <p style="text-align:center;padding:24px;color:#9ca3af;font-size:0.9rem;">Tidak ada data customer dalam periode ini.</p>
+      <% ENDIF. %>
+    </div>
+
     <!-- RECENT 10 SO -->
     <div class="recent-card">
       <div class="recent-header">
@@ -535,6 +606,8 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
         </tbody>
       </table>
     </div>
+
+
 
   </div>
 

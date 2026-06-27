@@ -329,16 +329,28 @@ function viewDetails(vbeln) {
   if (currentActiveVBELN) {
     var oldRow = document.getElementById('row-' + currentActiveVBELN);
     if (oldRow) oldRow.classList.remove('active');
-    var oldPanel = document.getElementById('panel-' + currentActiveVBELN);
-    if (oldPanel) oldPanel.classList.remove('active');
-  }
-  if (currentActiveBOMId) {
-    hideBOMRow(currentActiveBOMId);
   }
   currentActiveVBELN = vbeln;
+  currentActiveBOMId = null;
+
   document.getElementById('row-' + vbeln).classList.add('active');
-  document.getElementById('placeholder-msg').style.display = 'none';
-  document.getElementById('panel-' + vbeln).classList.add('active');
+
+  var container = document.getElementById('main-panel-container');
+  container.innerHTML = '<div class="placeholder-ctx"><p style="color:#6b7280;">Memuat data SO #' + vbeln + '&hellip;</p></div>';
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', 'monitoring_detail.htm?vbeln=' + encodeURIComponent(vbeln), true);
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      container.innerHTML = xhr.responseText;
+    } else {
+      container.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Gagal memuat data (HTTP ' + xhr.status + ').</p></div>';
+    }
+  };
+  xhr.onerror = function() {
+    container.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Error koneksi ke server.</p></div>';
+  };
+  xhr.send();
 }
 
 function toggleBOMRow(bomId) {

@@ -204,4 +204,10 @@ canvas { display: block; max-width: 100%; }
 .bom-table th { background: #e2e8f0; color: #334155; padding: 8px 12px; font-weight: 700; text-align: left; }
 .bom-table td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; color: #475569; }
 .info-icon { display: inline-block; font-size: 0.8rem; color: #3b82f6; cursor: help; margin-left: 6px; }
+.cust-box { text-decoration:none; display:block; flex:1; min-width:200px; background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:18px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.05); transition:box-shadow 0.2s, border-color 0.2s; cursor:pointer; }
+.cust-box:hover { box-shadow:0 4px 12px rgba(0,0,0,0.1); border-color:#93c5fd; }
+.cust-box-code { font-size:0.78rem; font-weight:700; text-transform:uppercase; color:#6b7280; margin-bottom:6px; }
+.cust-box-name { font-size:1rem; font-weight:700; color:#1e3a8a; margin-bottom:8px; }
+.cust-box-so { font-size:0.85rem; color:#4b5563; }
+.cust-box-so strong { color:#2563eb; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
