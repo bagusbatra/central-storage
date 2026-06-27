@@ -1,55 +1,106 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Page with Flow Logic — Dashboard Statistik & Grafik
-*& ENGINE: Standalone Data Engine — Plant 2000 Central Storage KMI 2
+*& Dashboard Statistik & Grafik — Central Storage KMI 2 — Plant 2000
 *&---------------------------------------------------------------------*
 TYPES: BEGIN OF ty_mth,
-         month   TYPE string,
-         label   TYPE string,
-         cnt     TYPE i,
+         month  TYPE string,
+         label  TYPE string,
+         wdate  TYPE string,
+         done   TYPE i,
+         inprog TYPE i,
+         noprod TYPE i,
        END OF ty_mth.
 
-DATA: lv_user        TYPE string,
-      lv_total_so    TYPE i,
-      lv_total_item  TYPE i,
-      lv_done        TYPE i,
-      lv_inprog      TYPE i,
-      lv_noprod      TYPE i,
-      lv_rate        TYPE p DECIMALS 1,
-      lv_dfrom       TYPE d,
-      lv_dto         TYPE d,
-      lv_pct         TYPE p DECIMALS 2,
-      lv_mm          TYPE string,
-      lv_idx         TYPE i,
-      lv_jmonths     TYPE string,
-      lv_jcounts     TYPE string,
-      lv_sep         TYPE string,
-      lv_recent_dd   TYPE string,
-      lv_recent_cnt  TYPE i,
-      lv_cnt_str     TYPE string,
-      lv_weekday     TYPE i,
-      lv_week_mon    TYPE d,
-      lt_vbak        TYPE TABLE OF vbak,
-      ls_vbak        TYPE vbak,
-      lt_vbap        TYPE TABLE OF vbap,
-      ls_vbap        TYPE vbap,
-      lt_afpo        TYPE TABLE OF afpo,
-      ls_afpo        TYPE afpo,
-      lt_mth         TYPE TABLE OF ty_mth,
-      ls_mth         TYPE ty_mth.
+TYPES: BEGIN OF ty_so_prog,
+         vbeln  TYPE vbak-vbeln,
+         kunnr  TYPE vbak-kunnr,
+         auart  TYPE vbak-auart,
+         erdat  TYPE string,
+         total  TYPE i,
+         done   TYPE i,
+         inprog TYPE i,
+         noprod TYPE i,
+         rate   TYPE p LENGTH 8 DECIMALS 1,
+       END OF ty_so_prog.
 
-lv_user  = sy-uname.
-lv_dfrom = sy-datum - 30.
+DATA: lv_user         TYPE string,
+      lv_period_param TYPE string,
+      lv_period_days  TYPE i,
+      lv_period_lbl   TYPE string,
+      lv_cls7         TYPE string,
+      lv_cls30        TYPE string,
+      lv_cls90        TYPE string,
+      lv_total_so     TYPE i,
+      lv_total_item   TYPE i,
+      lv_done         TYPE i,
+      lv_inprog       TYPE i,
+      lv_noprod       TYPE i,
+      lv_rate         TYPE p DECIMALS 1,
+      lv_rate_class   TYPE string,
+      lv_rate_alert   TYPE string,
+      lv_dfrom        TYPE d,
+      lv_dto          TYPE d,
+      lv_pct          TYPE p DECIMALS 2,
+      lv_mm           TYPE string,
+      lv_idx          TYPE i,
+      lv_is_done      TYPE i,
+      lv_weekday      TYPE i,
+      lv_week_mon     TYPE d,
+      lv_cnt_str      TYPE string,
+      lv_sep          TYPE string,
+      lv_jmonths      TYPE string,
+      lv_jwdates      TYPE string,
+      lv_jdone        TYPE string,
+      lv_jinprog      TYPE string,
+      lv_jnoprod      TYPE string,
+      lv_recent_dd    TYPE string,
+      lv_recent_cnt   TYPE i,
+      lv_sp_cnt       TYPE i,
+      lv_sp_w_i       TYPE i,
+      lv_sp_cls       TYPE string,
+      lt_vbak         TYPE TABLE OF vbak,
+      ls_vbak         TYPE vbak,
+      lt_vbap         TYPE TABLE OF vbap,
+      ls_vbap         TYPE vbap,
+      lt_afpo         TYPE TABLE OF afpo,
+      ls_afpo         TYPE afpo,
+      lt_mth          TYPE TABLE OF ty_mth,
+      ls_mth          TYPE ty_mth,
+      lt_so_prog      TYPE TABLE OF ty_so_prog,
+      ls_so_prog      TYPE ty_so_prog,
+      ls_sp_row       TYPE ty_so_prog.
+
+lv_user = sy-uname.
+
+" === Period filter ===
+lv_period_param = request->get_form_field( 'period' ).
+IF lv_period_param = '7'.
+  lv_period_days = 7.
+  lv_cls7        = 'active'.
+  lv_period_lbl  = '7 Hari Terakhir'.
+ELSEIF lv_period_param = '90'.
+  lv_period_days = 90.
+  lv_cls90       = 'active'.
+  lv_period_lbl  = '90 Hari Terakhir'.
+ELSE.
+  lv_period_days = 30.
+  lv_cls30       = 'active'.
+  lv_period_lbl  = '30 Hari Terakhir'.
+ENDIF.
+lv_dfrom = sy-datum - lv_period_days.
 lv_dto   = sy-datum.
 
+" === Layer 1: Sales Order Headers ===
 SELECT * FROM vbak INTO TABLE lt_vbak
   WHERE erdat BETWEEN lv_dfrom AND lv_dto
     AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = '2000' ).
 
 lv_total_so = lines( lt_vbak ).
+SORT lt_vbak BY vbeln.
 
 IF lt_vbak IS NOT INITIAL.
+  " === Layer 2: SO Items ===
   SELECT * FROM vbap INTO TABLE lt_vbap
     FOR ALL ENTRIES IN lt_vbak
     WHERE vbeln = lt_vbak-vbeln
@@ -57,7 +108,7 @@ IF lt_vbak IS NOT INITIAL.
 
   lv_total_item = lines( lt_vbap ).
 
-  " === LAYER 3: Pre-fetch AFPO — satu query untuk semua item (bukan SELECT SINGLE per loop) ===
+  " === Layer 3: Production Orders ===
   IF lt_vbap IS NOT INITIAL.
     SELECT * FROM afpo INTO TABLE lt_afpo
       FOR ALL ENTRIES IN lt_vbap
@@ -66,61 +117,149 @@ IF lt_vbak IS NOT INITIAL.
     SORT lt_afpo BY kdauf kdpos.
   ENDIF.
 
+  " === Classify items + accumulate per-SO progress ===
   LOOP AT lt_vbap INTO ls_vbap.
     CLEAR ls_afpo.
     READ TABLE lt_afpo INTO ls_afpo
       WITH KEY kdauf = ls_vbap-vbeln kdpos = ls_vbap-posnr
       BINARY SEARCH.
+
+    lv_is_done = 0.
     IF sy-subrc = 0 AND ls_afpo-psmng > 0.
       lv_pct = ( ls_afpo-wemng / ls_afpo-psmng ) * 100.
       IF lv_pct >= 100.
-        lv_done = lv_done + 1.
+        lv_done    = lv_done + 1.
+        lv_is_done = 1.
       ELSE.
-        lv_inprog = lv_inprog + 1.
+        lv_inprog  = lv_inprog + 1.
+        lv_is_done = 2.
       ENDIF.
     ELSE.
-      lv_noprod = lv_noprod + 1.
+      lv_noprod  = lv_noprod + 1.
+      lv_is_done = 3.
+    ENDIF.
+
+    READ TABLE lt_so_prog INTO ls_so_prog WITH KEY vbeln = ls_vbap-vbeln.
+    IF sy-subrc = 0.
+      lv_idx = sy-tabix.
+      ls_so_prog-total = ls_so_prog-total + 1.
+      IF lv_is_done = 1.
+        ls_so_prog-done   = ls_so_prog-done + 1.
+      ELSEIF lv_is_done = 2.
+        ls_so_prog-inprog = ls_so_prog-inprog + 1.
+      ELSE.
+        ls_so_prog-noprod = ls_so_prog-noprod + 1.
+      ENDIF.
+      MODIFY lt_so_prog FROM ls_so_prog INDEX lv_idx.
+    ELSE.
+      CLEAR ls_so_prog.
+      ls_so_prog-vbeln = ls_vbap-vbeln.
+      READ TABLE lt_vbak INTO ls_vbak
+        WITH KEY vbeln = ls_vbap-vbeln
+        BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_so_prog-kunnr = ls_vbak-kunnr.
+        ls_so_prog-auart = ls_vbak-auart.
+        CONCATENATE ls_vbak-erdat+6(2) '/' ls_vbak-erdat+4(2) '/'
+                    ls_vbak-erdat(4) INTO ls_so_prog-erdat.
+      ENDIF.
+      ls_so_prog-total = 1.
+      IF lv_is_done = 1.
+        ls_so_prog-done = 1.
+      ELSEIF lv_is_done = 2.
+        ls_so_prog-inprog = 1.
+      ELSE.
+        ls_so_prog-noprod = 1.
+      ENDIF.
+      APPEND ls_so_prog TO lt_so_prog.
     ENDIF.
   ENDLOOP.
 
+  " === Overall completion rate ===
   IF lv_total_item > 0.
-    lv_rate = ( lv_done / lv_total_item ) * 100.
+    lv_pct  = lv_done.
+    lv_rate = ( lv_pct / lv_total_item ) * 100.
   ENDIF.
 
-  " === Agregasi per minggu — group by Senin awal minggu ===
+  " === Compute per-SO rates ===
+  LOOP AT lt_so_prog INTO ls_so_prog.
+    lv_idx = sy-tabix.
+    IF ls_so_prog-total > 0.
+      lv_pct = ls_so_prog-done.
+      ls_so_prog-rate = ( lv_pct / ls_so_prog-total ) * 100.
+    ENDIF.
+    MODIFY lt_so_prog FROM ls_so_prog INDEX lv_idx.
+  ENDLOOP.
+
+  " === Weekly aggregation grouped by SO erdat ===
+  SORT lt_so_prog BY vbeln.
   LOOP AT lt_vbak INTO ls_vbak.
-    " 01.01.2024 adalah Senin — hitung offset hari dalam minggu tanpa FM
     lv_weekday  = ( ls_vbak-erdat - '20240101' ) MOD 7.
     lv_week_mon = ls_vbak-erdat - lv_weekday.
-    " Sort key: YYYYMMDD agar urutan kronologis saat SORT
     CONCATENATE lv_week_mon(4) lv_week_mon+4(2) lv_week_mon+6(2) INTO lv_mm.
+
+    CLEAR ls_so_prog.
+    READ TABLE lt_so_prog INTO ls_so_prog
+      WITH KEY vbeln = ls_vbak-vbeln
+      BINARY SEARCH.
+
     READ TABLE lt_mth INTO ls_mth WITH KEY month = lv_mm.
     IF sy-subrc = 0.
       lv_idx = sy-tabix.
-      ls_mth-cnt = ls_mth-cnt + 1.
+      ls_mth-done   = ls_mth-done   + ls_so_prog-done.
+      ls_mth-inprog = ls_mth-inprog + ls_so_prog-inprog.
+      ls_mth-noprod = ls_mth-noprod + ls_so_prog-noprod.
       MODIFY lt_mth FROM ls_mth INDEX lv_idx.
     ELSE.
-      ls_mth-month = lv_mm.
+      CLEAR ls_mth.
+      ls_mth-month  = lv_mm.
       CONCATENATE lv_week_mon+6(2) '/' lv_week_mon+4(2) INTO ls_mth-label.
-      ls_mth-cnt   = 1.
+      ls_mth-wdate  = lv_mm.
+      ls_mth-done   = ls_so_prog-done.
+      ls_mth-inprog = ls_so_prog-inprog.
+      ls_mth-noprod = ls_so_prog-noprod.
       APPEND ls_mth TO lt_mth.
     ENDIF.
   ENDLOOP.
   SORT lt_mth BY month ASCENDING.
 ENDIF.
 
-" Build JSON for chart
+" === KPI Thresholds ===
+IF lv_total_item = 0.
+  lv_rate_class = 'kpi-gray'.
+ELSEIF lv_rate >= 80.
+  lv_rate_class = 'kpi-green'.
+ELSEIF lv_rate >= 50.
+  lv_rate_class = 'kpi-amber'.
+  lv_rate_alert = 'Perhatian: tingkat penyelesaian di bawah target 80%'.
+ELSE.
+  lv_rate_class = 'kpi-red'.
+  lv_rate_alert = 'KRITIS: penyelesaian sangat rendah, perlu tindakan segera!'.
+ENDIF.
+
+" === Build JSON arrays ===
 lv_jmonths = '['.
-lv_jcounts = '['.
+lv_jwdates = '['.
+lv_jdone   = '['.
+lv_jinprog = '['.
+lv_jnoprod = '['.
 lv_sep     = ''.
 LOOP AT lt_mth INTO ls_mth.
   CONCATENATE lv_jmonths lv_sep '"' ls_mth-label '"' INTO lv_jmonths.
-  lv_cnt_str = ls_mth-cnt.
-  CONCATENATE lv_jcounts lv_sep lv_cnt_str INTO lv_jcounts.
+  CONCATENATE lv_jwdates lv_sep '"' ls_mth-wdate '"' INTO lv_jwdates.
+  lv_cnt_str = ls_mth-done.
+  CONCATENATE lv_jdone lv_sep lv_cnt_str INTO lv_jdone.
+  lv_cnt_str = ls_mth-inprog.
+  CONCATENATE lv_jinprog lv_sep lv_cnt_str INTO lv_jinprog.
+  lv_cnt_str = ls_mth-noprod.
+  CONCATENATE lv_jnoprod lv_sep lv_cnt_str INTO lv_jnoprod.
   lv_sep = ','.
 ENDLOOP.
 CONCATENATE lv_jmonths ']' INTO lv_jmonths.
-CONCATENATE lv_jcounts ']' INTO lv_jcounts.
+CONCATENATE lv_jwdates ']' INTO lv_jwdates.
+CONCATENATE lv_jdone   ']' INTO lv_jdone.
+CONCATENATE lv_jinprog ']' INTO lv_jinprog.
+CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
 
 SORT lt_vbak BY erdat DESCENDING.
 %>
@@ -136,82 +275,90 @@ SORT lt_vbak BY erdat DESCENDING.
 
     /* ===== LOADING OVERLAY ===== */
     #ld-overlay {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
       background: #f3f4f6;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-      transition: opacity 0.4s ease;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      z-index: 9999; transition: opacity 0.4s ease;
     }
     #ld-overlay.ld-hide { opacity: 0; pointer-events: none; }
     .ld-logo {
       width: 60px; height: 60px;
       background: linear-gradient(135deg, #1e3a8a, #2563eb);
-      border-radius: 16px;
-      display: flex; align-items: center; justify-content: center;
-      margin-bottom: 20px;
-      box-shadow: 0 8px 24px rgba(37,99,235,0.3);
+      border-radius: 16px; display: flex; align-items: center; justify-content: center;
+      margin-bottom: 20px; box-shadow: 0 8px 24px rgba(37,99,235,0.3);
       font-size: 1.8rem; line-height: 60px; text-align: center;
     }
     .ld-spinner {
-      width: 44px; height: 44px;
-      border: 4px solid #dbeafe;
-      border-top-color: #2563eb;
-      border-radius: 50%;
-      animation: ld-spin 0.75s linear infinite;
-      margin-bottom: 20px;
+      width: 44px; height: 44px; border: 4px solid #dbeafe;
+      border-top-color: #2563eb; border-radius: 50%;
+      animation: ld-spin 0.75s linear infinite; margin-bottom: 20px;
     }
     @keyframes ld-spin { to { transform: rotate(360deg); } }
     .ld-text { font-size: 1rem; font-weight: 600; color: #1e3a8a; margin-bottom: 6px; }
     .ld-sub  { font-size: 0.8rem; color: #9ca3af; }
 
-    .header-bar { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #ffffff; padding: 20px 28px; display: table; width: 100%; box-shadow: 0 4px 12px rgba(30,58,138,0.15); }
+    /* ===== HEADER & NAV ===== */
+    .header-bar { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #fff; padding: 20px 28px; display: table; width: 100%; box-shadow: 0 4px 12px rgba(30,58,138,0.15); }
     .header-title { display: table-cell; vertical-align: middle; }
     .header-title h1 { font-size: 1.5rem; font-weight: 700; }
     .header-title p { font-size: 0.88rem; color: #93c5fd; margin-top: 4px; }
     .header-user { display: table-cell; text-align: right; vertical-align: middle; }
     .header-user span { background: rgba(255,255,255,0.18); padding: 8px 16px; border-radius: 30px; font-weight: 600; font-size: 0.88rem; }
-
-    .navbar { background: #ffffff; border-bottom: 2px solid #e5e7eb; padding: 0 28px; display: flex; align-items: stretch; }
+    .navbar { background: #fff; border-bottom: 2px solid #e5e7eb; padding: 0 28px; display: flex; align-items: stretch; }
     .nav-btn { padding: 14px 26px; font-size: 0.9rem; font-weight: 600; color: #6b7280; text-decoration: none; border-bottom: 3px solid transparent; display: inline-flex; align-items: center; gap: 8px; margin-bottom: -2px; }
     .nav-btn:hover { color: #2563eb; border-bottom-color: #93c5fd; background: #f0f7ff; }
     .nav-btn.active { color: #2563eb; border-bottom-color: #2563eb; background: #eff6ff; }
     .nav-icon { font-size: 1rem; }
 
+    /* ===== CONTENT ===== */
     .content { padding: 28px; }
 
+    /* ===== PERIOD FILTER ===== */
+    .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+    .filter-label { font-size: 0.85rem; font-weight: 700; color: #4b5563; }
+    .filter-btn { background: #f3f4f6; border: 1px solid #e5e7eb; color: #374151; padding: 7px 20px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .filter-btn:hover { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
+    .filter-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+
+    /* ===== STAT CARDS ===== */
     .stat-grid { display: table; width: 100%; margin-bottom: 24px; border-spacing: 0; }
     .stat-cell { display: table-cell; padding-right: 20px; vertical-align: top; width: 25%; }
     .stat-cell:last-child { padding-right: 0; }
-    .stat-card { background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 22px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; }
+    .stat-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 22px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; }
+    .stat-card.kpi-green { border-left: 4px solid #10b981; }
+    .stat-card.kpi-amber { border-left: 4px solid #f59e0b; }
+    .stat-card.kpi-red   { border-left: 4px solid #ef4444; }
     .stat-header { display: table; width: 100%; margin-bottom: 14px; }
     .stat-label { display: table-cell; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: #6b7280; vertical-align: middle; }
     .stat-icon { display: table-cell; text-align: right; vertical-align: middle; }
     .stat-icon span { display: inline-block; width: 40px; height: 40px; border-radius: 10px; text-align: center; line-height: 40px; font-size: 1.2rem; }
-    .ic-blue { background: #dbeafe; }
-    .ic-green { background: #d1fae5; }
-    .ic-amber { background: #fef3c7; }
-    .ic-gray { background: #f3f4f6; }
+    .ic-blue { background: #dbeafe; } .ic-green { background: #d1fae5; }
+    .ic-amber { background: #fef3c7; } .ic-gray  { background: #f3f4f6; }
     .stat-value { font-size: 2.1rem; font-weight: 800; color: #1e3a8a; line-height: 1; }
+    .stat-card.kpi-green .stat-value { color: #059669; }
+    .stat-card.kpi-amber .stat-value { color: #d97706; }
+    .stat-card.kpi-red   .stat-value { color: #dc2626; }
     .stat-sub { font-size: 0.8rem; color: #9ca3af; margin-top: 8px; }
+    .kpi-alert { font-size: 0.75rem; margin-top: 10px; padding: 6px 10px; border-radius: 6px; font-weight: 600; line-height: 1.4; }
+    .stat-card.kpi-amber .kpi-alert { background: #fef3c7; color: #92400e; }
+    .stat-card.kpi-red   .kpi-alert { background: #fee2e2; color: #991b1b; }
 
+    /* ===== CHARTS ===== */
     .chart-grid { display: table; width: 100%; margin-bottom: 24px; }
     .chart-cell { display: table-cell; vertical-align: top; }
     .chart-bar-cell { width: 62%; padding-right: 20px; }
     .chart-donut-cell { width: 38%; }
-    .chart-card { background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .chart-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
     .chart-title { font-size: 0.92rem; font-weight: 700; color: #1f2937; }
     .chart-sub { font-size: 0.78rem; color: #9ca3af; margin-top: 3px; margin-bottom: 18px; }
     canvas { display: block; max-width: 100%; }
-
+    .chart-hint { font-size: 0.73rem; color: #9ca3af; margin-top: 10px; text-align: center; }
     .legend-row { display: flex; gap: 16px; margin-top: 16px; justify-content: center; flex-wrap: wrap; }
     .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: #4b5563; }
     .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 
-    .recent-card { background: #ffffff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; }
+    /* ===== TABLES ===== */
+    .recent-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; margin-bottom: 24px; }
     .recent-header { background: #f9fafb; padding: 15px 24px; border-bottom: 1px solid #e5e7eb; }
     .recent-header h3 { font-size: 0.9rem; font-weight: 700; color: #374151; }
     .recent-table { width: 100%; border-collapse: collapse; }
@@ -221,6 +368,8 @@ SORT lt_vbak BY erdat DESCENDING.
     .recent-table tr:hover td { background: #f9fafb; }
     .badge-type { background: #eff6ff; color: #1d4ed8; padding: 3px 10px; border-radius: 20px; font-size: 0.73rem; font-weight: 700; }
     .no-data { text-align: center; padding: 40px; color: #9ca3af; font-size: 0.9rem; }
+    .prog-bar { flex: 1; height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden; min-width: 80px; }
+    .prog-bar-inner { height: 100%; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -230,7 +379,7 @@ SORT lt_vbak BY erdat DESCENDING.
     <div class="ld-logo">&#9782;</div>
     <div class="ld-spinner"></div>
     <p class="ld-text">Memuat Data Dashboard</p>
-    <p class="ld-sub">Plant 2000 &#8212; Mengambil data produksi 30 hari terakhir...</p>
+    <p class="ld-sub">Plant 2000 &#8212; Mengambil data produksi <%= lv_period_lbl %>...</p>
   </div>
 
   <div class="header-bar">
@@ -248,6 +397,18 @@ SORT lt_vbak BY erdat DESCENDING.
 
   <div class="content">
 
+    <!-- PERIOD FILTER -->
+    <form method="post" action="index.htm">
+      <div class="filter-bar">
+        <span class="filter-label">Periode:</span>
+        <button type="submit" name="period" value="7"  class="filter-btn <%= lv_cls7 %>">7 Hari</button>
+        <button type="submit" name="period" value="30" class="filter-btn <%= lv_cls30 %>">30 Hari</button>
+        <button type="submit" name="period" value="90" class="filter-btn <%= lv_cls90 %>">90 Hari</button>
+        <span style="font-size:0.8rem;color:#6b7280;margin-left:4px;">&#8212; Menampilkan data <strong><%= lv_period_lbl %></strong></span>
+      </div>
+    </form>
+
+    <!-- STAT CARDS -->
     <div class="stat-grid">
       <div class="stat-cell">
         <div class="stat-card">
@@ -256,7 +417,7 @@ SORT lt_vbak BY erdat DESCENDING.
             <span class="stat-icon"><span class="ic-blue">&#128196;</span></span>
           </div>
           <div class="stat-value"><%= lv_total_so %></div>
-          <div class="stat-sub">30 hari terakhir &#8212; Plant 2000</div>
+          <div class="stat-sub"><%= lv_period_lbl %> &#8212; Plant 2000</div>
         </div>
       </div>
       <div class="stat-cell">
@@ -280,23 +441,33 @@ SORT lt_vbak BY erdat DESCENDING.
         </div>
       </div>
       <div class="stat-cell">
-        <div class="stat-card">
+        <div class="stat-card <%= lv_rate_class %>">
           <div class="stat-header">
             <span class="stat-label">Tingkat Penyelesaian</span>
             <span class="stat-icon"><span class="ic-gray">&#9203;</span></span>
           </div>
           <div class="stat-value"><%= lv_rate %>%</div>
           <div class="stat-sub"><%= lv_noprod %> item belum ada produksi</div>
+          <% IF lv_rate_alert <> ''. %>
+          <div class="kpi-alert">&#9888; <%= lv_rate_alert %></div>
+          <% ENDIF. %>
         </div>
       </div>
     </div>
 
+    <!-- CHARTS -->
     <div class="chart-grid">
       <div class="chart-cell chart-bar-cell">
         <div class="chart-card">
-          <div class="chart-title">Sales Order per Minggu</div>
-          <div class="chart-sub">Jumlah SO masuk per minggu dalam 30 hari terakhir (Plant 2000) &#8212; label = Senin awal minggu</div>
-          <canvas id="barChart" height="220"></canvas>
+          <div class="chart-title">Item Produksi per Minggu</div>
+          <div class="chart-sub">Distribusi status item per minggu &#8212; <%= lv_period_lbl %> (Plant 2000, label = Senin awal minggu)</div>
+          <canvas id="barChart" height="240"></canvas>
+          <div class="legend-row" style="margin-top:12px;">
+            <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span>Selesai</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span>Dalam Proses</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#d1d5db;"></span>Belum Produksi</div>
+          </div>
+          <div class="chart-hint">&#128161; Klik bar untuk melihat detail SO di minggu tersebut di halaman Monitoring</div>
         </div>
       </div>
       <div class="chart-cell chart-donut-cell">
@@ -313,6 +484,64 @@ SORT lt_vbak BY erdat DESCENDING.
       </div>
     </div>
 
+    <!-- 5 SLOWEST SO TABLE -->
+    <div class="recent-card">
+      <div class="recent-header">
+        <h3>5 Sales Order dengan Progres Paling Lambat</h3>
+      </div>
+      <table class="recent-table">
+        <thead>
+          <tr>
+            <th style="width:18%;">Nomor SO</th>
+            <th style="width:18%;">Kode Customer</th>
+            <th style="width:10%;">Tipe</th>
+            <th style="width:14%;">Tanggal</th>
+            <th style="width:10%; text-align:center;">Items</th>
+            <th style="width:30%;">Progres Penyelesaian</th>
+          </tr>
+        </thead>
+        <tbody>
+          <%
+            SORT lt_so_prog BY rate ASCENDING.
+            CLEAR lv_sp_cnt.
+            LOOP AT lt_so_prog INTO ls_sp_row.
+              lv_sp_cnt = lv_sp_cnt + 1.
+              IF lv_sp_cnt > 5. EXIT. ENDIF.
+              lv_sp_w_i = ls_sp_row-rate.
+              IF ls_sp_row-rate >= 80.
+                lv_sp_cls = '#10b981'.
+              ELSEIF ls_sp_row-rate >= 50.
+                lv_sp_cls = '#f59e0b'.
+              ELSE.
+                lv_sp_cls = '#ef4444'.
+              ENDIF.
+          %>
+          <tr>
+            <td><strong style="color:#1e3a8a;">SO #<%= ls_sp_row-vbeln %></strong></td>
+            <td><%= ls_sp_row-kunnr %></td>
+            <td><span class="badge-type"><%= ls_sp_row-auart %></span></td>
+            <td><%= ls_sp_row-erdat %></td>
+            <td style="text-align:center;font-weight:600;"><%= ls_sp_row-done %>/<%= ls_sp_row-total %></td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <div class="prog-bar">
+                  <div class="prog-bar-inner" style="width:<%= lv_sp_w_i %>%;background:<%= lv_sp_cls %>;"></div>
+                </div>
+                <span style="font-size:0.8rem;font-weight:700;color:<%= lv_sp_cls %>;white-space:nowrap;"><%= ls_sp_row-rate %>%</span>
+              </div>
+            </td>
+          </tr>
+          <% ENDLOOP. %>
+          <% IF lv_total_item = 0. %>
+          <tr>
+            <td colspan="6" class="no-data">Tidak ada data SO dalam periode ini di Plant 2000.</td>
+          </tr>
+          <% ENDIF. %>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- RECENT 10 SO TABLE -->
     <div class="recent-card">
       <div class="recent-header">
         <h3>10 Sales Order Terbaru</h3>
@@ -348,7 +577,7 @@ SORT lt_vbak BY erdat DESCENDING.
           <% ENDLOOP. %>
           <% IF lv_total_so = 0. %>
           <tr>
-            <td colspan="6" class="no-data">Tidak ada data Sales Order dalam 30 hari terakhir di Plant 2000.</td>
+            <td colspan="6" class="no-data">Tidak ada data Sales Order dalam periode ini di Plant 2000.</td>
           </tr>
           <% ENDIF. %>
         </tbody>
@@ -358,34 +587,65 @@ SORT lt_vbak BY erdat DESCENDING.
   </div>
 
   <script>
-    var monthLabels = <%= lv_jmonths %>;
-    var monthCounts = <%= lv_jcounts %>;
-    var doneCount   = <%= lv_done %>;
-    var progCount   = <%= lv_inprog %>;
-    var noprodCount = <%= lv_noprod %>;
+    var weekLabels   = <%= lv_jmonths %>;
+    var weekDates    = <%= lv_jwdates %>;
+    var doneCounts   = <%= lv_jdone %>;
+    var inprogCounts = <%= lv_jinprog %>;
+    var noprodCounts = <%= lv_jnoprod %>;
+    var doneCount    = <%= lv_done %>;
+    var progCount    = <%= lv_inprog %>;
+    var noprodCount  = <%= lv_noprod %>;
+    var barState     = [];
 
     function drawRoundRect(ctx, x, y, w, h, r) {
       if (w < 2 * r) r = w / 2;
       if (h < 2 * r) r = h / 2;
       ctx.beginPath();
       ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y, x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x, y + h, r);
-      ctx.arcTo(x, y + h, x, y, r);
-      ctx.arcTo(x, y, x + w, y, r);
+      ctx.arcTo(x + w, y,     x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x,     y + h, r);
+      ctx.arcTo(x,     y + h, x,     y,     r);
+      ctx.arcTo(x,     y,     x + r, y,     r);
       ctx.closePath();
+    }
+
+    function drawRoundTop(ctx, x, y, w, h, r) {
+      if (h <= 0) return;
+      if (w < 2 * r) r = w / 2;
+      if (h < r) r = h;
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y,     x + w, y + h, r);
+      ctx.lineTo(x + w, y + h);
+      ctx.lineTo(x,     y + h);
+      ctx.arcTo(x,      y,     x + r, y,     r);
+      ctx.closePath();
+    }
+
+    function drillDown(weekIdx) {
+      var wdate = weekDates[weekIdx];
+      if (!wdate) return;
+      var y  = parseInt(wdate.substr(0, 4), 10);
+      var mo = parseInt(wdate.substr(4, 2), 10) - 1;
+      var dy = parseInt(wdate.substr(6, 2), 10);
+      var dtFrom = new Date(y, mo, dy);
+      var dtTo   = new Date(dtFrom.getTime() + 6 * 24 * 60 * 60 * 1000);
+      function p2(v) { return v < 10 ? '0' + v : '' + v; }
+      var fromStr = dtFrom.getFullYear() + '-' + p2(dtFrom.getMonth() + 1) + '-' + p2(dtFrom.getDate());
+      var toStr   = dtTo.getFullYear()   + '-' + p2(dtTo.getMonth()   + 1) + '-' + p2(dtTo.getDate());
+      window.location.href = 'monitoring.htm?date_from=' + fromStr + '&date_to=' + toStr + '&search_btn=X';
     }
 
     function drawBarChart() {
       var canvas = document.getElementById('barChart');
-      if (!canvas || !canvas.getContext) { return; }
+      if (!canvas || !canvas.getContext) return;
       canvas.width = canvas.parentElement ? canvas.parentElement.clientWidth - 48 : 500;
-      var ctx = canvas.getContext('2d');
+      var ctx    = canvas.getContext('2d');
       var W = canvas.width, H = canvas.height;
       var padL = 46, padR = 20, padT = 36, padB = 50;
       var chartW = W - padL - padR;
       var chartH = H - padT - padB;
-      var n = monthLabels.length;
+      var n = weekLabels.length;
 
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, W, H);
@@ -398,15 +658,19 @@ SORT lt_vbak BY erdat DESCENDING.
         return;
       }
 
-      var max = 0;
-      for (var i = 0; i < n; i++) { if (monthCounts[i] > max) max = monthCounts[i]; }
+      var totals = [], max = 0;
+      for (var i = 0; i < n; i++) {
+        totals[i] = doneCounts[i] + inprogCounts[i] + noprodCounts[i];
+        if (totals[i] > max) max = totals[i];
+      }
       if (max === 0) max = 1;
+
       var tickStep = Math.ceil(max / 5);
       var tickMax  = tickStep * 5;
-      var ticks    = 5;
+      if (tickMax === 0) tickMax = 5;
 
-      for (var t = 0; t <= ticks; t++) {
-        var yv = tickMax * t / ticks;
+      for (var t = 0; t <= 5; t++) {
+        var yv = tickMax * t / 5;
         var yp = padT + chartH - (yv / tickMax) * chartH;
         ctx.beginPath();
         ctx.strokeStyle = t === 0 ? '#d1d5db' : '#f0f0f0';
@@ -422,43 +686,67 @@ SORT lt_vbak BY erdat DESCENDING.
 
       var slotW = chartW / n;
       var barW  = Math.min(slotW * 0.62, 56);
+      barState  = [];
 
       for (var i = 0; i < n; i++) {
-        var bh  = (monthCounts[i] / tickMax) * chartH;
-        var bx  = padL + i * slotW + (slotW - barW) / 2;
-        var by  = padT + chartH - bh;
-        var cx  = bx + barW / 2;
+        var total  = totals[i];
+        var bx     = padL + i * slotW + (slotW - barW) / 2;
+        var baseY  = padT + chartH;
+        var cx     = bx + barW / 2;
 
-        // --- Bar ---
-        if (bh > 0) {
-          var grad = ctx.createLinearGradient(bx, by, bx, by + bh);
-          grad.addColorStop(0, '#60a5fa');
-          grad.addColorStop(1, '#1d4ed8');
-          ctx.fillStyle = grad;
-          drawRoundRect(ctx, bx, by, barW, bh, 5);
+        barState.push({ x: bx, w: barW, idx: i });
+
+        var np_h = noprodCounts[i] > 0 ? (noprodCounts[i] / tickMax) * chartH : 0;
+        var ip_h = inprogCounts[i] > 0 ? (inprogCounts[i] / tickMax) * chartH : 0;
+        var dn_h = doneCounts[i]   > 0 ? (doneCounts[i]   / tickMax) * chartH : 0;
+
+        var topSeg = 0;
+        if (doneCounts[i]   > 0) topSeg = 1;
+        else if (inprogCounts[i] > 0) topSeg = 2;
+        else if (noprodCounts[i] > 0) topSeg = 3;
+
+        var curY = baseY;
+
+        if (np_h > 0) {
+          curY -= np_h;
+          if (topSeg === 3) { drawRoundTop(ctx, bx, curY, barW, np_h, 5); }
+          else { ctx.beginPath(); ctx.rect(bx, curY, barW, np_h); }
+          ctx.fillStyle = '#d1d5db';
           ctx.fill();
         }
 
-        // --- Badge label di atas bar ---
-        if (monthCounts[i] > 0) {
+        if (ip_h > 0) {
+          curY -= ip_h;
+          if (topSeg === 2) { drawRoundTop(ctx, bx, curY, barW, ip_h, 5); }
+          else { ctx.beginPath(); ctx.rect(bx, curY, barW, ip_h); }
+          ctx.fillStyle = '#3b82f6';
+          ctx.fill();
+        }
+
+        if (dn_h > 0) {
+          curY -= dn_h;
+          drawRoundTop(ctx, bx, curY, barW, dn_h, 5);
+          ctx.fillStyle = '#10b981';
+          ctx.fill();
+        }
+
+        if (total > 0) {
+          var topY = padT + chartH - (total / tickMax) * chartH;
           ctx.font = 'bold 12px Segoe UI, Arial, sans-serif';
-          var badgeTxt = String(monthCounts[i]);
+          var badgeTxt = String(total);
           var badgeW   = ctx.measureText(badgeTxt).width + 14;
           var badgeH   = 20;
           var badgeX   = cx - badgeW / 2;
-          var badgeY   = by - badgeH - 6;
-          // Pill background
+          var badgeY   = topY - badgeH - 6;
           drawRoundRect(ctx, badgeX, badgeY, badgeW, badgeH, 10);
           ctx.fillStyle = '#1e3a8a';
           ctx.fill();
-          // Number
           ctx.fillStyle = '#ffffff';
           ctx.textAlign = 'center';
           ctx.fillText(badgeTxt, cx, badgeY + badgeH - 5);
         }
 
-        // --- Garis vertikal tipis di bawah bar (zero-height bar marker) ---
-        if (bh === 0) {
+        if (total === 0) {
           ctx.beginPath();
           ctx.strokeStyle = '#e5e7eb';
           ctx.lineWidth = 1;
@@ -467,23 +755,22 @@ SORT lt_vbak BY erdat DESCENDING.
           ctx.stroke();
         }
 
-        // --- X-axis label: "Minggu\nDD/MM" dua baris ---
         ctx.fillStyle = '#6b7280';
         ctx.font = '9px Segoe UI, Arial, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText('Minggu', cx, padT + chartH + 14);
         ctx.font = 'bold 10px Segoe UI, Arial, sans-serif';
         ctx.fillStyle = '#374151';
-        ctx.fillText(monthLabels[i], cx, padT + chartH + 26);
+        ctx.fillText(weekLabels[i], cx, padT + chartH + 26);
       }
     }
 
     function drawDonutChart() {
       var canvas = document.getElementById('donutChart');
-      if (!canvas || !canvas.getContext) { return; }
-      var ctx  = canvas.getContext('2d');
-      var W    = canvas.width, H = canvas.height;
-      var cx   = W / 2, cy = H / 2;
+      if (!canvas || !canvas.getContext) return;
+      var ctx   = canvas.getContext('2d');
+      var W = canvas.width, H = canvas.height;
+      var cx = W / 2, cy = H / 2;
       var R    = Math.min(W, H) / 2 - 12;
       var hole = R * 0.56;
       var total = doneCount + progCount + noprodCount;
@@ -513,7 +800,7 @@ SORT lt_vbak BY erdat DESCENDING.
       ];
       var angle = -Math.PI / 2;
       for (var i = 0; i < segments.length; i++) {
-        if (segments[i].val === 0) { continue; }
+        if (segments[i].val === 0) continue;
         var sweep = (segments[i].val / total) * Math.PI * 2;
         ctx.beginPath();
         ctx.moveTo(cx, cy);
@@ -542,6 +829,23 @@ SORT lt_vbak BY erdat DESCENDING.
     window.onload = function() {
       drawBarChart();
       drawDonutChart();
+
+      var bc = document.getElementById('barChart');
+      if (bc) {
+        bc.style.cursor = 'pointer';
+        bc.addEventListener('click', function(e) {
+          var rect  = bc.getBoundingClientRect();
+          var scale = bc.width / rect.width;
+          var mx    = (e.clientX - rect.left) * scale;
+          for (var i = 0; i < barState.length; i++) {
+            if (mx >= barState[i].x && mx <= barState[i].x + barState[i].w) {
+              drillDown(barState[i].idx);
+              return;
+            }
+          }
+        });
+      }
+
       var ov = document.getElementById('ld-overlay');
       if (ov) {
         ov.classList.add('ld-hide');
