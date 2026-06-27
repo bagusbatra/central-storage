@@ -6,6 +6,7 @@
    ======================================================================= */
 
 var barState = [];
+var hoveredBar = -1;
 
 /* ===== Monitoring shared state ===== */
 var rowsPerPage = 5;
@@ -123,7 +124,7 @@ function drawBarChart() {
     var bx     = padL + i * slotW + (slotW - barW) / 2;
     var baseY  = padT + chartH;
     var cx     = bx + barW / 2;
-    barState.push({ x: bx, w: barW, idx: i });
+    barState.push({ x: bx, w: barW, idx: i, cx: cx, total: total, done: doneCounts[i], inprog: inprogCounts[i], noprod: noprodCounts[i], label: weekLabels[i] });
 
     /* Tinggi masing-masing segment */
     var np_h = noprodCounts[i] > 0 ? (noprodCounts[i] / tickMax) * chartH : 0;
@@ -185,6 +186,51 @@ function drawBarChart() {
     ctx.font = 'bold 10px Segoe UI, Arial, sans-serif';
     ctx.fillStyle = '#374151';
     ctx.fillText(weekLabels[i], cx, padT + chartH + 26);
+  }
+
+  /* Tooltip on hover */
+  if (hoveredBar >= 0 && hoveredBar < n) {
+    var d = barState[hoveredBar];
+    var lines = [
+      'Minggu ' + d.label,
+      'Selesai: ' + d.done,
+      'Proses:   ' + d.inprog,
+      'Belum:     ' + d.noprod,
+      'Total:     ' + d.total
+    ];
+    ctx.font = '12px Segoe UI, Arial, sans-serif';
+    var tw = 0;
+    for (var li = 0; li < lines.length; li++) {
+      var lw = ctx.measureText(lines[li]).width;
+      if (lw > tw) tw = lw;
+    }
+    var th = lines.length * 20 + 12;
+    tw += 24;
+    var tx = d.cx + d.w / 2 + 8;
+    var ty = padT + chartH - (d.total / tickMax) * chartH - th - 4;
+    if (ty < padT) ty = padT + 4;
+    if (tx + tw > W - padR) tx = d.cx - d.w / 2 - tw - 8;
+
+    /* Background */
+    drawRoundRect(ctx, tx, ty, tw, th, 6);
+    ctx.fillStyle = '#1f2937'; ctx.fill();
+
+    /* Arrow pointing down to bar */
+    ctx.beginPath();
+    ctx.moveTo(tx + tw / 2 - 6, ty + th);
+    ctx.lineTo(tx + tw / 2, ty + th + 7);
+    ctx.lineTo(tx + tw / 2 + 6, ty + th);
+    ctx.fillStyle = '#1f2937'; ctx.fill();
+
+    /* Text lines */
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'left';
+    for (var li = 0; li < lines.length; li++) {
+      var isFirst = (li === 0);
+      ctx.font = isFirst ? 'bold 12px Segoe UI, Arial, sans-serif' : '12px Segoe UI, Arial, sans-serif';
+      ctx.fillStyle = isFirst ? '#93c5fd' : '#ffffff';
+      ctx.fillText(lines[li], tx + 12, ty + 20 + li * 20);
+    }
   }
 }
 
@@ -335,7 +381,32 @@ window.onload = function() {
 
   var bc = document.getElementById('barChart');
   if (bc) {
-    bc.style.cursor = 'pointer';
+    bc.addEventListener('mousemove', function(e) {
+      var rect  = bc.getBoundingClientRect();
+      var scale = bc.width / rect.width;
+      var mx    = (e.clientX - rect.left) * scale;
+      var found = -1;
+      for (var i = 0; i < barState.length; i++) {
+        if (mx >= barState[i].x && mx <= barState[i].x + barState[i].w) {
+          found = i;
+          break;
+        }
+      }
+      if (found !== hoveredBar) {
+        hoveredBar = found;
+        bc.style.cursor = found >= 0 ? 'pointer' : 'default';
+        drawBarChart();
+      }
+    });
+
+    bc.addEventListener('mouseout', function() {
+      if (hoveredBar >= 0) {
+        hoveredBar = -1;
+        bc.style.cursor = 'default';
+        drawBarChart();
+      }
+    });
+
     bc.addEventListener('click', function(e) {
       var rect  = bc.getBoundingClientRect();
       var scale = bc.width / rect.width;

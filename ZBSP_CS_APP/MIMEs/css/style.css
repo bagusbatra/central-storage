@@ -114,6 +114,7 @@ body.page-loading canvas { display: none; }
 }
 .stat-card.kpi-amber .kpi-alert { background: #fef3c7; color: #92400e; }
 .stat-card.kpi-red   .kpi-alert { background: #fee2e2; color: #991b1b; }
+.stat-grid-2 { display: table; width: 100%; margin-bottom: 24px; border-spacing: 0; }
 
 /* ===== CHARTS ===== */
 .chart-grid { display: table; width: 100%; margin-bottom: 24px; }
