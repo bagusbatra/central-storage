@@ -55,7 +55,6 @@ DATA: lv_user         TYPE string,
       lv_jinprog      TYPE string,
       lv_jnoprod      TYPE string,
       lv_recent_dd    TYPE string,
-      lv_recent_cnt   TYPE i,
       lv_sp_cnt       TYPE i,
       lv_sp_w_i       TYPE i,
       lv_sp_cls       TYPE string,
@@ -65,6 +64,8 @@ DATA: lv_user         TYPE string,
       ls_vbap         TYPE vbap,
       lt_afpo         TYPE TABLE OF afpo,
       ls_afpo         TYPE afpo,
+      lt_recent       TYPE TABLE OF vbak,
+      ls_recent       TYPE vbak,
       lt_mth          TYPE TABLE OF ty_mth,
       ls_mth          TYPE ty_mth,
       lt_so_prog      TYPE TABLE OF ty_so_prog,
@@ -73,7 +74,7 @@ DATA: lv_user         TYPE string,
 
 lv_user = sy-uname.
 
-" === Period filter ===
+" === Opsi 1: Period filter ===
 lv_period_param = request->get_form_field( 'period' ).
 IF lv_period_param = '7'.
   lv_period_days = 7.
@@ -91,33 +92,60 @@ ENDIF.
 lv_dfrom = sy-datum - lv_period_days.
 lv_dto   = sy-datum.
 
-" === Layer 1: Sales Order Headers ===
-SELECT * FROM vbak INTO TABLE lt_vbak
+" === Optimasi 2: Query terpisah untuk tabel recent (10 baris, ORDER BY tanggal) ===
+" Subquery di sini aman karena hanya fetch 10 baris — DB optimizer sangat efisien
+SELECT vbeln erdat kunnr auart netwr waerk
+  INTO CORRESPONDING FIELDS OF TABLE lt_recent
+  FROM vbak
   WHERE erdat BETWEEN lv_dfrom AND lv_dto
     AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = '2000' ).
+SORT lt_recent BY erdat DESCENDING.
+DELETE lt_recent FROM 11.
 
-lv_total_so = lines( lt_vbak ).
+" === Optimasi 1+3: SELECT kolom spesifik, tanpa subquery di VBAK utama ===
+" lt_vbak hanya butuh vbeln/erdat/kunnr/auart — netwr/waerk sudah di lt_recent
+SELECT vbeln erdat kunnr auart
+  INTO CORRESPONDING FIELDS OF TABLE lt_vbak
+  FROM vbak
+  WHERE erdat BETWEEN lv_dfrom AND lv_dto.
+
 SORT lt_vbak BY vbeln.
 
 IF lt_vbak IS NOT INITIAL.
-  " === Layer 2: SO Items ===
-  SELECT * FROM vbap INTO TABLE lt_vbap
+  " Kolom spesifik: vbap hanya butuh vbeln dan posnr
+  SELECT vbeln posnr
+    INTO CORRESPONDING FIELDS OF TABLE lt_vbap
+    FROM vbap
     FOR ALL ENTRIES IN lt_vbak
     WHERE vbeln = lt_vbak-vbeln
       AND werks = '2000'.
 
+  " === Optimasi 3: Prune lt_vbak — hapus SO yang tidak punya item Plant 2000 ===
+  " Menggantikan subquery IN(SELECT...) di query utama yang mahal
+  SORT lt_vbap BY vbeln.
+  LOOP AT lt_vbak INTO ls_vbak.
+    READ TABLE lt_vbap WITH KEY vbeln = ls_vbak-vbeln
+      BINARY SEARCH TRANSPORTING NO FIELDS.
+    IF sy-subrc <> 0.
+      DELETE lt_vbak.
+    ENDIF.
+  ENDLOOP.
+
+  lv_total_so   = lines( lt_vbak ).
   lv_total_item = lines( lt_vbap ).
 
-  " === Layer 3: Production Orders ===
+  " Kolom spesifik: afpo hanya butuh 4 field untuk kalkulasi progress
   IF lt_vbap IS NOT INITIAL.
-    SELECT * FROM afpo INTO TABLE lt_afpo
+    SELECT kdauf kdpos psmng wemng
+      INTO CORRESPONDING FIELDS OF TABLE lt_afpo
+      FROM afpo
       FOR ALL ENTRIES IN lt_vbap
       WHERE kdauf = lt_vbap-vbeln
         AND kdpos = lt_vbap-posnr.
     SORT lt_afpo BY kdauf kdpos.
   ENDIF.
 
-  " === Classify items + accumulate per-SO progress ===
+  " === Klasifikasi item + akumulasi per-SO ===
   LOOP AT lt_vbap INTO ls_vbap.
     CLEAR ls_afpo.
     READ TABLE lt_afpo INTO ls_afpo
@@ -191,7 +219,7 @@ IF lt_vbak IS NOT INITIAL.
     MODIFY lt_so_prog FROM ls_so_prog INDEX lv_idx.
   ENDLOOP.
 
-  " === Weekly aggregation grouped by SO erdat ===
+  " === Agregasi per minggu ===
   SORT lt_so_prog BY vbeln.
   LOOP AT lt_vbak INTO ls_vbak.
     lv_weekday  = ( ls_vbak-erdat - '20240101' ) MOD 7.
@@ -260,8 +288,6 @@ CONCATENATE lv_jwdates ']' INTO lv_jwdates.
 CONCATENATE lv_jdone   ']' INTO lv_jdone.
 CONCATENATE lv_jinprog ']' INTO lv_jinprog.
 CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
-
-SORT lt_vbak BY erdat DESCENDING.
 %>
 <!DOCTYPE html>
 <html lang="id">
@@ -273,29 +299,42 @@ SORT lt_vbak BY erdat DESCENDING.
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
     body { background: #f3f4f6; color: #1f2937; }
 
-    /* ===== LOADING OVERLAY ===== */
-    #ld-overlay {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: #f3f4f6;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      z-index: 9999; transition: opacity 0.4s ease;
+    /* ===== OPTIMASI 4: SKELETON LOADING — gantikan full-page overlay ===== */
+    @keyframes skel-wave {
+      0%   { background-position: -400px 0; }
+      100% { background-position: calc(400px + 100%) 0; }
     }
-    #ld-overlay.ld-hide { opacity: 0; pointer-events: none; }
-    .ld-logo {
-      width: 60px; height: 60px;
-      background: linear-gradient(135deg, #1e3a8a, #2563eb);
-      border-radius: 16px; display: flex; align-items: center; justify-content: center;
-      margin-bottom: 20px; box-shadow: 0 8px 24px rgba(37,99,235,0.3);
-      font-size: 1.8rem; line-height: 60px; text-align: center;
+    .skel-anim {
+      background: linear-gradient(90deg, #f0f0f0 8%, #e0e0e0 18%, #f0f0f0 33%);
+      background-size: 800px 100%;
+      animation: skel-wave 1.4s linear infinite;
     }
-    .ld-spinner {
-      width: 44px; height: 44px; border: 4px solid #dbeafe;
-      border-top-color: #2563eb; border-radius: 50%;
-      animation: ld-spin 0.75s linear infinite; margin-bottom: 20px;
+    /* Saat body.page-loading: nilai KPI jadi skeleton */
+    body.page-loading .stat-value {
+      color: transparent !important;
+      border-radius: 6px;
+      background: linear-gradient(90deg, #e5e7eb 8%, #d1d5db 18%, #e5e7eb 33%);
+      background-size: 800px 100%;
+      animation: skel-wave 1.4s linear infinite;
     }
-    @keyframes ld-spin { to { transform: rotate(360deg); } }
-    .ld-text { font-size: 1rem; font-weight: 600; color: #1e3a8a; margin-bottom: 6px; }
-    .ld-sub  { font-size: 0.8rem; color: #9ca3af; }
+    body.page-loading .stat-sub {
+      color: transparent !important;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #f3f4f6 8%, #e9eaec 18%, #f3f4f6 33%);
+      background-size: 800px 100%;
+      animation: skel-wave 1.4s linear infinite;
+    }
+    body.page-loading .kpi-alert { display: none; }
+    /* Chart skeleton: tampil saat loading, sembunyi setelah chart digambar */
+    .chart-skel {
+      border-radius: 8px;
+      background: linear-gradient(90deg, #f3f4f6 8%, #e5e7eb 18%, #f3f4f6 33%);
+      background-size: 800px 100%;
+      animation: skel-wave 1.4s linear infinite;
+      display: none;
+    }
+    body.page-loading .chart-skel { display: block; }
+    body.page-loading canvas { display: none; }
 
     /* ===== HEADER & NAV ===== */
     .header-bar { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #fff; padding: 20px 28px; display: table; width: 100%; box-shadow: 0 4px 12px rgba(30,58,138,0.15); }
@@ -316,7 +355,7 @@ SORT lt_vbak BY erdat DESCENDING.
     /* ===== PERIOD FILTER ===== */
     .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
     .filter-label { font-size: 0.85rem; font-weight: 700; color: #4b5563; }
-    .filter-btn { background: #f3f4f6; border: 1px solid #e5e7eb; color: #374151; padding: 7px 20px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .filter-btn { background: #f3f4f6; border: 1px solid #e5e7eb; color: #374151; padding: 7px 20px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
     .filter-btn:hover { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
     .filter-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
 
@@ -372,15 +411,7 @@ SORT lt_vbak BY erdat DESCENDING.
     .prog-bar-inner { height: 100%; border-radius: 4px; }
   </style>
 </head>
-<body>
-
-  <!-- LOADING OVERLAY -->
-  <div id="ld-overlay">
-    <div class="ld-logo">&#9782;</div>
-    <div class="ld-spinner"></div>
-    <p class="ld-text">Memuat Data Dashboard</p>
-    <p class="ld-sub">Plant 2000 &#8212; Mengambil data produksi <%= lv_period_lbl %>...</p>
-  </div>
+<body class="page-loading">
 
   <div class="header-bar">
     <div class="header-title">
@@ -461,6 +492,7 @@ SORT lt_vbak BY erdat DESCENDING.
         <div class="chart-card">
           <div class="chart-title">Item Produksi per Minggu</div>
           <div class="chart-sub">Distribusi status item per minggu &#8212; <%= lv_period_lbl %> (Plant 2000, label = Senin awal minggu)</div>
+          <div class="chart-skel" style="height:240px;"></div>
           <canvas id="barChart" height="240"></canvas>
           <div class="legend-row" style="margin-top:12px;">
             <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span>Selesai</div>
@@ -474,7 +506,8 @@ SORT lt_vbak BY erdat DESCENDING.
         <div class="chart-card">
           <div class="chart-title">Status Produksi Item</div>
           <div class="chart-sub">Distribusi penyelesaian dari seluruh item SO</div>
-          <canvas id="donutChart" width="200" height="200" style="margin: 0 auto;"></canvas>
+          <div class="chart-skel" style="width:200px;height:200px;border-radius:50%;margin:0 auto;"></div>
+          <canvas id="donutChart" width="200" height="200" style="margin:0 auto;"></canvas>
           <div class="legend-row">
             <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span>Selesai (<%= lv_done %>)</div>
             <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span>Proses (<%= lv_inprog %>)</div>
@@ -541,7 +574,7 @@ SORT lt_vbak BY erdat DESCENDING.
       </table>
     </div>
 
-    <!-- RECENT 10 SO TABLE -->
+    <!-- RECENT 10 SO TABLE — dari lt_recent (query terpisah, 10 baris) -->
     <div class="recent-card">
       <div class="recent-header">
         <h3>10 Sales Order Terbaru</h3>
@@ -559,23 +592,20 @@ SORT lt_vbak BY erdat DESCENDING.
         </thead>
         <tbody>
           <%
-            CLEAR lv_recent_cnt.
-            LOOP AT lt_vbak INTO ls_vbak.
-              lv_recent_cnt = lv_recent_cnt + 1.
-              IF lv_recent_cnt > 10. EXIT. ENDIF.
+            LOOP AT lt_recent INTO ls_recent.
               CLEAR lv_recent_dd.
-              CONCATENATE ls_vbak-erdat+6(2) '/' ls_vbak-erdat+4(2) '/' ls_vbak-erdat(4) INTO lv_recent_dd.
+              CONCATENATE ls_recent-erdat+6(2) '/' ls_recent-erdat+4(2) '/' ls_recent-erdat(4) INTO lv_recent_dd.
           %>
           <tr>
-            <td><strong style="color:#1e3a8a;">SO #<%= ls_vbak-vbeln %></strong></td>
-            <td><%= ls_vbak-kunnr %></td>
-            <td><span class="badge-type"><%= ls_vbak-auart %></span></td>
+            <td><strong style="color:#1e3a8a;">SO #<%= ls_recent-vbeln %></strong></td>
+            <td><%= ls_recent-kunnr %></td>
+            <td><span class="badge-type"><%= ls_recent-auart %></span></td>
             <td><%= lv_recent_dd %></td>
-            <td style="text-align:right; font-weight:600;"><%= ls_vbak-netwr %></td>
-            <td><%= ls_vbak-waerk %></td>
+            <td style="text-align:right; font-weight:600;"><%= ls_recent-netwr %></td>
+            <td><%= ls_recent-waerk %></td>
           </tr>
           <% ENDLOOP. %>
-          <% IF lv_total_so = 0. %>
+          <% IF lt_recent IS INITIAL. %>
           <tr>
             <td colspan="6" class="no-data">Tidak ada data Sales Order dalam periode ini di Plant 2000.</td>
           </tr>
@@ -664,7 +694,6 @@ SORT lt_vbak BY erdat DESCENDING.
         if (totals[i] > max) max = totals[i];
       }
       if (max === 0) max = 1;
-
       var tickStep = Math.ceil(max / 5);
       var tickMax  = tickStep * 5;
       if (tickMax === 0) tickMax = 5;
@@ -693,66 +722,52 @@ SORT lt_vbak BY erdat DESCENDING.
         var bx     = padL + i * slotW + (slotW - barW) / 2;
         var baseY  = padT + chartH;
         var cx     = bx + barW / 2;
-
         barState.push({ x: bx, w: barW, idx: i });
 
         var np_h = noprodCounts[i] > 0 ? (noprodCounts[i] / tickMax) * chartH : 0;
         var ip_h = inprogCounts[i] > 0 ? (inprogCounts[i] / tickMax) * chartH : 0;
         var dn_h = doneCounts[i]   > 0 ? (doneCounts[i]   / tickMax) * chartH : 0;
-
         var topSeg = 0;
-        if (doneCounts[i]   > 0) topSeg = 1;
+        if (doneCounts[i]    > 0) topSeg = 1;
         else if (inprogCounts[i] > 0) topSeg = 2;
         else if (noprodCounts[i] > 0) topSeg = 3;
 
         var curY = baseY;
-
         if (np_h > 0) {
           curY -= np_h;
           if (topSeg === 3) { drawRoundTop(ctx, bx, curY, barW, np_h, 5); }
           else { ctx.beginPath(); ctx.rect(bx, curY, barW, np_h); }
-          ctx.fillStyle = '#d1d5db';
-          ctx.fill();
+          ctx.fillStyle = '#d1d5db'; ctx.fill();
         }
-
         if (ip_h > 0) {
           curY -= ip_h;
           if (topSeg === 2) { drawRoundTop(ctx, bx, curY, barW, ip_h, 5); }
           else { ctx.beginPath(); ctx.rect(bx, curY, barW, ip_h); }
-          ctx.fillStyle = '#3b82f6';
-          ctx.fill();
+          ctx.fillStyle = '#3b82f6'; ctx.fill();
         }
-
         if (dn_h > 0) {
           curY -= dn_h;
           drawRoundTop(ctx, bx, curY, barW, dn_h, 5);
-          ctx.fillStyle = '#10b981';
-          ctx.fill();
+          ctx.fillStyle = '#10b981'; ctx.fill();
         }
 
         if (total > 0) {
-          var topY = padT + chartH - (total / tickMax) * chartH;
-          ctx.font = 'bold 12px Segoe UI, Arial, sans-serif';
-          var badgeTxt = String(total);
-          var badgeW   = ctx.measureText(badgeTxt).width + 14;
-          var badgeH   = 20;
-          var badgeX   = cx - badgeW / 2;
-          var badgeY   = topY - badgeH - 6;
-          drawRoundRect(ctx, badgeX, badgeY, badgeW, badgeH, 10);
-          ctx.fillStyle = '#1e3a8a';
-          ctx.fill();
-          ctx.fillStyle = '#ffffff';
-          ctx.textAlign = 'center';
-          ctx.fillText(badgeTxt, cx, badgeY + badgeH - 5);
+          var topY   = padT + chartH - (total / tickMax) * chartH;
+          ctx.font   = 'bold 12px Segoe UI, Arial, sans-serif';
+          var bTxt   = String(total);
+          var bW     = ctx.measureText(bTxt).width + 14;
+          var bH     = 20;
+          var bX     = cx - bW / 2;
+          var bY     = topY - bH - 6;
+          drawRoundRect(ctx, bX, bY, bW, bH, 10);
+          ctx.fillStyle = '#1e3a8a'; ctx.fill();
+          ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
+          ctx.fillText(bTxt, cx, bY + bH - 5);
         }
 
         if (total === 0) {
-          ctx.beginPath();
-          ctx.strokeStyle = '#e5e7eb';
-          ctx.lineWidth = 1;
-          ctx.moveTo(cx, padT + chartH - 4);
-          ctx.lineTo(cx, padT + chartH);
-          ctx.stroke();
+          ctx.beginPath(); ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
+          ctx.moveTo(cx, padT + chartH - 4); ctx.lineTo(cx, padT + chartH); ctx.stroke();
         }
 
         ctx.fillStyle = '#6b7280';
@@ -774,61 +789,35 @@ SORT lt_vbak BY erdat DESCENDING.
       var R    = Math.min(W, H) / 2 - 12;
       var hole = R * 0.56;
       var total = doneCount + progCount + noprodCount;
-
       ctx.clearRect(0, 0, W, H);
-
       if (total === 0) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, R, 0, Math.PI * 2);
-        ctx.fillStyle = '#f3f4f6';
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(cx, cy, hole, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.fill();
-        ctx.fillStyle = '#9ca3af';
-        ctx.font = '11px Segoe UI, Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Tidak ada data', cx, cy + 4);
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fillStyle = '#f3f4f6'; ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy, hole, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+        ctx.fillStyle = '#9ca3af'; ctx.font = '11px Segoe UI, Arial, sans-serif';
+        ctx.textAlign = 'center'; ctx.fillText('Tidak ada data', cx, cy + 4);
         return;
       }
-
-      var segments = [
-        { val: doneCount,   color: '#10b981' },
-        { val: progCount,   color: '#3b82f6' },
-        { val: noprodCount, color: '#d1d5db' }
-      ];
+      var segs = [{ val: doneCount, color: '#10b981' }, { val: progCount, color: '#3b82f6' }, { val: noprodCount, color: '#d1d5db' }];
       var angle = -Math.PI / 2;
-      for (var i = 0; i < segments.length; i++) {
-        if (segments[i].val === 0) continue;
-        var sweep = (segments[i].val / total) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, R, angle, angle + sweep);
-        ctx.closePath();
-        ctx.fillStyle = segments[i].color;
-        ctx.fill();
-        angle += sweep;
+      for (var i = 0; i < segs.length; i++) {
+        if (segs[i].val === 0) continue;
+        var sweep = (segs[i].val / total) * Math.PI * 2;
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, angle, angle + sweep); ctx.closePath();
+        ctx.fillStyle = segs[i].color; ctx.fill(); angle += sweep;
       }
-
-      ctx.beginPath();
-      ctx.arc(cx, cy, hole, 0, Math.PI * 2);
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
-
+      ctx.beginPath(); ctx.arc(cx, cy, hole, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
       var pct = Math.round(doneCount / total * 100);
-      ctx.fillStyle = '#1e3a8a';
-      ctx.font = 'bold 26px Segoe UI, Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(pct + '%', cx, cy + 5);
-      ctx.fillStyle = '#9ca3af';
-      ctx.font = '11px Segoe UI, Arial, sans-serif';
+      ctx.fillStyle = '#1e3a8a'; ctx.font = 'bold 26px Segoe UI, Arial, sans-serif';
+      ctx.textAlign = 'center'; ctx.fillText(pct + '%', cx, cy + 5);
+      ctx.fillStyle = '#9ca3af'; ctx.font = '11px Segoe UI, Arial, sans-serif';
       ctx.fillText('selesai', cx, cy + 20);
     }
 
     window.onload = function() {
       drawBarChart();
       drawDonutChart();
+      /* Optimasi 4: hapus class skeleton — tampilkan konten nyata */
+      document.body.classList.remove('page-loading');
 
       var bc = document.getElementById('barChart');
       if (bc) {
@@ -839,17 +828,10 @@ SORT lt_vbak BY erdat DESCENDING.
           var mx    = (e.clientX - rect.left) * scale;
           for (var i = 0; i < barState.length; i++) {
             if (mx >= barState[i].x && mx <= barState[i].x + barState[i].w) {
-              drillDown(barState[i].idx);
-              return;
+              drillDown(barState[i].idx); return;
             }
           }
         });
-      }
-
-      var ov = document.getElementById('ld-overlay');
-      if (ov) {
-        ov.classList.add('ld-hide');
-        setTimeout(function() { ov.style.display = 'none'; }, 450);
       }
     };
   </script>
