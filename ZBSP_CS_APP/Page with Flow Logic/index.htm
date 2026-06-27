@@ -357,7 +357,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard - Central Storage KMI 2</title>
-  <link rel="stylesheet" href="MIMEs/css/style.css">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="page-loading">
 
@@ -533,7 +533,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
                 lv_sp_cls = '#ef4444'.
               ENDIF.
           %>
-          <tr>
+          <tr onclick="window.location.href='monitoring.htm?so_num=<%= ls_sp_row-vbeln %>&amp;search_btn=X'" style="cursor:pointer;">
             <td><strong style="color:#1e3a8a;">SO #<%= ls_sp_row-vbeln %></strong></td>
             <td><%= ls_sp_row-kunnr %></td>
             <td><span class="badge-type"><%= ls_sp_row-auart %></span></td>
@@ -607,8 +607,8 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
     var progCount    = <%= lv_inprog %>;
     var noprodCount  = <%= lv_noprod %>;
   </script>
-  <!-- Semua fungsi chart & interaksi ada di MIMEs/js/js.js -->
-  <script src="MIMEs/js/js.js"></script>
+  <!-- Semua fungsi chart & interaksi ada di js/js.js -->
+  <script src="js/js.js"></script>
 
 </body>
 </html>
