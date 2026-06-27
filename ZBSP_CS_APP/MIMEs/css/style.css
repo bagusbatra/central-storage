@@ -177,7 +177,8 @@ canvas { display: block; max-width: 100%; }
 .so-id { font-weight: 700; color: #1e3a8a; display: table-cell; }
 .so-badge { display: table-cell; text-align: right; }
 .badge { background: #dbeafe; color: #1e40af; padding: 3px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 700; }
-.so-date { font-size: 0.82rem; color: #6b7280; }
+.so-cust-name { font-size: 0.83rem; color: #1e40af; font-weight: 600; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.so-date { font-size: 0.8rem; color: #6b7280; }
 .pagination-ctrl { padding: 12px 20px; background: #f9fafb; border-top: 1px solid #e5e7eb; text-align: center; }
 .pagination-ctrl button { padding: 6px 12px; margin: 0 4px; background: #ffffff; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.85rem; cursor: pointer; font-weight: 600; }
 .pagination-ctrl button:disabled { opacity: 0.4; cursor: not-allowed; }
