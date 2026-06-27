@@ -74,7 +74,7 @@ DATA: lv_user         TYPE string,
 
 lv_user = sy-uname.
 
-" === Opsi 1: Period filter ===
+" === Period filter ===
 lv_period_param = request->get_form_field( 'period' ).
 IF lv_period_param = '7'.
   lv_period_days = 7.
@@ -92,8 +92,7 @@ ENDIF.
 lv_dfrom = sy-datum - lv_period_days.
 lv_dto   = sy-datum.
 
-" === Optimasi 2: Query terpisah untuk tabel recent (10 baris, ORDER BY tanggal) ===
-" Subquery di sini aman karena hanya fetch 10 baris — DB optimizer sangat efisien
+" === Query terpisah untuk tabel Recent (10 baris, netwr + waerk) ===
 SELECT vbeln erdat kunnr auart netwr waerk
   INTO CORRESPONDING FIELDS OF TABLE lt_recent
   FROM vbak
@@ -102,8 +101,7 @@ SELECT vbeln erdat kunnr auart netwr waerk
 SORT lt_recent BY erdat DESCENDING.
 DELETE lt_recent FROM 11.
 
-" === Optimasi 1+3: SELECT kolom spesifik, tanpa subquery di VBAK utama ===
-" lt_vbak hanya butuh vbeln/erdat/kunnr/auart — netwr/waerk sudah di lt_recent
+" === SELECT kolom spesifik — lt_vbak tanpa subquery (untuk chart) ===
 SELECT vbeln erdat kunnr auart
   INTO CORRESPONDING FIELDS OF TABLE lt_vbak
   FROM vbak
@@ -112,7 +110,7 @@ SELECT vbeln erdat kunnr auart
 SORT lt_vbak BY vbeln.
 
 IF lt_vbak IS NOT INITIAL.
-  " Kolom spesifik: vbap hanya butuh vbeln dan posnr
+  " Kolom spesifik: hanya vbeln dan posnr
   SELECT vbeln posnr
     INTO CORRESPONDING FIELDS OF TABLE lt_vbap
     FROM vbap
@@ -120,8 +118,7 @@ IF lt_vbak IS NOT INITIAL.
     WHERE vbeln = lt_vbak-vbeln
       AND werks = '2000'.
 
-  " === Optimasi 3: Prune lt_vbak — hapus SO yang tidak punya item Plant 2000 ===
-  " Menggantikan subquery IN(SELECT...) di query utama yang mahal
+  " Prune lt_vbak: hapus SO yang tidak punya item Plant 2000
   SORT lt_vbap BY vbeln.
   LOOP AT lt_vbak INTO ls_vbak.
     READ TABLE lt_vbap WITH KEY vbeln = ls_vbak-vbeln
@@ -134,7 +131,7 @@ IF lt_vbak IS NOT INITIAL.
   lv_total_so   = lines( lt_vbak ).
   lv_total_item = lines( lt_vbap ).
 
-  " Kolom spesifik: afpo hanya butuh 4 field untuk kalkulasi progress
+  " Kolom spesifik: hanya 4 field AFPO yang diperlukan
   IF lt_vbap IS NOT INITIAL.
     SELECT kdauf kdpos psmng wemng
       INTO CORRESPONDING FIELDS OF TABLE lt_afpo
@@ -265,7 +262,7 @@ ELSE.
   lv_rate_alert = 'KRITIS: penyelesaian sangat rendah, perlu tindakan segera!'.
 ENDIF.
 
-" === Build JSON arrays ===
+" === Build JSON arrays untuk chart ===
 lv_jmonths = '['.
 lv_jwdates = '['.
 lv_jdone   = '['.
@@ -295,121 +292,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard - Central Storage KMI 2</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
-    body { background: #f3f4f6; color: #1f2937; }
-
-    /* ===== OPTIMASI 4: SKELETON LOADING — gantikan full-page overlay ===== */
-    @keyframes skel-wave {
-      0%   { background-position: -400px 0; }
-      100% { background-position: calc(400px + 100%) 0; }
-    }
-    .skel-anim {
-      background: linear-gradient(90deg, #f0f0f0 8%, #e0e0e0 18%, #f0f0f0 33%);
-      background-size: 800px 100%;
-      animation: skel-wave 1.4s linear infinite;
-    }
-    /* Saat body.page-loading: nilai KPI jadi skeleton */
-    body.page-loading .stat-value {
-      color: transparent !important;
-      border-radius: 6px;
-      background: linear-gradient(90deg, #e5e7eb 8%, #d1d5db 18%, #e5e7eb 33%);
-      background-size: 800px 100%;
-      animation: skel-wave 1.4s linear infinite;
-    }
-    body.page-loading .stat-sub {
-      color: transparent !important;
-      border-radius: 3px;
-      background: linear-gradient(90deg, #f3f4f6 8%, #e9eaec 18%, #f3f4f6 33%);
-      background-size: 800px 100%;
-      animation: skel-wave 1.4s linear infinite;
-    }
-    body.page-loading .kpi-alert { display: none; }
-    /* Chart skeleton: tampil saat loading, sembunyi setelah chart digambar */
-    .chart-skel {
-      border-radius: 8px;
-      background: linear-gradient(90deg, #f3f4f6 8%, #e5e7eb 18%, #f3f4f6 33%);
-      background-size: 800px 100%;
-      animation: skel-wave 1.4s linear infinite;
-      display: none;
-    }
-    body.page-loading .chart-skel { display: block; }
-    body.page-loading canvas { display: none; }
-
-    /* ===== HEADER & NAV ===== */
-    .header-bar { background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #fff; padding: 20px 28px; display: table; width: 100%; box-shadow: 0 4px 12px rgba(30,58,138,0.15); }
-    .header-title { display: table-cell; vertical-align: middle; }
-    .header-title h1 { font-size: 1.5rem; font-weight: 700; }
-    .header-title p { font-size: 0.88rem; color: #93c5fd; margin-top: 4px; }
-    .header-user { display: table-cell; text-align: right; vertical-align: middle; }
-    .header-user span { background: rgba(255,255,255,0.18); padding: 8px 16px; border-radius: 30px; font-weight: 600; font-size: 0.88rem; }
-    .navbar { background: #fff; border-bottom: 2px solid #e5e7eb; padding: 0 28px; display: flex; align-items: stretch; }
-    .nav-btn { padding: 14px 26px; font-size: 0.9rem; font-weight: 600; color: #6b7280; text-decoration: none; border-bottom: 3px solid transparent; display: inline-flex; align-items: center; gap: 8px; margin-bottom: -2px; }
-    .nav-btn:hover { color: #2563eb; border-bottom-color: #93c5fd; background: #f0f7ff; }
-    .nav-btn.active { color: #2563eb; border-bottom-color: #2563eb; background: #eff6ff; }
-    .nav-icon { font-size: 1rem; }
-
-    /* ===== CONTENT ===== */
-    .content { padding: 28px; }
-
-    /* ===== PERIOD FILTER ===== */
-    .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
-    .filter-label { font-size: 0.85rem; font-weight: 700; color: #4b5563; }
-    .filter-btn { background: #f3f4f6; border: 1px solid #e5e7eb; color: #374151; padding: 7px 20px; border-radius: 20px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
-    .filter-btn:hover { background: #dbeafe; border-color: #93c5fd; color: #1d4ed8; }
-    .filter-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
-
-    /* ===== STAT CARDS ===== */
-    .stat-grid { display: table; width: 100%; margin-bottom: 24px; border-spacing: 0; }
-    .stat-cell { display: table-cell; padding-right: 20px; vertical-align: top; width: 25%; }
-    .stat-cell:last-child { padding-right: 0; }
-    .stat-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 22px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; }
-    .stat-card.kpi-green { border-left: 4px solid #10b981; }
-    .stat-card.kpi-amber { border-left: 4px solid #f59e0b; }
-    .stat-card.kpi-red   { border-left: 4px solid #ef4444; }
-    .stat-header { display: table; width: 100%; margin-bottom: 14px; }
-    .stat-label { display: table-cell; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: #6b7280; vertical-align: middle; }
-    .stat-icon { display: table-cell; text-align: right; vertical-align: middle; }
-    .stat-icon span { display: inline-block; width: 40px; height: 40px; border-radius: 10px; text-align: center; line-height: 40px; font-size: 1.2rem; }
-    .ic-blue { background: #dbeafe; } .ic-green { background: #d1fae5; }
-    .ic-amber { background: #fef3c7; } .ic-gray  { background: #f3f4f6; }
-    .stat-value { font-size: 2.1rem; font-weight: 800; color: #1e3a8a; line-height: 1; }
-    .stat-card.kpi-green .stat-value { color: #059669; }
-    .stat-card.kpi-amber .stat-value { color: #d97706; }
-    .stat-card.kpi-red   .stat-value { color: #dc2626; }
-    .stat-sub { font-size: 0.8rem; color: #9ca3af; margin-top: 8px; }
-    .kpi-alert { font-size: 0.75rem; margin-top: 10px; padding: 6px 10px; border-radius: 6px; font-weight: 600; line-height: 1.4; }
-    .stat-card.kpi-amber .kpi-alert { background: #fef3c7; color: #92400e; }
-    .stat-card.kpi-red   .kpi-alert { background: #fee2e2; color: #991b1b; }
-
-    /* ===== CHARTS ===== */
-    .chart-grid { display: table; width: 100%; margin-bottom: 24px; }
-    .chart-cell { display: table-cell; vertical-align: top; }
-    .chart-bar-cell { width: 62%; padding-right: 20px; }
-    .chart-donut-cell { width: 38%; }
-    .chart-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-    .chart-title { font-size: 0.92rem; font-weight: 700; color: #1f2937; }
-    .chart-sub { font-size: 0.78rem; color: #9ca3af; margin-top: 3px; margin-bottom: 18px; }
-    canvas { display: block; max-width: 100%; }
-    .chart-hint { font-size: 0.73rem; color: #9ca3af; margin-top: 10px; text-align: center; }
-    .legend-row { display: flex; gap: 16px; margin-top: 16px; justify-content: center; flex-wrap: wrap; }
-    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: #4b5563; }
-    .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-
-    /* ===== TABLES ===== */
-    .recent-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; margin-bottom: 24px; }
-    .recent-header { background: #f9fafb; padding: 15px 24px; border-bottom: 1px solid #e5e7eb; }
-    .recent-header h3 { font-size: 0.9rem; font-weight: 700; color: #374151; }
-    .recent-table { width: 100%; border-collapse: collapse; }
-    .recent-table th { background: #f9fafb; color: #6b7280; font-size: 0.73rem; font-weight: 700; text-transform: uppercase; padding: 11px 16px; border-bottom: 2px solid #e5e7eb; text-align: left; }
-    .recent-table td { padding: 13px 16px; font-size: 0.88rem; color: #374151; border-bottom: 1px solid #f3f4f6; }
-    .recent-table tr:last-child td { border-bottom: none; }
-    .recent-table tr:hover td { background: #f9fafb; }
-    .badge-type { background: #eff6ff; color: #1d4ed8; padding: 3px 10px; border-radius: 20px; font-size: 0.73rem; font-weight: 700; }
-    .no-data { text-align: center; padding: 40px; color: #9ca3af; font-size: 0.9rem; }
-    .prog-bar { flex: 1; height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden; min-width: 80px; }
-    .prog-bar-inner { height: 100%; border-radius: 4px; }
-  </style>
+  <link rel="stylesheet" href="MIMEs/css/style.css">
 </head>
 <body class="page-loading">
 
@@ -517,7 +400,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
       </div>
     </div>
 
-    <!-- 5 SLOWEST SO TABLE -->
+    <!-- 5 SLOWEST SO -->
     <div class="recent-card">
       <div class="recent-header">
         <h3>5 Sales Order dengan Progres Paling Lambat</h3>
@@ -566,15 +449,13 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
           </tr>
           <% ENDLOOP. %>
           <% IF lv_total_item = 0. %>
-          <tr>
-            <td colspan="6" class="no-data">Tidak ada data SO dalam periode ini di Plant 2000.</td>
-          </tr>
+          <tr><td colspan="6" class="no-data">Tidak ada data SO dalam periode ini di Plant 2000.</td></tr>
           <% ENDIF. %>
         </tbody>
       </table>
     </div>
 
-    <!-- RECENT 10 SO TABLE — dari lt_recent (query terpisah, 10 baris) -->
+    <!-- RECENT 10 SO -->
     <div class="recent-card">
       <div class="recent-header">
         <h3>10 Sales Order Terbaru</h3>
@@ -606,9 +487,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
           </tr>
           <% ENDLOOP. %>
           <% IF lt_recent IS INITIAL. %>
-          <tr>
-            <td colspan="6" class="no-data">Tidak ada data Sales Order dalam periode ini di Plant 2000.</td>
-          </tr>
+          <tr><td colspan="6" class="no-data">Tidak ada data Sales Order dalam periode ini di Plant 2000.</td></tr>
           <% ENDIF. %>
         </tbody>
       </table>
@@ -616,6 +495,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
 
   </div>
 
+  <!-- Data dari ABAP (inline, karena nilai diisi server-side oleh BSP) -->
   <script>
     var weekLabels   = <%= lv_jmonths %>;
     var weekDates    = <%= lv_jwdates %>;
@@ -625,215 +505,9 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
     var doneCount    = <%= lv_done %>;
     var progCount    = <%= lv_inprog %>;
     var noprodCount  = <%= lv_noprod %>;
-    var barState     = [];
-
-    function drawRoundRect(ctx, x, y, w, h, r) {
-      if (w < 2 * r) r = w / 2;
-      if (h < 2 * r) r = h / 2;
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y,     x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x,     y + h, r);
-      ctx.arcTo(x,     y + h, x,     y,     r);
-      ctx.arcTo(x,     y,     x + r, y,     r);
-      ctx.closePath();
-    }
-
-    function drawRoundTop(ctx, x, y, w, h, r) {
-      if (h <= 0) return;
-      if (w < 2 * r) r = w / 2;
-      if (h < r) r = h;
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y,     x + w, y + h, r);
-      ctx.lineTo(x + w, y + h);
-      ctx.lineTo(x,     y + h);
-      ctx.arcTo(x,      y,     x + r, y,     r);
-      ctx.closePath();
-    }
-
-    function drillDown(weekIdx) {
-      var wdate = weekDates[weekIdx];
-      if (!wdate) return;
-      var y  = parseInt(wdate.substr(0, 4), 10);
-      var mo = parseInt(wdate.substr(4, 2), 10) - 1;
-      var dy = parseInt(wdate.substr(6, 2), 10);
-      var dtFrom = new Date(y, mo, dy);
-      var dtTo   = new Date(dtFrom.getTime() + 6 * 24 * 60 * 60 * 1000);
-      function p2(v) { return v < 10 ? '0' + v : '' + v; }
-      var fromStr = dtFrom.getFullYear() + '-' + p2(dtFrom.getMonth() + 1) + '-' + p2(dtFrom.getDate());
-      var toStr   = dtTo.getFullYear()   + '-' + p2(dtTo.getMonth()   + 1) + '-' + p2(dtTo.getDate());
-      window.location.href = 'monitoring.htm?date_from=' + fromStr + '&date_to=' + toStr + '&search_btn=X';
-    }
-
-    function drawBarChart() {
-      var canvas = document.getElementById('barChart');
-      if (!canvas || !canvas.getContext) return;
-      canvas.width = canvas.parentElement ? canvas.parentElement.clientWidth - 48 : 500;
-      var ctx    = canvas.getContext('2d');
-      var W = canvas.width, H = canvas.height;
-      var padL = 46, padR = 20, padT = 36, padB = 50;
-      var chartW = W - padL - padR;
-      var chartH = H - padT - padB;
-      var n = weekLabels.length;
-
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, W, H);
-
-      if (n === 0) {
-        ctx.fillStyle = '#9ca3af';
-        ctx.font = '13px Segoe UI, Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Belum ada data untuk ditampilkan', W / 2, H / 2);
-        return;
-      }
-
-      var totals = [], max = 0;
-      for (var i = 0; i < n; i++) {
-        totals[i] = doneCounts[i] + inprogCounts[i] + noprodCounts[i];
-        if (totals[i] > max) max = totals[i];
-      }
-      if (max === 0) max = 1;
-      var tickStep = Math.ceil(max / 5);
-      var tickMax  = tickStep * 5;
-      if (tickMax === 0) tickMax = 5;
-
-      for (var t = 0; t <= 5; t++) {
-        var yv = tickMax * t / 5;
-        var yp = padT + chartH - (yv / tickMax) * chartH;
-        ctx.beginPath();
-        ctx.strokeStyle = t === 0 ? '#d1d5db' : '#f0f0f0';
-        ctx.lineWidth = 1;
-        ctx.moveTo(padL, yp);
-        ctx.lineTo(padL + chartW, yp);
-        ctx.stroke();
-        ctx.fillStyle = '#9ca3af';
-        ctx.font = '11px Segoe UI, Arial, sans-serif';
-        ctx.textAlign = 'right';
-        ctx.fillText(Math.round(yv), padL - 8, yp + 4);
-      }
-
-      var slotW = chartW / n;
-      var barW  = Math.min(slotW * 0.62, 56);
-      barState  = [];
-
-      for (var i = 0; i < n; i++) {
-        var total  = totals[i];
-        var bx     = padL + i * slotW + (slotW - barW) / 2;
-        var baseY  = padT + chartH;
-        var cx     = bx + barW / 2;
-        barState.push({ x: bx, w: barW, idx: i });
-
-        var np_h = noprodCounts[i] > 0 ? (noprodCounts[i] / tickMax) * chartH : 0;
-        var ip_h = inprogCounts[i] > 0 ? (inprogCounts[i] / tickMax) * chartH : 0;
-        var dn_h = doneCounts[i]   > 0 ? (doneCounts[i]   / tickMax) * chartH : 0;
-        var topSeg = 0;
-        if (doneCounts[i]    > 0) topSeg = 1;
-        else if (inprogCounts[i] > 0) topSeg = 2;
-        else if (noprodCounts[i] > 0) topSeg = 3;
-
-        var curY = baseY;
-        if (np_h > 0) {
-          curY -= np_h;
-          if (topSeg === 3) { drawRoundTop(ctx, bx, curY, barW, np_h, 5); }
-          else { ctx.beginPath(); ctx.rect(bx, curY, barW, np_h); }
-          ctx.fillStyle = '#d1d5db'; ctx.fill();
-        }
-        if (ip_h > 0) {
-          curY -= ip_h;
-          if (topSeg === 2) { drawRoundTop(ctx, bx, curY, barW, ip_h, 5); }
-          else { ctx.beginPath(); ctx.rect(bx, curY, barW, ip_h); }
-          ctx.fillStyle = '#3b82f6'; ctx.fill();
-        }
-        if (dn_h > 0) {
-          curY -= dn_h;
-          drawRoundTop(ctx, bx, curY, barW, dn_h, 5);
-          ctx.fillStyle = '#10b981'; ctx.fill();
-        }
-
-        if (total > 0) {
-          var topY   = padT + chartH - (total / tickMax) * chartH;
-          ctx.font   = 'bold 12px Segoe UI, Arial, sans-serif';
-          var bTxt   = String(total);
-          var bW     = ctx.measureText(bTxt).width + 14;
-          var bH     = 20;
-          var bX     = cx - bW / 2;
-          var bY     = topY - bH - 6;
-          drawRoundRect(ctx, bX, bY, bW, bH, 10);
-          ctx.fillStyle = '#1e3a8a'; ctx.fill();
-          ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
-          ctx.fillText(bTxt, cx, bY + bH - 5);
-        }
-
-        if (total === 0) {
-          ctx.beginPath(); ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
-          ctx.moveTo(cx, padT + chartH - 4); ctx.lineTo(cx, padT + chartH); ctx.stroke();
-        }
-
-        ctx.fillStyle = '#6b7280';
-        ctx.font = '9px Segoe UI, Arial, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('Minggu', cx, padT + chartH + 14);
-        ctx.font = 'bold 10px Segoe UI, Arial, sans-serif';
-        ctx.fillStyle = '#374151';
-        ctx.fillText(weekLabels[i], cx, padT + chartH + 26);
-      }
-    }
-
-    function drawDonutChart() {
-      var canvas = document.getElementById('donutChart');
-      if (!canvas || !canvas.getContext) return;
-      var ctx   = canvas.getContext('2d');
-      var W = canvas.width, H = canvas.height;
-      var cx = W / 2, cy = H / 2;
-      var R    = Math.min(W, H) / 2 - 12;
-      var hole = R * 0.56;
-      var total = doneCount + progCount + noprodCount;
-      ctx.clearRect(0, 0, W, H);
-      if (total === 0) {
-        ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fillStyle = '#f3f4f6'; ctx.fill();
-        ctx.beginPath(); ctx.arc(cx, cy, hole, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
-        ctx.fillStyle = '#9ca3af'; ctx.font = '11px Segoe UI, Arial, sans-serif';
-        ctx.textAlign = 'center'; ctx.fillText('Tidak ada data', cx, cy + 4);
-        return;
-      }
-      var segs = [{ val: doneCount, color: '#10b981' }, { val: progCount, color: '#3b82f6' }, { val: noprodCount, color: '#d1d5db' }];
-      var angle = -Math.PI / 2;
-      for (var i = 0; i < segs.length; i++) {
-        if (segs[i].val === 0) continue;
-        var sweep = (segs[i].val / total) * Math.PI * 2;
-        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, angle, angle + sweep); ctx.closePath();
-        ctx.fillStyle = segs[i].color; ctx.fill(); angle += sweep;
-      }
-      ctx.beginPath(); ctx.arc(cx, cy, hole, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
-      var pct = Math.round(doneCount / total * 100);
-      ctx.fillStyle = '#1e3a8a'; ctx.font = 'bold 26px Segoe UI, Arial, sans-serif';
-      ctx.textAlign = 'center'; ctx.fillText(pct + '%', cx, cy + 5);
-      ctx.fillStyle = '#9ca3af'; ctx.font = '11px Segoe UI, Arial, sans-serif';
-      ctx.fillText('selesai', cx, cy + 20);
-    }
-
-    window.onload = function() {
-      drawBarChart();
-      drawDonutChart();
-      /* Optimasi 4: hapus class skeleton — tampilkan konten nyata */
-      document.body.classList.remove('page-loading');
-
-      var bc = document.getElementById('barChart');
-      if (bc) {
-        bc.style.cursor = 'pointer';
-        bc.addEventListener('click', function(e) {
-          var rect  = bc.getBoundingClientRect();
-          var scale = bc.width / rect.width;
-          var mx    = (e.clientX - rect.left) * scale;
-          for (var i = 0; i < barState.length; i++) {
-            if (mx >= barState[i].x && mx <= barState[i].x + barState[i].w) {
-              drillDown(barState[i].idx); return;
-            }
-          }
-        });
-      }
-    };
   </script>
+  <!-- Semua fungsi chart & interaksi ada di MIMEs/js/js.js -->
+  <script src="MIMEs/js/js.js"></script>
+
 </body>
 </html>
