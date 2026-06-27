@@ -124,7 +124,7 @@ function drawBarChart() {
     var bx     = padL + i * slotW + (slotW - barW) / 2;
     var baseY  = padT + chartH;
     var cx     = bx + barW / 2;
-    barState.push({ x: bx, w: barW, idx: i, cx: cx, total: total, done: doneCounts[i], inprog: inprogCounts[i], noprod: noprodCounts[i], label: weekLabels[i] });
+    barState.push({ x: bx, w: barW, idx: i, cx: cx, total: total, done: doneCounts[i], inprog: inprogCounts[i], noprod: noprodCounts[i], label: weekLabels[i], wdate: weekDates[i] });
 
     /* Tinggi masing-masing segment */
     var np_h = noprodCounts[i] > 0 ? (noprodCounts[i] / tickMax) * chartH : 0;
@@ -191,8 +191,16 @@ function drawBarChart() {
   /* Tooltip on hover */
   if (hoveredBar >= 0 && hoveredBar < n) {
     var d = barState[hoveredBar];
+    var yyyy = parseInt(d.wdate.substr(0, 4), 10);
+    var mm   = parseInt(d.wdate.substr(4, 2), 10) - 1;
+    var dd   = parseInt(d.wdate.substr(6, 2), 10);
+    var dtFrom = new Date(yyyy, mm, dd);
+    var dtTo   = new Date(dtFrom.getTime() + 6 * 24 * 60 * 60 * 1000);
+    function p2(v) { return v < 10 ? '0' + v : '' + v; }
+    var rangeStr = p2(dtFrom.getDate()) + '/' + p2(dtFrom.getMonth() + 1) + ' - ' + p2(dtTo.getDate()) + '/' + p2(dtTo.getMonth() + 1);
+
     var lines = [
-      'Minggu ' + d.label,
+      rangeStr,
       'Selesai: ' + d.done,
       'Proses:   ' + d.inprog,
       'Belum:     ' + d.noprod,

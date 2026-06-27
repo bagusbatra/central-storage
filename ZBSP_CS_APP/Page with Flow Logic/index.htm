@@ -21,8 +21,8 @@ TYPES: BEGIN OF ty_so_prog,
          done   TYPE i,
          inprog TYPE i,
          noprod TYPE i,
-         rate   TYPE p LENGTH 8 DECIMALS 1,
-       END OF ty_so_prog.
+          rate   TYPE p LENGTH 8 DECIMALS 1,
+        END OF ty_so_prog.
 
 DATA: lv_user         TYPE string,
       lv_period_param TYPE string,
@@ -55,9 +55,7 @@ DATA: lv_user         TYPE string,
       lv_jinprog      TYPE string,
       lv_jnoprod      TYPE string,
       lv_recent_dd    TYPE string,
-      lv_sp_cnt       TYPE i,
-      lv_sp_w_i       TYPE i,
-      lv_sp_cls       TYPE string,
+
       lv_otd_on_time  TYPE i,
       lv_otd_total    TYPE i,
       lv_otd_rate     TYPE p DECIMALS 1,
@@ -79,8 +77,7 @@ DATA: lv_user         TYPE string,
       lt_mth          TYPE TABLE OF ty_mth,
       ls_mth          TYPE ty_mth,
       lt_so_prog      TYPE TABLE OF ty_so_prog,
-      ls_so_prog      TYPE ty_so_prog,
-      ls_sp_row       TYPE ty_so_prog.
+      ls_so_prog      TYPE ty_so_prog.
 
 lv_user = sy-uname.
 
@@ -501,61 +498,6 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
       </div>
     </div>
 
-    <!-- 5 SLOWEST SO -->
-    <div class="recent-card">
-      <div class="recent-header">
-        <h3>5 Sales Order dengan Progres Paling Lambat</h3>
-      </div>
-      <table class="recent-table">
-        <thead>
-          <tr>
-            <th style="width:18%;">Nomor SO</th>
-            <th style="width:18%;">Kode Customer</th>
-            <th style="width:10%;">Tipe</th>
-            <th style="width:14%;">Tanggal</th>
-            <th style="width:10%; text-align:center;">Items</th>
-            <th style="width:30%;">Progres Penyelesaian</th>
-          </tr>
-        </thead>
-        <tbody>
-          <%
-            SORT lt_so_prog BY rate ASCENDING.
-            CLEAR lv_sp_cnt.
-            LOOP AT lt_so_prog INTO ls_sp_row.
-              lv_sp_cnt = lv_sp_cnt + 1.
-              IF lv_sp_cnt > 5. EXIT. ENDIF.
-              lv_sp_w_i = ls_sp_row-rate.
-              IF ls_sp_row-rate >= 80.
-                lv_sp_cls = '#10b981'.
-              ELSEIF ls_sp_row-rate >= 50.
-                lv_sp_cls = '#f59e0b'.
-              ELSE.
-                lv_sp_cls = '#ef4444'.
-              ENDIF.
-          %>
-          <tr onclick="window.location.href='monitoring.htm?so_num=<%= ls_sp_row-vbeln %>&amp;search_btn=X'" style="cursor:pointer;">
-            <td><strong style="color:#1e3a8a;">SO #<%= ls_sp_row-vbeln %></strong></td>
-            <td><%= ls_sp_row-kunnr %></td>
-            <td><span class="badge-type"><%= ls_sp_row-auart %></span></td>
-            <td><%= ls_sp_row-erdat %></td>
-            <td style="text-align:center;font-weight:600;"><%= ls_sp_row-done %>/<%= ls_sp_row-total %></td>
-            <td>
-              <div style="display:flex;align-items:center;gap:8px;">
-                <div class="prog-bar">
-                  <div class="prog-bar-inner" style="width:<%= lv_sp_w_i %>%;background:<%= lv_sp_cls %>;"></div>
-                </div>
-                <span style="font-size:0.8rem;font-weight:700;color:<%= lv_sp_cls %>;white-space:nowrap;"><%= ls_sp_row-rate %>%</span>
-              </div>
-            </td>
-          </tr>
-          <% ENDLOOP. %>
-          <% IF lv_total_item = 0. %>
-          <tr><td colspan="6" class="no-data">Tidak ada data SO dalam periode ini di Plant 2000.</td></tr>
-          <% ENDIF. %>
-        </tbody>
-      </table>
-    </div>
-
     <!-- RECENT 10 SO -->
     <div class="recent-card">
       <div class="recent-header">
@@ -578,7 +520,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
               CLEAR lv_recent_dd.
               CONCATENATE ls_recent-erdat+6(2) '/' ls_recent-erdat+4(2) '/' ls_recent-erdat(4) INTO lv_recent_dd.
           %>
-          <tr>
+          <tr onclick="window.location.href='monitoring.htm?so_num=<%= ls_recent-vbeln %>&amp;search_btn=X'" style="cursor:pointer;">
             <td><strong style="color:#1e3a8a;">SO #<%= ls_recent-vbeln %></strong></td>
             <td><%= ls_recent-kunnr %></td>
             <td><span class="badge-type"><%= ls_recent-auart %></span></td>
