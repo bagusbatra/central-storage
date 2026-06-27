@@ -107,6 +107,7 @@ ELSE.
   lv_period_days = 30.
   lv_cls30       = 'active'.
   lv_period_lbl  = '30 Hari Terakhir'.
+  lv_period_param = '30'.
 ENDIF.
 lv_dfrom = sy-datum - lv_period_days.
 lv_dto   = sy-datum.
@@ -331,6 +332,24 @@ IF lt_vbak IS NOT INITIAL.
   ENDLOOP.
 
   SORT lt_cust_list BY so_cnt DESCENDING.
+
+  " Terapkan filter pencarian nama/kode customer
+  IF lv_cust_search IS NOT INITIAL.
+    DATA: lv_srch_up  TYPE string,
+          lv_name_up  TYPE string,
+          lv_kunnr_up TYPE string.
+    lv_srch_up = lv_cust_search.
+    TRANSLATE lv_srch_up TO UPPER CASE.
+    LOOP AT lt_cust_list INTO ls_cust_list.
+      lv_name_up  = ls_cust_list-name1.
+      lv_kunnr_up = ls_cust_list-kunnr.
+      TRANSLATE lv_name_up  TO UPPER CASE.
+      TRANSLATE lv_kunnr_up TO UPPER CASE.
+      IF lv_name_up NS lv_srch_up AND lv_kunnr_up NS lv_srch_up.
+        DELETE lt_cust_list.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
 ENDIF.
 
 " === KPI Thresholds ===
@@ -419,6 +438,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
 
     <!-- PERIOD FILTER -->
     <form method="post" action="index.htm">
+      <input type="hidden" name="cust_search" value="<%= lv_cust_search %>">
       <div class="filter-bar">
         <span class="filter-label">Periode:</span>
         <button type="submit" name="period" value="7"  class="filter-btn <%= lv_cls7 %>">7 Hari</button>
@@ -545,16 +565,31 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
     <!-- CUSTOMER BOXES -->
     <div style="margin-bottom:24px;">
       <form method="post" action="index.htm" style="margin-bottom:16px;">
+        <input type="hidden" name="period" value="<%= lv_period_param %>">
         <div style="display:flex;align-items:center;gap:8px;">
-          <input type="text" name="cust_search" value="<%= lv_cust_search %>" placeholder="Cari nama customer..." style="flex:1;padding:10px 14px;border:1px solid #d1d5db;border-radius:8px;font-size:0.85rem;background:#f9fafb;">
+          <input type="text" name="cust_search" id="cust_search" value="<%= lv_cust_search %>" placeholder="Cari nama atau kode customer..." style="flex:1;padding:10px 14px;border:1px solid #d1d5db;border-radius:8px;font-size:0.85rem;background:#f9fafb;">
           <button type="submit" style="padding:10px 20px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;">Cari</button>
+          <% IF lv_cust_search IS NOT INITIAL. %>
+          <a href="index.htm?period=<%= lv_period_param %>" style="padding:10px 16px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:8px;font-size:0.85rem;font-weight:600;text-decoration:none;">&#10005; Reset</a>
+          <% ENDIF. %>
         </div>
       </form>
+
+      <%
+        DATA: lv_cust_total TYPE i.
+        lv_cust_total = lines( lt_cust_list ).
+      %>
+      <% IF lv_cust_search IS NOT INITIAL. %>
+      <p style="font-size:0.82rem;color:#6b7280;margin-bottom:12px;">
+        Ditemukan <strong><%= lv_cust_total %></strong> customer untuk kata kunci &ldquo;<strong><%= lv_cust_search %></strong>&rdquo;
+      </p>
+      <% ENDIF. %>
+
       <div style="display:flex;flex-wrap:wrap;gap:12px;">
         <%
           CLEAR lv_cust_disp.
           LOOP AT lt_cust_list INTO ls_cust_list.
-            IF lv_cust_search IS INITIAL AND lv_cust_disp >= 3. EXIT. ENDIF.
+            IF lv_cust_search IS INITIAL AND lv_cust_disp >= 6. EXIT. ENDIF.
             lv_cust_disp = lv_cust_disp + 1.
         %>
         <a href="monitoring.htm?cust_num=<%= ls_cust_list-kunnr %>&amp;search_btn=X" class="cust-box">
@@ -564,8 +599,13 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
         </a>
         <% ENDLOOP. %>
       </div>
-      <% IF lt_cust_list IS INITIAL. %>
+
+      <% IF lt_cust_list IS INITIAL AND lv_cust_search IS NOT INITIAL. %>
+      <p style="text-align:center;padding:24px;color:#9ca3af;font-size:0.9rem;">Tidak ada customer yang cocok dengan &ldquo;<%= lv_cust_search %>&rdquo;.</p>
+      <% ELSEIF lt_cust_list IS INITIAL. %>
       <p style="text-align:center;padding:24px;color:#9ca3af;font-size:0.9rem;">Tidak ada data customer dalam periode ini.</p>
+      <% ELSEIF lv_cust_search IS INITIAL AND lv_cust_total > 6. %>
+      <p style="font-size:0.8rem;color:#9ca3af;margin-top:12px;text-align:center;">Menampilkan 6 dari <%= lv_cust_total %> customer. Gunakan kolom pencarian untuk melihat lebih banyak.</p>
       <% ENDIF. %>
     </div>
 
