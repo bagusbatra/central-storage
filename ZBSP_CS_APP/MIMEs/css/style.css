@@ -229,8 +229,9 @@ canvas { display: block; max-width: 100%; }
 .prog-yellow { background-color: #eab308; }
 .prog-blue   { background-color: #3b82f6; }
 .prog-green  { background-color: #22c55e; }
+.prog-black  { background-color: #1f2937; }
 .prog-pct { font-size: 0.8rem; font-weight: 700; margin-left: 8px; display: inline-block; vertical-align: middle; }
-.txt-green { color: #059669; } .txt-amber { color: #d97706; } .txt-blue { color: #2563eb; } .txt-red { color: #dc2626; }
+.txt-green { color: #059669; } .txt-amber { color: #d97706; } .txt-blue { color: #2563eb; } .txt-red { color: #dc2626; } .txt-black { color: #1f2937; }
 /* BOM wrapper: animasi dua arah (expand & collapse) via CSS transition */
 .bom-section-wrapper {
   overflow: hidden;

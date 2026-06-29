@@ -403,28 +403,22 @@ function viewDetails(vbeln) {
   xhr.send();
 }
 
-/** Toggle expand/collapse BOM row dengan animasi CSS dua arah */
+/** Toggle expand/collapse BOM row (server-rendered, no AJAX) */
 function toggleBOMRow(bomId) {
   var trContainer = document.getElementById('bom-row-' + bomId);
   var wrapper     = document.getElementById('wrapper-' + bomId);
   if (!trContainer || !wrapper) return;
 
   if (!wrapper.classList.contains('bom-open')) {
-    /* Tutup BOM lain hanya jika bukan mode "semua terbuka" */
     if (currentActiveBOMId && currentActiveBOMId !== bomId && currentActiveBOMId !== '*') {
       hideBOMRow(currentActiveBOMId);
     }
-    if (trContainer.getAttribute('data-loaded') !== 'true') {
-      fetchBOMRow(bomId, trContainer, wrapper);
-    } else {
-      openBOMRow(trContainer, wrapper, bomId);
-    }
+    openBOMRow(trContainer, wrapper, bomId);
   } else {
     hideBOMRow(bomId);
   }
 }
 
-/** Buka BOM row yang sudah loaded */
 function openBOMRow(trContainer, wrapper, bomId) {
   trContainer.style.display = 'table-row';
   void wrapper.offsetHeight;
@@ -432,39 +426,11 @@ function openBOMRow(trContainer, wrapper, bomId) {
   currentActiveBOMId = (currentActiveBOMId === '*') ? '*' : bomId;
 }
 
-/** Fetch BOM via AJAX lalu tampilkan hasilnya */
-function fetchBOMRow(bomId, trContainer, wrapper) {
-  var sep   = bomId.indexOf('-');
-  var vbeln = bomId.substring(0, sep);
-  var posnr = bomId.substring(sep + 1);
-
-  /* Tampilkan row dengan loading state dulu */
-  openBOMRow(trContainer, wrapper, bomId);
-
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET', 'monitoring_bom.htm?vbeln=' + encodeURIComponent(vbeln) + '&posnr=' + encodeURIComponent(posnr), true);
-  xhr.onload = function() {
-    var tbody = wrapper.querySelector('.bom-body');
-    if (tbody) {
-      tbody.innerHTML = (xhr.status === 200) ? xhr.responseText
-        : '<tr><td colspan="3" style="color:#ef4444;text-align:center;padding:12px;">Gagal memuat BOM (HTTP ' + xhr.status + ').</td></tr>';
-    }
-    trContainer.setAttribute('data-loaded', 'true');
-  };
-  xhr.onerror = function() {
-    var tbody = wrapper.querySelector('.bom-body');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="3" style="color:#ef4444;text-align:center;padding:12px;">Error koneksi.</td></tr>';
-  };
-  xhr.send();
-}
-
-/** Collapse BOM row dengan animasi; sembunyikan TR setelah transisi selesai */
 function hideBOMRow(bomId) {
   var wrapper     = document.getElementById('wrapper-' + bomId);
   var trContainer = document.getElementById('bom-row-' + bomId);
   if (!wrapper) return;
   wrapper.classList.remove('bom-open');
-  /* Tunggu durasi transisi CSS (330ms) sebelum menyembunyikan TR */
   setTimeout(function() {
     if (trContainer && !wrapper.classList.contains('bom-open')) {
       trContainer.style.display = 'none';
@@ -634,13 +600,9 @@ function expandAllBOM() {
     var id = tr.id.replace('bom-row-', '');
     var wrapper = document.getElementById('wrapper-' + id);
     if (!wrapper) return;
-    if (tr.getAttribute('data-loaded') !== 'true') {
-      fetchBOMRow(id, tr, wrapper);
-    } else {
-      tr.style.display = 'table-row';
-      void wrapper.offsetHeight;
-      wrapper.classList.add('bom-open');
-    }
+    tr.style.display = 'table-row';
+    void wrapper.offsetHeight;
+    wrapper.classList.add('bom-open');
   });
   currentActiveBOMId = '*';
 }

@@ -52,6 +52,40 @@ DATA: lv_req_vb      TYPE string,
       lv_status_cls  TYPE string,
       lv_ftrmi_str   TYPE string.
 
+TYPES: BEGIN OF ty_mard_agg,
+         matnr TYPE mara-matnr,
+         labst TYPE mard-labst,
+       END OF ty_mard_agg.
+TYPES: BEGIN OF ty_ekpo_slim,
+         matnr TYPE ekpo-matnr,
+         menge TYPE ekpo-menge,
+         eildt TYPE ekpo-eildt,
+       END OF ty_ekpo_slim.
+
+DATA: lt_mast_pre   TYPE TABLE OF mast,
+      lt_stpo_pre   TYPE TABLE OF stpo,
+      lt_makt_pre   TYPE TABLE OF makt,
+      lt_mard_raw   TYPE TABLE OF mard,
+      lt_mard_agg   TYPE TABLE OF ty_mard_agg,
+      lt_ekpo_pre   TYPE TABLE OF ty_ekpo_slim,
+      lt_local_bom  TYPE TABLE OF stpo,
+      ls_mast_pre   TYPE mast,
+      ls_stpo_wk    TYPE stpo,
+      ls_bom_row    TYPE stpo,
+      ls_makt_pre   TYPE makt,
+      ls_mard_raw   TYPE mard,
+      ls_mard_agg   TYPE ty_mard_agg,
+      ls_ekpo_pre   TYPE ty_ekpo_slim.
+
+DATA: lv_makt_text  TYPE maktx,
+      lv_mast_idx   TYPE i,
+      lv_stpo_idx   TYPE i,
+      lv_has_bom    TYPE abap_bool,
+      lv_comp_labst TYPE mard-labst,
+      lv_open_qty   TYPE p DECIMALS 3,
+      lv_po_date    TYPE string,
+      lv_ekpo_start TYPE i.
+
 lv_req_vb = request->get_form_field( 'vbeln' ).
 
 IF lv_req_vb IS NOT INITIAL.
@@ -140,10 +174,59 @@ IF lv_req_vb IS NOT INITIAL.
     lv_ovr_pct = lv_tot_done * 100 / lv_tot_items.
   ENDIF.
   lv_ovr_cls = 'prog-red'.
-  IF lv_ovr_pct >= 100. lv_ovr_cls = 'prog-green'.
+  IF lv_tot_noprd = lv_tot_items AND lv_tot_items > 0.
+    lv_ovr_cls = 'prog-black'.
+  ELSEIF lv_ovr_pct >= 100. lv_ovr_cls = 'prog-green'.
   ELSEIF lv_ovr_pct > 70. lv_ovr_cls = 'prog-blue'.
   ELSEIF lv_ovr_pct > 45. lv_ovr_cls = 'prog-yellow'.
   ELSEIF lv_ovr_pct > 20. lv_ovr_cls = 'prog-orange'.
+  ENDIF.
+
+  " 6. BOM: MAST → STPO → MAKT (binary search ready) + MARD + EKPO
+  IF lt_local_item IS NOT INITIAL.
+    SELECT matnr stlnr FROM mast
+      INTO CORRESPONDING FIELDS OF TABLE lt_mast_pre
+      FOR ALL ENTRIES IN lt_local_item
+      WHERE matnr = lt_local_item-matnr
+        AND werks = lc_plant.
+    SORT lt_mast_pre BY matnr stlnr.
+
+    IF lt_mast_pre IS NOT INITIAL.
+      SELECT stlnr idnrk menge meins FROM stpo
+        INTO CORRESPONDING FIELDS OF TABLE lt_stpo_pre
+        FOR ALL ENTRIES IN lt_mast_pre
+        WHERE stlnr = lt_mast_pre-stlnr.
+      SORT lt_stpo_pre BY stlnr.
+
+      SELECT matnr maktx FROM makt
+        INTO CORRESPONDING FIELDS OF TABLE lt_makt_pre
+        FOR ALL ENTRIES IN lt_stpo_pre
+        WHERE matnr = lt_stpo_pre-idnrk
+          AND spras = sy-langu.
+      SORT lt_makt_pre BY matnr.
+
+      SELECT matnr labst FROM mard
+        INTO CORRESPONDING FIELDS OF TABLE lt_mard_raw
+        FOR ALL ENTRIES IN lt_stpo_pre
+        WHERE matnr = lt_stpo_pre-idnrk
+          AND werks = lc_plant
+          AND labst > 0.
+      LOOP AT lt_mard_raw INTO ls_mard_raw.
+        ls_mard_agg-matnr = ls_mard_raw-matnr.
+        ls_mard_agg-labst = ls_mard_raw-labst.
+        COLLECT ls_mard_agg INTO lt_mard_agg.
+      ENDLOOP.
+      SORT lt_mard_agg BY matnr.
+
+      SELECT matnr menge eildt FROM ekpo
+        INTO CORRESPONDING FIELDS OF TABLE lt_ekpo_pre
+        FOR ALL ENTRIES IN lt_stpo_pre
+        WHERE matnr = lt_stpo_pre-idnrk
+          AND werks = lc_plant
+          AND loekz = ' '
+          AND elikz = ' '.
+      SORT lt_ekpo_pre BY matnr eildt.
+    ENDIF.
   ENDIF.
 ENDIF.
 %>
@@ -192,7 +275,7 @@ ENDIF.
 
     <div class="sum-item-list">
       <% LOOP AT lt_local_item INTO ls_item_row.
-           lv_sum_prog = 0. lv_sum_cls = 'prog-red'.
+           lv_sum_prog = 0. lv_sum_cls = 'prog-black'.
            IF ls_item_row-psmng > 0.
              lv_sum_prog = ls_item_row-wemng * 100 / ls_item_row-psmng.
              IF lv_sum_prog > 100. lv_sum_prog = 100. ENDIF.
@@ -200,6 +283,7 @@ ENDIF.
              ELSEIF lv_sum_prog > 70. lv_sum_cls = 'prog-blue'.
              ELSEIF lv_sum_prog > 45. lv_sum_cls = 'prog-yellow'.
              ELSEIF lv_sum_prog > 20. lv_sum_cls = 'prog-orange'.
+             ELSE. lv_sum_cls = 'prog-red'.
              ENDIF.
            ENDIF.
       %>
@@ -294,7 +378,7 @@ ENDIF.
               <% ENDIF. %>
             </td>
           </tr>
-          <tr id="bom-row-<%= lv_vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;" data-loaded="false">
+          <tr id="bom-row-<%= lv_vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;">
             <td colspan="7" style="padding: 0 16px 4px 16px;">
               <div class="bom-section-wrapper" id="wrapper-<%= lv_vbeln %>-<%= ls_item_row-posnr %>">
                 <div class="bom-title">Daftar Komponen BOM (MAST/STPO)</div>
@@ -306,8 +390,75 @@ ENDIF.
                       <th style="width: 20%; text-align: right;">Kuantitas</th>
                     </tr>
                   </thead>
-                  <tbody class="bom-body">
-                    <tr><td colspan="3" class="bom-loading">Memuat...</td></tr>
+                  <tbody>
+                    <%
+                      lv_has_bom = abap_false.
+                      REFRESH lt_local_bom.
+                      READ TABLE lt_mast_pre WITH KEY matnr = ls_item_row-matnr
+                        BINARY SEARCH TRANSPORTING NO FIELDS.
+                      IF sy-subrc = 0.
+                        lv_mast_idx = sy-tabix.
+                        LOOP AT lt_mast_pre FROM lv_mast_idx INTO ls_mast_pre.
+                          IF ls_mast_pre-matnr <> ls_item_row-matnr. EXIT. ENDIF.
+                          READ TABLE lt_stpo_pre WITH KEY stlnr = ls_mast_pre-stlnr
+                            BINARY SEARCH TRANSPORTING NO FIELDS.
+                          IF sy-subrc = 0.
+                            lv_stpo_idx = sy-tabix.
+                            LOOP AT lt_stpo_pre FROM lv_stpo_idx INTO ls_stpo_wk.
+                              IF ls_stpo_wk-stlnr <> ls_mast_pre-stlnr. EXIT. ENDIF.
+                              APPEND ls_stpo_wk TO lt_local_bom.
+                            ENDLOOP.
+                          ENDIF.
+                        ENDLOOP.
+                      ENDIF.
+                      IF lt_local_bom IS NOT INITIAL.
+                        LOOP AT lt_local_bom INTO ls_bom_row.
+                          lv_has_bom = abap_true.
+                          CLEAR lv_makt_text.
+                          READ TABLE lt_makt_pre INTO ls_makt_pre
+                            WITH KEY matnr = ls_bom_row-idnrk BINARY SEARCH.
+                          IF sy-subrc = 0. lv_makt_text = ls_makt_pre-maktx. ENDIF.
+                          CLEAR: ls_mard_agg, lv_comp_labst.
+                          READ TABLE lt_mard_agg INTO ls_mard_agg
+                            WITH KEY matnr = ls_bom_row-idnrk BINARY SEARCH.
+                          IF sy-subrc = 0. lv_comp_labst = ls_mard_agg-labst. ENDIF.
+                          lv_open_qty = 0. CLEAR lv_po_date.
+                          READ TABLE lt_ekpo_pre WITH KEY matnr = ls_bom_row-idnrk
+                            BINARY SEARCH TRANSPORTING NO FIELDS.
+                          IF sy-subrc = 0.
+                            lv_ekpo_start = sy-tabix.
+                            LOOP AT lt_ekpo_pre FROM lv_ekpo_start INTO ls_ekpo_pre.
+                              IF ls_ekpo_pre-matnr <> ls_bom_row-idnrk. EXIT. ENDIF.
+                              IF ls_ekpo_pre-menge > 0.
+                                lv_open_qty = lv_open_qty + ls_ekpo_pre-menge.
+                                IF lv_po_date IS INITIAL AND ls_ekpo_pre-eildt IS NOT INITIAL.
+                                  lv_po_date = ls_ekpo_pre-eildt+6(2) && '/' && ls_ekpo_pre-eildt+4(2).
+                                ENDIF.
+                              ENDIF.
+                            ENDLOOP.
+                          ENDIF.
+                    %>
+                    <tr>
+                      <td>
+                        <code class="mat-link"
+                              data-matnr="<%= ls_bom_row-idnrk %>"
+                              data-name="<%= lv_makt_text %>"
+                              data-need="<%= ls_bom_row-menge %>"
+                              data-unit="<%= ls_bom_row-meins %>"
+                              data-stock="<%= lv_comp_labst %>"
+                              data-po="<%= lv_open_qty %>"
+                              data-eta="<%= lv_po_date %>"
+                              onclick="showMatTooltip(this)">
+                          <%= ls_bom_row-idnrk %>
+                        </code>
+                      </td>
+                      <td><%= lv_makt_text %></td>
+                      <td style="text-align: right; font-weight:600;"><%= ls_bom_row-menge %> <%= ls_bom_row-meins %></td>
+                    </tr>
+                    <% ENDLOOP. ENDIF. %>
+                    <% IF lv_has_bom = abap_false. %>
+                    <tr><td colspan="3" style="color:#9ca3af; text-align:center; padding:12px;">BOM belum terpasang di Plant 2000.</td></tr>
+                    <% ENDIF. %>
                   </tbody>
                 </table>
               </div>

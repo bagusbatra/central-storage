@@ -356,7 +356,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                   lv_stat_label = 'Belum Produksi'.
                 ENDIF.
                 lv_pf_cls = 'prog-red'. lv_pf_txt = 'txt-red'.
-                IF lv_done_pct >= 100. lv_pf_cls = 'prog-green'. lv_pf_txt = 'txt-green'.
+                IF ls_so_stat_r-noprod = ls_so_stat_r-total.
+                  lv_pf_cls = 'prog-black'. lv_pf_txt = 'txt-black'.
+                ELSEIF lv_done_pct >= 100. lv_pf_cls = 'prog-green'. lv_pf_txt = 'txt-green'.
                 ELSEIF lv_done_pct > 70. lv_pf_cls = 'prog-blue'. lv_pf_txt = 'txt-blue'.
                 ELSEIF lv_done_pct > 45. lv_pf_cls = 'prog-yellow'. lv_pf_txt = 'txt-amber'.
                 ELSEIF lv_done_pct > 20. lv_pf_cls = 'prog-orange'. lv_pf_txt = 'txt-amber'.
