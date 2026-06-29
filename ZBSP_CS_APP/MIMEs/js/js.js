@@ -1,22 +1,28 @@
 /* =======================================================================
    Dashboard Central Storage KMI 2 — Plant 2000
-   Shared JS for index.htm & monitoring.htm
-   Data variables (weekLabels, doneCounts, dll.) dideklarasikan sebagai
-   inline <script> di index.htm karena mengandung nilai <%= %> dari ABAP.
+   Shared JS: index.htm & monitoring.htm
+   Data ABAP (weekLabels, doneCounts, dll.) di-inject via inline <script>
+   di index.htm karena mengandung nilai <%= %> dari ABAP server-side.
    ======================================================================= */
 
-var barState = [];
+/** Tunda eksekusi fn hingga delay ms setelah panggilan terakhir (anti-flicker resize) */
+function debounce(fn, delay) {
+  var t;
+  return function() { clearTimeout(t); t = setTimeout(fn, delay); };
+}
+
+var barState   = [];
 var hoveredBar = -1;
 
-/* ===== Monitoring shared state ===== */
-var rowsPerPage = 5;
-var currentPage = 1;
-var soCards = [];
+/* ===== State monitoring (sidebar paginasi & panel aktif) ===== */
+var rowsPerPage        = 5;
+var currentPage        = 1;
+var soCards            = [];
 var currentActiveVBELN = null;
 var currentActiveBOMId = null;
 
 /* ------------------------------------------------------------------
-   Helper: rounded rectangle (semua sudut)
+   Helper: kotak dengan sudut bulat semua sisi (canvas 2D)
    ------------------------------------------------------------------ */
 function drawRoundRect(ctx, x, y, w, h, r) {
   if (w < 2 * r) r = w / 2;
@@ -31,7 +37,7 @@ function drawRoundRect(ctx, x, y, w, h, r) {
 }
 
 /* ------------------------------------------------------------------
-   Helper: rounded top corners saja (untuk segment teratas stacked bar)
+   Helper: sudut bulat hanya di atas (untuk segment teratas stacked bar)
    ------------------------------------------------------------------ */
 function drawRoundTop(ctx, x, y, w, h, r) {
   if (h <= 0) return;
@@ -47,8 +53,8 @@ function drawRoundTop(ctx, x, y, w, h, r) {
 }
 
 /* ------------------------------------------------------------------
-   Drill-down: klik bar → buka monitoring.htm dengan filter tanggal
-   weekDates[weekIdx] berformat YYYYMMDD (Senin awal minggu)
+   Drill-down: klik bar → navigasi ke monitoring.htm dengan rentang
+   tanggal minggu yang diklik (weekDates berformat YYYYMMDD)
    ------------------------------------------------------------------ */
 function drillDown(weekIdx) {
   var wdate = weekDates[weekIdx];
@@ -65,8 +71,9 @@ function drillDown(weekIdx) {
 }
 
 /* ------------------------------------------------------------------
-   Stacked bar chart: Selesai (hijau) / Proses (biru) / Belum (abu)
-   Sumber data: weekLabels, weekDates, doneCounts, inprogCounts, noprodCounts
+   Stacked bar chart (index.htm) — Selesai / Proses / Belum per minggu.
+   canvas.width dihitung dari lebar parent setiap render agar responsif
+   saat window di-resize (dipanggil ulang oleh resize handler).
    ------------------------------------------------------------------ */
 function drawBarChart() {
   var canvas = document.getElementById('barChart');
@@ -90,7 +97,6 @@ function drawBarChart() {
     return;
   }
 
-  /* Hitung total per minggu dan nilai maksimum */
   var totals = [], max = 0;
   for (var i = 0; i < n; i++) {
     totals[i] = doneCounts[i] + inprogCounts[i] + noprodCounts[i];
@@ -101,7 +107,6 @@ function drawBarChart() {
   var tickMax  = tickStep * 5;
   if (tickMax === 0) tickMax = 5;
 
-  /* Garis grid horizontal + label Y */
   for (var t = 0; t <= 5; t++) {
     var yv = tickMax * t / 5;
     var yp = padT + chartH - (yv / tickMax) * chartH;
@@ -120,24 +125,23 @@ function drawBarChart() {
   barState  = [];
 
   for (var i = 0; i < n; i++) {
-    var total  = totals[i];
-    var bx     = padL + i * slotW + (slotW - barW) / 2;
-    var baseY  = padT + chartH;
-    var cx     = bx + barW / 2;
-    barState.push({ x: bx, w: barW, idx: i, cx: cx, total: total, done: doneCounts[i], inprog: inprogCounts[i], noprod: noprodCounts[i], label: weekLabels[i], wdate: weekDates[i] });
+    var total = totals[i];
+    var bx    = padL + i * slotW + (slotW - barW) / 2;
+    var baseY = padT + chartH;
+    var cx    = bx + barW / 2;
+    barState.push({ x: bx, w: barW, idx: i, cx: cx, total: total,
+      done: doneCounts[i], inprog: inprogCounts[i], noprod: noprodCounts[i],
+      label: weekLabels[i], wdate: weekDates[i] });
 
-    /* Tinggi masing-masing segment */
     var np_h = noprodCounts[i] > 0 ? (noprodCounts[i] / tickMax) * chartH : 0;
     var ip_h = inprogCounts[i] > 0 ? (inprogCounts[i] / tickMax) * chartH : 0;
     var dn_h = doneCounts[i]   > 0 ? (doneCounts[i]   / tickMax) * chartH : 0;
 
-    /* Tentukan segment paling atas (dapat rounded top) */
     var topSeg = 0;
-    if (doneCounts[i]    > 0) topSeg = 1;
+    if (doneCounts[i]      > 0) topSeg = 1;
     else if (inprogCounts[i] > 0) topSeg = 2;
     else if (noprodCounts[i] > 0) topSeg = 3;
 
-    /* Gambar dari bawah ke atas: abu → biru → hijau */
     var curY = baseY;
     if (np_h > 0) {
       curY -= np_h;
@@ -157,28 +161,25 @@ function drawBarChart() {
       ctx.fillStyle = '#10b981'; ctx.fill();
     }
 
-    /* Badge angka total di atas bar */
     if (total > 0) {
       var topY = padT + chartH - (total / tickMax) * chartH;
-      ctx.font  = 'bold 12px Segoe UI, Arial, sans-serif';
-      var bTxt  = String(total);
-      var bW    = ctx.measureText(bTxt).width + 14;
-      var bH    = 20;
-      var bX    = cx - bW / 2;
-      var bY    = topY - bH - 6;
+      ctx.font = 'bold 12px Segoe UI, Arial, sans-serif';
+      var bTxt = String(total);
+      var bW   = ctx.measureText(bTxt).width + 14;
+      var bH   = 20;
+      var bX   = cx - bW / 2;
+      var bY   = topY - bH - 6;
       drawRoundRect(ctx, bX, bY, bW, bH, 10);
       ctx.fillStyle = '#1e3a8a'; ctx.fill();
       ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
       ctx.fillText(bTxt, cx, bY + bH - 5);
     }
 
-    /* Marker garis tipis untuk bar kosong */
     if (total === 0) {
       ctx.beginPath(); ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
       ctx.moveTo(cx, padT + chartH - 4); ctx.lineTo(cx, padT + chartH); ctx.stroke();
     }
 
-    /* Label X: "Minggu" + DD/MM dua baris */
     ctx.fillStyle = '#6b7280';
     ctx.font = '9px Segoe UI, Arial, sans-serif';
     ctx.textAlign = 'center';
@@ -188,67 +189,83 @@ function drawBarChart() {
     ctx.fillText(weekLabels[i], cx, padT + chartH + 26);
   }
 
-  /* Tooltip on hover */
+  /* Tooltip saat hover bar — posisi di atas bar, panah mengarah ke bawah */
   if (hoveredBar >= 0 && hoveredBar < n) {
-    var d = barState[hoveredBar];
+    var d    = barState[hoveredBar];
     var yyyy = parseInt(d.wdate.substr(0, 4), 10);
     var mm   = parseInt(d.wdate.substr(4, 2), 10) - 1;
     var dd   = parseInt(d.wdate.substr(6, 2), 10);
-    var dtFrom = new Date(yyyy, mm, dd);
-    var dtTo   = new Date(dtFrom.getTime() + 6 * 24 * 60 * 60 * 1000);
+    var dtF  = new Date(yyyy, mm, dd);
+    var dtT  = new Date(dtF.getTime() + 6 * 24 * 60 * 60 * 1000);
     function p2(v) { return v < 10 ? '0' + v : '' + v; }
-    var rangeStr = p2(dtFrom.getDate()) + '/' + p2(dtFrom.getMonth() + 1) + ' - ' + p2(dtTo.getDate()) + '/' + p2(dtTo.getMonth() + 1);
+    var rangeStr = p2(dtF.getDate()) + '/' + p2(dtF.getMonth() + 1) +
+                   ' – ' + p2(dtT.getDate()) + '/' + p2(dtT.getMonth() + 1);
+    var rate = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
 
     var lines = [
       rangeStr,
-      'Selesai: ' + d.done,
-      'Proses:   ' + d.inprog,
-      'Belum:     ' + d.noprod,
-      'Total:     ' + d.total
+      'Total SO   : ' + d.total,
+      'Selesai     : ' + d.done + '  (' + rate + '%)',
+      'Proses      : ' + d.inprog,
+      'Belum       : ' + d.noprod
     ];
+
     ctx.font = '12px Segoe UI, Arial, sans-serif';
-    var tw = 0;
+    var ttw = 0;
     for (var li = 0; li < lines.length; li++) {
+      ctx.font = li === 0 ? 'bold 12px Segoe UI, Arial, sans-serif' : '12px Segoe UI, Arial, sans-serif';
       var lw = ctx.measureText(lines[li]).width;
-      if (lw > tw) tw = lw;
+      if (lw > ttw) ttw = lw;
     }
-    var th = lines.length * 20 + 12;
-    tw += 24;
-    var tx = d.cx + d.w / 2 + 8;
-    var ty = padT + chartH - (d.total / tickMax) * chartH - th - 4;
-    if (ty < padT) ty = padT + 4;
-    if (tx + tw > W - padR) tx = d.cx - d.w / 2 - tw - 8;
+    var tth = lines.length * 20 + 16;
+    ttw += 28;
 
-    /* Background */
-    drawRoundRect(ctx, tx, ty, tw, th, 6);
+    /* Posisi: di atas puncak bar, horizontal center pada bar */
+    var barTopY = padT + chartH - (d.total > 0 ? (d.total / tickMax) * chartH : 0);
+    var tx = d.cx - ttw / 2;
+    var ty = barTopY - tth - 14;
+    if (ty < padT + 4) ty = padT + 4;
+    if (tx < padL)     tx = padL;
+    if (tx + ttw > W - padR) tx = W - padR - ttw;
+
+    /* Kotak tooltip */
+    drawRoundRect(ctx, tx, ty, ttw, tth, 7);
     ctx.fillStyle = '#1f2937'; ctx.fill();
 
-    /* Arrow pointing down to bar */
+    /* Panah ke bawah mengarah ke bar */
+    var arrowX = Math.max(tx + 12, Math.min(d.cx, tx + ttw - 12));
     ctx.beginPath();
-    ctx.moveTo(tx + tw / 2 - 6, ty + th);
-    ctx.lineTo(tx + tw / 2, ty + th + 7);
-    ctx.lineTo(tx + tw / 2 + 6, ty + th);
+    ctx.moveTo(arrowX - 6, ty + tth);
+    ctx.lineTo(arrowX,     ty + tth + 9);
+    ctx.lineTo(arrowX + 6, ty + tth);
     ctx.fillStyle = '#1f2937'; ctx.fill();
 
-    /* Text lines */
-    ctx.fillStyle = '#ffffff';
+    /* Teks */
     ctx.textAlign = 'left';
     for (var li = 0; li < lines.length; li++) {
-      var isFirst = (li === 0);
-      ctx.font = isFirst ? 'bold 12px Segoe UI, Arial, sans-serif' : '12px Segoe UI, Arial, sans-serif';
-      ctx.fillStyle = isFirst ? '#93c5fd' : '#ffffff';
-      ctx.fillText(lines[li], tx + 12, ty + 20 + li * 20);
+      ctx.font      = li === 0 ? 'bold 12px Segoe UI, Arial, sans-serif' : '12px Segoe UI, Arial, sans-serif';
+      ctx.fillStyle = li === 0 ? '#93c5fd'
+                    : li === 2 ? '#86efac'
+                    : '#ffffff';
+      ctx.fillText(lines[li], tx + 12, ty + 18 + li * 20);
     }
   }
 }
 
 /* ------------------------------------------------------------------
-   Donut chart: Selesai / Proses / Belum
-   Sumber data: doneCount, progCount, noprodCount
+   Donut chart (index.htm) — distribusi status item produksi.
+   Dimensi canvas disesuaikan dengan lebar parent tiap render (responsif).
    ------------------------------------------------------------------ */
 function drawDonutChart() {
   var canvas = document.getElementById('donutChart');
   if (!canvas || !canvas.getContext) return;
+
+  /* Ukuran responsif: ambil dari lebar parent, cap 220px */
+  var parent = canvas.parentElement;
+  var size   = parent ? Math.min(parent.clientWidth - 32, 220) : 200;
+  canvas.width  = size;
+  canvas.height = size;
+
   var ctx   = canvas.getContext('2d');
   var W = canvas.width, H = canvas.height;
   var cx = W / 2, cy = H / 2;
@@ -298,33 +315,42 @@ function drawDonutChart() {
   ctx.fillText('selesai', cx, cy + 20);
 }
 
-/* ===== Monitoring functions ===== */
+/* ==================== Monitoring functions ==================== */
+
+/** Baca nomor halaman aktif dari URL hash (#page=N), default 1 */
+function getPageFromHash() {
+  var match = window.location.hash.match(/page=(\d+)/);
+  return match ? Math.max(1, parseInt(match[1], 10)) : 1;
+}
+
+/** Render paginasi sidebar SO dan perbarui URL hash */
 function renderPagination() {
   var totalPages = Math.ceil(soCards.length / rowsPerPage) || 1;
   if (currentPage > totalPages) currentPage = totalPages;
   if (currentPage < 1) currentPage = 1;
 
   var startIndex = (currentPage - 1) * rowsPerPage;
-  var endIndex = startIndex + rowsPerPage;
+  var endIndex   = startIndex + rowsPerPage;
 
   for (var i = 0; i < soCards.length; i++) {
-    if (i >= startIndex && i < endIndex) {
-      soCards[i].style.display = 'block';
-    } else {
-      soCards[i].style.display = 'none';
-    }
+    soCards[i].style.display = (i >= startIndex && i < endIndex) ? 'block' : 'none';
   }
 
   document.getElementById('page-indicator').innerText = currentPage + ' / ' + totalPages;
   document.getElementById('btn-prev').disabled = (currentPage === 1);
   document.getElementById('btn-next').disabled = (currentPage === totalPages);
+
+  /* Simpan halaman aktif di URL hash agar state bertahan saat back/forward */
+  history.replaceState(null, '', window.location.pathname + window.location.search + '#page=' + currentPage);
 }
 
+/** Navigasi paginasi: direction +1 (next) atau -1 (prev) */
 function changePage(direction) {
   currentPage += direction;
   renderPagination();
 }
 
+/** Muat detail panel SO via AJAX; tampilkan skeleton selama loading */
 function viewDetails(vbeln) {
   if (currentActiveVBELN) {
     var oldRow = document.getElementById('row-' + currentActiveVBELN);
@@ -332,11 +358,22 @@ function viewDetails(vbeln) {
   }
   currentActiveVBELN = vbeln;
   currentActiveBOMId = null;
-
   document.getElementById('row-' + vbeln).classList.add('active');
 
   var container = document.getElementById('main-panel-container');
-  container.innerHTML = '<div class="placeholder-ctx"><p style="color:#6b7280;">Memuat data SO #' + vbeln + '&hellip;</p></div>';
+
+  /* Skeleton loading — tampil selama server memproses ABAP query */
+  container.innerHTML =
+    '<div class="detail-content active">' +
+    '  <div class="detail-header"><div class="skel-line skel-title"></div></div>' +
+    '  <div class="skel-table">' +
+    '    <div class="skel-thead"></div>' +
+    '    <div class="skel-row"></div>' +
+    '    <div class="skel-row"></div>' +
+    '    <div class="skel-row" style="width:80%"></div>' +
+    '    <div class="skel-row" style="width:60%"></div>' +
+    '  </div>' +
+    '</div>';
 
   var xhr = new XMLHttpRequest();
   xhr.open('GET', 'monitoring_detail.htm?vbeln=' + encodeURIComponent(vbeln), true);
@@ -353,54 +390,253 @@ function viewDetails(vbeln) {
   xhr.send();
 }
 
+/** Toggle expand/collapse BOM row dengan animasi CSS dua arah */
 function toggleBOMRow(bomId) {
   var trContainer = document.getElementById('bom-row-' + bomId);
-  var wrapper = document.getElementById('wrapper-' + bomId);
+  var wrapper     = document.getElementById('wrapper-' + bomId);
+  if (!trContainer || !wrapper) return;
 
-  if (trContainer.style.display === 'none') {
-    if (currentActiveBOMId && currentActiveBOMId !== bomId) {
+  if (!wrapper.classList.contains('bom-open')) {
+    /* Expand: tutup BOM lain hanya jika bukan mode "semua terbuka" */
+    if (currentActiveBOMId && currentActiveBOMId !== bomId && currentActiveBOMId !== '*') {
       hideBOMRow(currentActiveBOMId);
     }
     trContainer.style.display = 'table-row';
-    wrapper.style.display = 'block';
-    currentActiveBOMId = bomId;
+    void wrapper.offsetHeight; /* reflow — wajib agar transisi berjalan dari 0 */
+    wrapper.classList.add('bom-open');
+    currentActiveBOMId = (currentActiveBOMId === '*') ? '*' : bomId;
   } else {
     hideBOMRow(bomId);
   }
 }
 
+/** Collapse BOM row dengan animasi; sembunyikan TR setelah transisi selesai */
 function hideBOMRow(bomId) {
+  var wrapper     = document.getElementById('wrapper-' + bomId);
   var trContainer = document.getElementById('bom-row-' + bomId);
-  var wrapper = document.getElementById('wrapper-' + bomId);
-  if (trContainer) trContainer.style.display = 'none';
-  if (wrapper) wrapper.style.display = 'none';
+  if (!wrapper) return;
+  wrapper.classList.remove('bom-open');
+  /* Tunggu durasi transisi CSS (330ms) sebelum menyembunyikan TR */
+  setTimeout(function() {
+    if (trContainer && !wrapper.classList.contains('bom-open')) {
+      trContainer.style.display = 'none';
+    }
+  }, 330);
   if (currentActiveBOMId === bomId) currentActiveBOMId = null;
 }
 
 /* ------------------------------------------------------------------
-   Entry point: gambar chart / init monitoring setelah DOM siap
+   Material Tooltip — muncul saat klik kode material di tabel BOM.
+   Data stok (MARD) dan open PO (EKPO) diembed sebagai data attributes
+   oleh ABAP, sehingga tidak perlu request tambahan ke server.
+   ------------------------------------------------------------------ */
+var matTooltipEl  = null; /** elemen tooltip aktif */
+var matTooltipSrc = null; /** <code> element yang membuka tooltip */
+
+/** Tampilkan atau toggle tooltip material. Toggle jika klik elemen yg sama. */
+function showMatTooltip(el) {
+  if (matTooltipEl) {
+    var same = (matTooltipSrc === el);
+    closeMatTooltip();
+    if (same) return;
+  }
+  matTooltipSrc = el;
+
+  var matnr = el.getAttribute('data-matnr') || '';
+  var name  = el.getAttribute('data-name')  || '—';
+  var need  = parseFloat(el.getAttribute('data-need')  || '0');
+  var unit  = el.getAttribute('data-unit')  || '';
+  var stock = parseFloat(el.getAttribute('data-stock') || '0');
+  var po    = parseFloat(el.getAttribute('data-po')    || '0');
+  var eta   = el.getAttribute('data-eta')   || '';
+
+  var isOk  = stock >= need;
+  var badge = isOk
+    ? '<span class="mat-tt-ok">✓ Cukup</span>'
+    : '<span class="mat-tt-warn">⚠ Kurang Stok</span>';
+
+  function fmt(n) { return n.toLocaleString('id-ID', { maximumFractionDigits: 3 }); }
+
+  var html =
+    '<div class="mat-tooltip" id="mat-tt">' +
+    '  <span class="mat-tt-close" onclick="closeMatTooltip()">×</span>' +
+    '  <div class="mat-tt-code">' + matnr + '</div>' +
+    '  <div class="mat-tt-name">' + name + '</div>' +
+    '  <div class="mat-tt-divider"></div>' +
+    '  <div class="mat-tt-row"><span>Dibutuhkan BOM</span><span>' + fmt(need) + ' ' + unit + '</span></div>' +
+    '  <div class="mat-tt-row"><span>Stok tersedia</span><span>' + fmt(stock) + ' ' + unit + ' ' + badge + '</span></div>';
+
+  if (po > 0) {
+    html +=
+    '  <div class="mat-tt-row"><span>Open PO masuk</span><span>' + fmt(po) + ' ' + unit;
+    if (eta) html += ' <span class="mat-tt-eta">ETA ' + eta + '</span>';
+    html += '</span></div>';
+  } else {
+    html += '  <div class="mat-tt-row"><span>Open PO masuk</span><span class="mat-tt-none">Tidak ada</span></div>';
+  }
+
+  html += '</div>';
+
+  var wrap = document.createElement('div');
+  wrap.innerHTML = html;
+  var tt = wrap.firstChild;
+  document.body.appendChild(tt);
+
+  /* Posisi: di bawah element yang diklik, clamp agar tidak keluar layar */
+  var rect = el.getBoundingClientRect();
+  var ttW  = 272;
+  var top  = rect.bottom + window.pageYOffset + 8;
+  var left = rect.left   + window.pageXOffset;
+  if (left + ttW > window.innerWidth - 12) left = window.innerWidth - ttW - 12;
+  if (left < 8) left = 8;
+  tt.style.top  = top  + 'px';
+  tt.style.left = left + 'px';
+
+  matTooltipEl = tt;
+
+  /* Dismiss saat klik di luar tooltip — delay 10ms agar event ini tidak langsung men-dismiss */
+  setTimeout(function() {
+    document.addEventListener('click', closeOnOutside);
+  }, 10);
+}
+
+/** Tutup tooltip material dan hapus listener */
+function closeMatTooltip() {
+  if (matTooltipEl) { matTooltipEl.remove(); matTooltipEl = null; }
+  matTooltipSrc = null;
+  document.removeEventListener('click', closeOnOutside);
+}
+
+/** Handler klik di luar tooltip — dipakai sebagai addEventListener callback */
+function closeOnOutside(e) {
+  if (matTooltipEl && !matTooltipEl.contains(e.target)) {
+    closeMatTooltip();
+  }
+}
+
+/* ------------------------------------------------------------------
+   sortCol — Sort baris tabel detail (pasangan dataRow + bomRow)
+   berdasarkan kolom yang diklik. Dipanggil dari <th onclick>.
+   type: 'num' = numerik, 'str' = string lokal Indonesia
+   ------------------------------------------------------------------ */
+function sortCol(th, type) {
+  var table = th.closest('table');
+  if (!table) return;
+  var tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  var colIdx = [].indexOf.call(th.parentElement.children, th);
+
+  /* Toggle arah: klik pertama = asc, klik berikutnya = desc */
+  var asc = !th.classList.contains('sort-asc');
+  var siblings = th.parentElement.querySelectorAll('.sort-th');
+  for (var i = 0; i < siblings.length; i++) {
+    siblings[i].classList.remove('sort-asc', 'sort-desc');
+  }
+  th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+
+  /* Kumpulkan pasangan [dataRow, bomRow?] — BOM row harus tetap di bawah datanya */
+  var dataRows = tbody.querySelectorAll('tr.clickable-item-row');
+  var pairs    = [];
+  for (var i = 0; i < dataRows.length; i++) {
+    var dr  = dataRows[i];
+    var nr  = dr.nextElementSibling;
+    var bom = (nr && nr.id && nr.id.indexOf('bom-row-') === 0) ? nr : null;
+    pairs.push(bom ? [dr, bom] : [dr]);
+  }
+
+  /* Sort pasangan berdasarkan nilai sel kolom */
+  pairs.sort(function(a, b) {
+    var cellA = a[0].children[colIdx];
+    var cellB = b[0].children[colIdx];
+    var va = cellA ? (cellA.getAttribute('data-val') || cellA.innerText.trim()) : '';
+    var vb = cellB ? (cellB.getAttribute('data-val') || cellB.innerText.trim()) : '';
+    if (type === 'num') {
+      return asc ? (parseFloat(va) || 0) - (parseFloat(vb) || 0)
+                 : (parseFloat(vb) || 0) - (parseFloat(va) || 0);
+    }
+    return asc ? va.localeCompare(vb, 'id') : vb.localeCompare(va, 'id');
+  });
+
+  /* Re-append pasangan ke tbody dalam urutan baru */
+  for (var i = 0; i < pairs.length; i++) {
+    for (var j = 0; j < pairs[i].length; j++) {
+      tbody.appendChild(pairs[i][j]);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------
+   switchTab — ganti tab aktif di detail panel
+   ------------------------------------------------------------------ */
+function switchTab(tabId, btn) {
+  var container = btn.closest('.detail-content');
+  if (!container) return;
+  container.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.remove('active'); });
+  container.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+  var pane = document.getElementById(tabId);
+  if (pane) pane.classList.add('active');
+  btn.classList.add('active');
+}
+
+/* ------------------------------------------------------------------
+   expandAllBOM / collapseAllBOM — buka/tutup semua BOM sekaligus
+   ------------------------------------------------------------------ */
+function expandAllBOM() {
+  document.querySelectorAll('[id^="bom-row-"]').forEach(function(tr) {
+    var id = tr.id.replace('bom-row-', '');
+    var wrapper = document.getElementById('wrapper-' + id);
+    if (!wrapper) return;
+    tr.style.display = 'table-row';
+    void wrapper.offsetHeight;
+    wrapper.classList.add('bom-open');
+  });
+  currentActiveBOMId = '*';
+}
+
+function collapseAllBOM() {
+  document.querySelectorAll('[id^="wrapper-"]').forEach(function(wrapper) {
+    var id = wrapper.id.replace('wrapper-', '');
+    var tr = document.getElementById('bom-row-' + id);
+    wrapper.classList.remove('bom-open');
+    setTimeout(function() {
+      if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
+    }, 330);
+  });
+  currentActiveBOMId = null;
+}
+
+/* ------------------------------------------------------------------
+   Entry point — inisialisasi setelah seluruh DOM siap
    ------------------------------------------------------------------ */
 window.onload = function() {
-  /* Monitoring page — collect SO cards */
   var soViewport = document.getElementById('so-list-viewport');
   if (soViewport) {
+    /* === Halaman Monitoring: kumpulkan SO card & init paginasi === */
     var elements = document.getElementsByTagName('div');
     for (var i = 0; i < elements.length; i++) {
       if (elements[i].getAttribute('data-type') === 'so-card') {
         soCards.push(elements[i]);
       }
     }
+    currentPage = getPageFromHash();
     renderPagination();
     return;
   }
 
-  /* Index page — draw charts */
+  /* === Halaman Index: render chart & pasang event listener === */
   drawBarChart();
   drawDonutChart();
   document.body.classList.remove('page-loading');
 
+  /* Gambar ulang saat window di-resize — debounce 200ms mencegah flicker */
+  window.addEventListener('resize', debounce(function() {
+    drawBarChart();
+    drawDonutChart();
+  }, 200));
+
   var bc = document.getElementById('barChart');
   if (bc) {
+    /* Highlight bar saat hover */
     bc.addEventListener('mousemove', function(e) {
       var rect  = bc.getBoundingClientRect();
       var scale = bc.width / rect.width;
@@ -408,8 +644,7 @@ window.onload = function() {
       var found = -1;
       for (var i = 0; i < barState.length; i++) {
         if (mx >= barState[i].x && mx <= barState[i].x + barState[i].w) {
-          found = i;
-          break;
+          found = i; break;
         }
       }
       if (found !== hoveredBar) {
@@ -419,6 +654,7 @@ window.onload = function() {
       }
     });
 
+    /* Reset hover saat mouse keluar dari canvas */
     bc.addEventListener('mouseout', function() {
       if (hoveredBar >= 0) {
         hoveredBar = -1;
@@ -427,6 +663,7 @@ window.onload = function() {
       }
     });
 
+    /* Drill-down ke monitoring.htm saat klik bar */
     bc.addEventListener('click', function(e) {
       var rect  = bc.getBoundingClientRect();
       var scale = bc.width / rect.width;

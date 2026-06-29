@@ -1,9 +1,10 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Page with Flow Logic — Tab: Layout
-*& ENGINE: 100% Standalone Data Engine & UI Core (0 Error System)
+*& BSP Page — Monitoring Produksi, Plant 2000 Sidoarjo
 *&---------------------------------------------------------------------*
+CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+
 TYPES: BEGIN OF ty_local_item,
          vbeln   TYPE vbap-vbeln,
          posnr   TYPE vbap-posnr,
@@ -20,18 +21,29 @@ TYPES: BEGIN OF ty_cust_name,
          name1 TYPE kna1-name1,
        END OF ty_cust_name.
 
+TYPES: BEGIN OF ty_so_stat,
+         vbeln  TYPE vbap-vbeln,
+         total  TYPE i,
+         done   TYPE i,
+         inprog TYPE i,
+         noprod TYPE i,
+       END OF ty_so_stat.
+
 DATA: lt_local_hdr   TYPE TABLE OF vbak,
       lt_local_item  TYPE TABLE OF ty_local_item,
       lt_temp_vbap   TYPE TABLE OF vbap,
       lt_afpo_pre    TYPE TABLE OF afpo,
       lt_cust_names  TYPE TABLE OF ty_cust_name,
       lt_kna1_srch   TYPE TABLE OF ty_cust_name,
+      lt_so_stat     TYPE TABLE OF ty_so_stat,
       ls_hdr_row     TYPE vbak,
       ls_item_row    TYPE ty_local_item,
       ls_afpo_row    TYPE afpo,
       ls_vbap_row    TYPE vbap,
       ls_cust_name   TYPE ty_cust_name,
-      ls_kna1_srch   TYPE ty_cust_name.
+      ls_kna1_srch   TYPE ty_cust_name,
+      ls_so_stat     TYPE ty_so_stat,
+      ls_so_stat_r   TYPE ty_so_stat.
 
 DATA: lv_dd            TYPE string,
       lv_item_cnt      TYPE i,
@@ -40,7 +52,13 @@ DATA: lv_dd            TYPE string,
       lv_is_srch       TYPE abap_bool,
       lv_name_no_match TYPE abap_bool,
       lv_cust_name_dsp TYPE kna1-name1,
-      lv_layout_user   TYPE string.
+      lv_layout_user   TYPE string,
+      lv_stat_pct      TYPE p DECIMALS 2,
+      lv_done_pct      TYPE p DECIMALS 1,
+      lv_border_cls    TYPE string,
+      lv_stat_cls      TYPE string,
+      lv_stat_label    TYPE string,
+      lv_pf_cls        TYPE string.
 
 DATA: lv_ui_vbeln     TYPE string,
       lv_ui_kunnr     TYPE string,
@@ -84,7 +102,7 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
 
   lv_is_srch = abap_true.
 
-  " Filter Nomor SO
+  " Filter SO — exact match + partial match (CP) untuk wildcard pencarian
   IF lv_ui_vbeln IS NOT INITIAL.
     CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
       EXPORTING input  = lv_ui_vbeln
@@ -93,10 +111,13 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
     ls_vbeln-option = 'EQ'.
     ls_vbeln-low    = lv_search_so.
     APPEND ls_vbeln TO lr_vbeln.
+    ls_vbeln-option = 'CP'.
+    ls_vbeln-low    = '*' && lv_ui_vbeln && '*'.
+    APPEND ls_vbeln TO lr_vbeln.
   ENDIF.
 
-  " Filter Nomor Customer (kode eksak)
-  IF lv_ui_kunnr IS NOT INITIAL.
+  " Filter Kode Customer — exact + partial; hanya jika nama tidak diisi
+  IF lv_ui_kunnr IS NOT INITIAL AND lv_ui_name IS INITIAL.
     CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
       EXPORTING input  = lv_ui_kunnr
       IMPORTING output = lv_search_kun.
@@ -104,17 +125,18 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
     ls_kunnr-option = 'EQ'.
     ls_kunnr-low    = lv_search_kun.
     APPEND ls_kunnr TO lr_kunnr.
+    ls_kunnr-option = 'CP'.
+    ls_kunnr-low    = '*' && lv_ui_kunnr && '*'.
+    APPEND ls_kunnr TO lr_kunnr.
   ENDIF.
 
-  " Filter Nama Customer — cari KNA1 by NAME1 LIKE '%...%'
+  " Filter Nama Customer — cari KNA1 dan masukkan kunnr ke range
   IF lv_ui_name IS NOT INITIAL AND lv_ui_kunnr IS INITIAL.
     TRANSLATE lv_ui_name TO UPPER CASE.
     lv_name_pattern = '%' && lv_ui_name && '%'.
-
     SELECT kunnr name1 FROM kna1
       INTO CORRESPONDING FIELDS OF TABLE lt_kna1_srch
       WHERE name1 LIKE lv_name_pattern.
-
     IF lt_kna1_srch IS NOT INITIAL.
       LOOP AT lt_kna1_srch INTO ls_kna1_srch.
         ls_kunnr-sign   = 'I'.
@@ -123,7 +145,6 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
         APPEND ls_kunnr TO lr_kunnr.
       ENDLOOP.
     ELSE.
-      " Nama tidak ditemukan — tandai agar query utama tidak dijalankan
       lv_name_no_match = abap_true.
     ENDIF.
   ENDIF.
@@ -135,10 +156,10 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
       WHERE erdat BETWEEN lv_erdat_from AND lv_erdat_to
         AND vbeln IN lr_vbeln
         AND kunnr IN lr_kunnr
-        AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = '2000' ).
+        AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
 
     IF lt_local_hdr IS NOT INITIAL.
-      " 2. Ambil nama customer untuk tampilan sidebar
+      " 2. Nama customer untuk tampilan sidebar
       SELECT kunnr name1 FROM kna1
         INTO CORRESPONDING FIELDS OF TABLE lt_cust_names
         FOR ALL ENTRIES IN lt_local_hdr
@@ -150,7 +171,7 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
         INTO CORRESPONDING FIELDS OF TABLE lt_temp_vbap
         FOR ALL ENTRIES IN lt_local_hdr
         WHERE vbeln = lt_local_hdr-vbeln
-          AND werks = '2000'.
+          AND werks = lc_plant.
 
       " 4. Pre-fetch AFPO — kolom spesifik
       IF lt_temp_vbap IS NOT INITIAL.
@@ -171,11 +192,9 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
         ls_item_row-arktx  = ls_vbap_row-arktx.
         ls_item_row-kwmeng = ls_vbap_row-kwmeng.
         ls_item_row-vrkme  = ls_vbap_row-vrkme.
-
         READ TABLE lt_afpo_pre INTO ls_afpo_row
           WITH KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr
           BINARY SEARCH.
-
         IF sy-subrc = 0.
           ls_item_row-psmng = ls_afpo_row-psmng.
           ls_item_row-wemng = ls_afpo_row-wemng.
@@ -183,17 +202,39 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
           ls_item_row-psmng = 0.
           ls_item_row-wemng = 0.
         ENDIF.
-
         APPEND ls_item_row TO lt_local_item.
       ENDLOOP.
 
-      " Sort by vbeln agar BINARY SEARCH di sidebar efisien
       SORT lt_local_item BY vbeln.
+
+      " 6. Hitung ringkasan status per SO untuk sidebar pills
+      LOOP AT lt_local_item INTO ls_item_row.
+        CLEAR ls_so_stat.
+        ls_so_stat-vbeln = ls_item_row-vbeln.
+        ls_so_stat-total = 1.
+        IF ls_item_row-psmng > 0.
+          lv_stat_pct = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
+          IF lv_stat_pct >= 100.
+            ls_so_stat-done = 1.
+          ELSE.
+            ls_so_stat-inprog = 1.
+          ENDIF.
+        ELSE.
+          ls_so_stat-noprod = 1.
+        ENDIF.
+        COLLECT ls_so_stat INTO lt_so_stat.
+      ENDLOOP.
+      SORT lt_so_stat BY vbeln.
     ENDIF.
   ENDIF.
 ENDIF.
 
 lv_local_cnt = lines( lt_local_hdr ).
+
+DATA: lv_ts_date TYPE string,
+      lv_ts_time TYPE string.
+lv_ts_date = sy-datum+6(2) && '/' && sy-datum+4(2) && '/' && sy-datum(4).
+lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 %>
 <!DOCTYPE html>
 <html lang="id">
@@ -221,11 +262,11 @@ lv_local_cnt = lines( lt_local_hdr ).
   <div class="filter-card">
     <form method="post" action="">
       <div class="filter-form">
-        <div class="form-group" style="width: 16%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_vbeln %>" placeholder="10000021"></div>
-        <div class="form-group" style="width: 13%;"><label>Kode Customer</label><input type="text" id="cust_num" name="cust_num" value="<%= lv_ui_kunnr %>" placeholder="Kode SAP"></div>
-        <div class="form-group" style="width: 22%;"><label>Nama Customer</label><input type="text" id="cust_name" name="cust_name" value="<%= lv_ui_name %>" placeholder="Cari nama customer..."></div>
-        <div class="form-group" style="width: 16%;"><label>Dari Tanggal</label><input type="date" id="date_from" name="date_from" value="<%= lv_ui_edf %>"></div>
-        <div class="form-group" style="width: 16%;"><label>Sampai Tanggal</label><input type="date" id="date_to" name="date_to" value="<%= lv_ui_edt %>"></div>
+        <div class="form-group" style="width:16%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_vbeln %>" placeholder="10000021 atau sebagian"></div>
+        <div class="form-group" style="width:13%;"><label>Kode Customer</label><input type="text" id="cust_num" name="cust_num" value="<%= lv_ui_kunnr %>" placeholder="Kode SAP"></div>
+        <div class="form-group" style="width:22%;"><label>Nama Customer</label><input type="text" id="cust_name" name="cust_name" value="<%= lv_ui_name %>" placeholder="Cari nama customer..."></div>
+        <div class="form-group" style="width:16%;"><label>Dari Tanggal</label><input type="date" id="date_from" name="date_from" value="<%= lv_ui_edf %>"></div>
+        <div class="form-group" style="width:16%;"><label>Sampai Tanggal</label><input type="date" id="date_to" name="date_to" value="<%= lv_ui_edt %>"></div>
         <div class="btn-submit"><button type="submit" id="search_btn" name="search_btn" value="X">CARI DATA</button></div>
       </div>
     </form>
@@ -234,10 +275,39 @@ lv_local_cnt = lines( lt_local_hdr ).
   <div class="dashboard-layout">
     <div class="sidebar-panel">
       <div class="list-container">
-        <div class="list-header">Daftar Sales Order Terbuka (<%= lv_local_cnt %> Dokumen)</div>
-        <div id="so-list-viewport" style="max-height: 480px; overflow-y: auto;">
+        <div class="list-header">Daftar Sales Order (<%= lv_local_cnt %> Dokumen)</div>
+        <div id="so-list-viewport" style="max-height: 520px; overflow-y: auto;">
           <% IF lv_is_srch = abap_true AND lv_local_cnt = 0. %>
-            <p style="padding: 24px; color: #6b7280; font-size: 0.9rem; text-align: center;">Tidak ada Sales Order yang cocok.</p>
+          <div class="empty-state">
+            <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="36" cy="36" r="34" stroke="#d1d5db" stroke-width="2"/>
+              <circle cx="32" cy="30" r="12" stroke="#9ca3af" stroke-width="2.5"/>
+              <line x1="41" y1="40" x2="54" y2="53" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round"/>
+              <line x1="28" y1="30" x2="36" y2="30" stroke="#d1d5db" stroke-width="2" stroke-linecap="round"/>
+              <line x1="32" y1="26" x2="32" y2="34" stroke="#d1d5db" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <h3>
+              <% IF lv_ui_vbeln IS NOT INITIAL. %>
+                SO "<%= lv_ui_vbeln %>" tidak ditemukan
+              <% ELSEIF lv_ui_name IS NOT INITIAL. %>
+                Tidak ada SO untuk customer "<%= lv_ui_name %>"
+              <% ELSEIF lv_ui_kunnr IS NOT INITIAL. %>
+                Tidak ada SO untuk kode customer "<%= lv_ui_kunnr %>"
+              <% ELSE. %>
+                Tidak ada hasil untuk filter ini
+              <% ENDIF. %>
+            </h3>
+            <p>
+              <% IF lv_ui_name IS NOT INITIAL. %>
+                Nama customer tidak ditemukan di KNA1, atau tidak ada SO aktif di Plant 2000 untuk rentang tanggal yang dipilih.
+              <% ELSEIF lv_ui_vbeln IS NOT INITIAL. %>
+                Coba cek nomor SO atau perluas rentang tanggal pencarian.
+              <% ELSE. %>
+                Coba perluas rentang tanggal, atau hapus salah satu filter untuk memperluas hasil pencarian.
+              <% ENDIF. %>
+            </p>
+            <a href="monitoring.htm" class="btn-reset">Reset Filter</a>
+          </div>
           <% ENDIF. %>
 
           <% IF lv_local_cnt > 0. %>
@@ -253,22 +323,59 @@ lv_local_cnt = lines( lt_local_hdr ).
                   lv_item_cnt = lv_item_cnt + 1.
                 ENDLOOP.
               ENDIF.
-
               lv_dd = ls_hdr_row-erdat+6(2) && '/' && ls_hdr_row-erdat+4(2) && '/' && ls_hdr_row-erdat(4).
-
               CLEAR lv_cust_name_dsp.
               READ TABLE lt_cust_names INTO ls_cust_name
-                WITH KEY kunnr = ls_hdr_row-kunnr
-                BINARY SEARCH.
+                WITH KEY kunnr = ls_hdr_row-kunnr BINARY SEARCH.
               IF sy-subrc = 0. lv_cust_name_dsp = ls_cust_name-name1. ENDIF.
+              CLEAR ls_so_stat_r.
+              READ TABLE lt_so_stat INTO ls_so_stat_r
+                WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
+              lv_done_pct = 0.
+              CLEAR: lv_border_cls, lv_stat_cls, lv_stat_label, lv_pf_cls.
+              IF ls_so_stat_r-total > 0.
+                lv_done_pct = ls_so_stat_r-done * 100 / ls_so_stat_r-total.
+                IF ls_so_stat_r-done = ls_so_stat_r-total.
+                  lv_border_cls = 'so-border-done'.
+                  lv_stat_cls   = 'so-sl-done'.
+                  lv_stat_label = 'Selesai'.
+                  lv_pf_cls     = 'so-pf-done'.
+                ELSEIF ls_so_stat_r-inprog > 0 OR ls_so_stat_r-done > 0.
+                  lv_border_cls = 'so-border-inprog'.
+                  lv_stat_cls   = 'so-sl-inprog'.
+                  lv_stat_label = 'Proses'.
+                  lv_pf_cls     = 'so-pf-inprog'.
+                ELSE.
+                  lv_border_cls = 'so-border-noprod'.
+                  lv_stat_cls   = 'so-sl-noprod'.
+                  lv_stat_label = 'Belum Produksi'.
+                  lv_pf_cls     = 'so-pf-noprod'.
+                ENDIF.
+              ELSE.
+                lv_border_cls = 'so-border-noprod'.
+              ENDIF.
             %>
-            <div class="so-item-row" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card" onclick="viewDetails('<%= ls_hdr_row-vbeln %>')">
+            <div class="so-item-row <%= lv_border_cls %>" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card" onclick="viewDetails('<%= ls_hdr_row-vbeln %>')">
               <div class="so-meta">
                 <span class="so-id">SO #<%= ls_hdr_row-vbeln %></span>
                 <span class="so-badge"><span class="badge"><%= lv_item_cnt %> Item</span></span>
               </div>
               <div class="so-cust-name"><%= lv_cust_name_dsp %></div>
+              <% IF lv_stat_label IS NOT INITIAL. %>
+              <span class="so-status-label <%= lv_stat_cls %>"><%= lv_stat_label %></span>
+              <% ENDIF. %>
               <div class="so-date">Tgl: <%= lv_dd %> | Tipe: <%= ls_hdr_row-auart %></div>
+              <% IF ls_so_stat_r-total > 0. %>
+              <div class="so-prog-row">
+                <div class="so-prog-bar"><div class="so-prog-fill <%= lv_pf_cls %>" style="width:<%= lv_done_pct %>%;"></div></div>
+                <span class="so-prog-pct"><%= lv_done_pct %>%</span>
+              </div>
+              <div class="so-icon-row">
+                <span class="so-ic-done">&#10003; <%= ls_so_stat_r-done %></span>
+                <span class="so-ic-prog">&#8635; <%= ls_so_stat_r-inprog %></span>
+                <span class="so-ic-none">&#9675; <%= ls_so_stat_r-noprod %></span>
+              </div>
+              <% ENDIF. %>
             </div>
             <% ENDLOOP. %>
           <% ENDIF. %>
@@ -284,11 +391,12 @@ lv_local_cnt = lines( lt_local_hdr ).
     <div class="main-panel" id="main-panel-container">
       <div class="placeholder-ctx" id="placeholder-msg">
         <h3>Belum Ada Dokumen Terpilih</h3>
-        <p>Silakan pilih nomor Sales Order untuk memonitor progres item serta rincian Bill of Materials (BOM).</p>
+        <p>Pilih nomor Sales Order di sidebar untuk memonitor progres item dan rincian BOM.</p>
       </div>
     </div>
   </div>
 
   <script src="js/js.js"></script>
+  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %> &bull; Plant: <%= lc_plant %></div>
 </body>
 </html>

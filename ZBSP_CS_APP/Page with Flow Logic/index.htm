@@ -3,6 +3,8 @@
 *&---------------------------------------------------------------------*
 *& Dashboard Statistik & Grafik — Central Storage KMI 2 — Plant 2000
 *&---------------------------------------------------------------------*
+CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+
 TYPES: BEGIN OF ty_cust_info,
          kunnr  TYPE kna1-kunnr,
          name1  TYPE kna1-name1,
@@ -117,7 +119,7 @@ SELECT vbeln erdat kunnr auart netwr waerk
   INTO CORRESPONDING FIELDS OF TABLE lt_recent
   FROM vbak
   WHERE erdat BETWEEN lv_dfrom AND lv_dto
-    AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = '2000' ).
+    AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
 SORT lt_recent BY erdat DESCENDING.
 DELETE lt_recent FROM 11.
 
@@ -136,7 +138,7 @@ IF lt_vbak IS NOT INITIAL.
     FROM vbap
     FOR ALL ENTRIES IN lt_vbak
     WHERE vbeln = lt_vbak-vbeln
-      AND werks = '2000'.
+      AND werks = lc_plant.
 
   " Prune lt_vbak: hapus SO yang tidak punya item Plant 2000
   SORT lt_vbap BY vbeln.
@@ -410,6 +412,11 @@ CONCATENATE lv_jwdates ']' INTO lv_jwdates.
 CONCATENATE lv_jdone   ']' INTO lv_jdone.
 CONCATENATE lv_jinprog ']' INTO lv_jinprog.
 CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
+
+DATA: lv_ts_date TYPE string,
+      lv_ts_time TYPE string.
+lv_ts_date = sy-datum+6(2) && '/' && sy-datum+4(2) && '/' && sy-datum(4).
+lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 %>
 <!DOCTYPE html>
 <html lang="id">
@@ -664,6 +671,6 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
   </script>
   <!-- Semua fungsi chart & interaksi ada di js/js.js -->
   <script src="js/js.js"></script>
-
+  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_user %> &bull; Plant: <%= lc_plant %></div>
 </body>
 </html>

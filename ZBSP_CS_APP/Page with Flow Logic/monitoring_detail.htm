@@ -1,10 +1,17 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Fragment — Detail Panel SO untuk AJAX Lazy Load
-*& Dipanggil oleh monitoring.htm via XHR: monitoring_detail.htm?vbeln=X
-*& Mengembalikan HTML fragment (bukan full page) untuk di-inject ke DOM
+*& BSP Fragment — Detail Panel SO (AJAX endpoint)
+*& URL: monitoring_detail.htm?vbeln=XXXXXXXXXX
+*& Returns HTML fragment only (no html/head/body wrapper)
 *&---------------------------------------------------------------------*
+CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+
+TYPES: BEGIN OF ty_mard_agg,
+         matnr TYPE mara-matnr,
+         labst TYPE mard-labst,
+       END OF ty_mard_agg.
+
 TYPES: BEGIN OF ty_local_item,
          vbeln   TYPE vbap-vbeln,
          posnr   TYPE vbap-posnr,
@@ -14,12 +21,14 @@ TYPES: BEGIN OF ty_local_item,
          vrkme   TYPE vbap-vrkme,
          psmng   TYPE afpo-psmng,
          wemng   TYPE afpo-wemng,
+         aufnr   TYPE afpo-aufnr,
        END OF ty_local_item.
 
 DATA: lt_local_item TYPE TABLE OF ty_local_item,
       lt_local_bom  TYPE TABLE OF stpo,
       lt_temp_vbap  TYPE TABLE OF vbap,
       lt_afpo_pre   TYPE TABLE OF afpo,
+      lt_afko_pre   TYPE TABLE OF afko,
       lt_mast_pre   TYPE TABLE OF mast,
       lt_stpo_pre   TYPE TABLE OF stpo,
       lt_makt_pre   TYPE TABLE OF makt,
@@ -27,41 +36,80 @@ DATA: lt_local_item TYPE TABLE OF ty_local_item,
       ls_bom_row    TYPE stpo,
       ls_stpo_wk    TYPE stpo,
       ls_afpo_row   TYPE afpo,
+      ls_afko_row   TYPE afko,
       ls_vbap_row   TYPE vbap,
       ls_mast_pre   TYPE mast,
       ls_makt_pre   TYPE makt.
 
-DATA: lv_req_vb    TYPE string,
-      lv_vbeln     TYPE vbak-vbeln,
-      lv_prog      TYPE p DECIMALS 2,
-      lv_bar_w     TYPE p DECIMALS 2,
-      lv_bcls      TYPE string,
-      lv_pcls      TYPE string,
-      lv_has_item  TYPE abap_bool,
-      lv_has_prd   TYPE abap_bool,
-      lv_has_bom   TYPE abap_bool,
-      lv_makt_text TYPE maktx,
-      lv_mast_idx  TYPE i,
-      lv_stpo_idx  TYPE i.
+DATA: lt_mard_raw    TYPE TABLE OF mard,
+      lt_mard_agg    TYPE TABLE OF ty_mard_agg,
+      lt_ekpo_pre    TYPE TABLE OF ekpo,
+      ls_mard_raw    TYPE mard,
+      ls_mard_agg    TYPE ty_mard_agg,
+      ls_ekpo_pre    TYPE ekpo.
+
+DATA: ls_vbak_hdr   TYPE vbak,
+      ls_kna1_hdr   TYPE kna1,
+      lv_hdr_date   TYPE string,
+      lv_tot_items  TYPE i,
+      lv_tot_done   TYPE i,
+      lv_tot_inprg  TYPE i,
+      lv_tot_noprd  TYPE i,
+      lv_ovr_pct    TYPE p DECIMALS 1,
+      lv_sum_prog   TYPE p DECIMALS 1,
+      lv_sum_cls    TYPE string.
+
+DATA: lv_req_vb      TYPE string,
+      lv_vbeln       TYPE vbak-vbeln,
+      lv_prog        TYPE p DECIMALS 2,
+      lv_bar_w       TYPE p DECIMALS 2,
+      lv_bcls        TYPE string,
+      lv_pcls        TYPE string,
+      lv_has_item    TYPE abap_bool,
+      lv_has_prd     TYPE abap_bool,
+      lv_has_bom     TYPE abap_bool,
+      lv_makt_text   TYPE maktx,
+      lv_mast_idx    TYPE i,
+      lv_stpo_idx    TYPE i,
+      lv_ekpo_start  TYPE i,
+      lv_comp_labst  TYPE mard-labst,
+      lv_open_qty    TYPE p DECIMALS 3,
+      lv_po_date     TYPE string,
+      lv_status_lbl  TYPE string,
+      lv_status_cls  TYPE string,
+      lv_ftrmi_str   TYPE string.
 
 lv_req_vb = request->get_form_field( 'vbeln' ).
 
-IF lv_req_vb IS INITIAL.
-  " Fallback: kosong
-ELSE.
+IF lv_req_vb IS NOT INITIAL.
   CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
     EXPORTING input  = lv_req_vb
     IMPORTING output = lv_vbeln.
 
-  " 1. VBAP — kolom spesifik untuk SO ini saja
+  " 0. Header SO (VBAK) + nama customer (KNA1) untuk tab Info Order
+  SELECT SINGLE * FROM vbak
+    INTO CORRESPONDING FIELDS OF ls_vbak_hdr
+    WHERE vbeln = lv_vbeln.
+  IF ls_vbak_hdr-kunnr IS NOT INITIAL.
+    SELECT SINGLE * FROM kna1
+      INTO CORRESPONDING FIELDS OF ls_kna1_hdr
+      WHERE kunnr = ls_vbak_hdr-kunnr.
+  ENDIF.
+  IF ls_vbak_hdr-erdat IS NOT INITIAL.
+    lv_hdr_date = ls_vbak_hdr-erdat+6(2) && '/' &&
+                  ls_vbak_hdr-erdat+4(2) && '/' &&
+                  ls_vbak_hdr-erdat(4).
+  ENDIF.
+
+  " 1. VBAP — kolom spesifik untuk SO ini
   SELECT vbeln posnr matnr arktx kwmeng vrkme FROM vbap
     INTO CORRESPONDING FIELDS OF TABLE lt_temp_vbap
     WHERE vbeln = lv_vbeln
-      AND werks = '2000'.
+      AND werks = lc_plant.
 
-  " 2. AFPO — kolom spesifik
+  " 2. AFPO — termasuk AUFNR untuk join ke AFKO
   IF lt_temp_vbap IS NOT INITIAL.
-    SELECT kdauf kdpos psmng wemng FROM afpo
+    SELECT kdauf kdpos psmng wemng aufnr FROM afpo
       INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
       FOR ALL ENTRIES IN lt_temp_vbap
       WHERE kdauf = lt_temp_vbap-vbeln
@@ -69,7 +117,16 @@ ELSE.
     SORT lt_afpo_pre BY kdauf kdpos.
   ENDIF.
 
-  " 3. Gabungkan VBAP + AFPO
+  " 3. AFKO — status order produksi dan tanggal finish target (1 row per order)
+  IF lt_afpo_pre IS NOT INITIAL.
+    SELECT aufnr ftrmi gamng gstrs FROM afko
+      INTO CORRESPONDING FIELDS OF TABLE lt_afko_pre
+      FOR ALL ENTRIES IN lt_afpo_pre
+      WHERE aufnr = lt_afpo_pre-aufnr.
+    SORT lt_afko_pre BY aufnr.
+  ENDIF.
+
+  " 4. Gabungkan VBAP + AFPO ke struktur lokal (termasuk AUFNR)
   LOOP AT lt_temp_vbap INTO ls_vbap_row.
     CLEAR: ls_item_row, ls_afpo_row.
     ls_item_row-vbeln  = ls_vbap_row-vbeln.
@@ -78,29 +135,27 @@ ELSE.
     ls_item_row-arktx  = ls_vbap_row-arktx.
     ls_item_row-kwmeng = ls_vbap_row-kwmeng.
     ls_item_row-vrkme  = ls_vbap_row-vrkme.
-
     READ TABLE lt_afpo_pre INTO ls_afpo_row
       WITH KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr
       BINARY SEARCH.
-
     IF sy-subrc = 0.
       ls_item_row-psmng = ls_afpo_row-psmng.
       ls_item_row-wemng = ls_afpo_row-wemng.
+      ls_item_row-aufnr = ls_afpo_row-aufnr.
     ELSE.
       ls_item_row-psmng = 0.
       ls_item_row-wemng = 0.
     ENDIF.
-
     APPEND ls_item_row TO lt_local_item.
   ENDLOOP.
 
-  " 4. BOM: MAST, STPO, MAKT — kolom spesifik, di-sort untuk BINARY SEARCH
+  " 5. BOM: MAST → STPO → MAKT (BINARY SEARCH ready)
   IF lt_local_item IS NOT INITIAL.
     SELECT matnr stlnr FROM mast
       INTO CORRESPONDING FIELDS OF TABLE lt_mast_pre
       FOR ALL ENTRIES IN lt_local_item
       WHERE matnr = lt_local_item-matnr
-        AND werks = '2000'.
+        AND werks = lc_plant.
     SORT lt_mast_pre BY matnr stlnr.
 
     IF lt_mast_pre IS NOT INITIAL.
@@ -118,7 +173,49 @@ ELSE.
         WHERE matnr = lt_stpo_pre-idnrk
           AND spras = sy-langu.
       SORT lt_makt_pre BY matnr.
+
+      " 6. Stok komponen dari MARD — aggregate semua lokasi penyimpanan
+      SELECT matnr labst FROM mard
+        INTO CORRESPONDING FIELDS OF TABLE lt_mard_raw
+        FOR ALL ENTRIES IN lt_stpo_pre
+        WHERE matnr = lt_stpo_pre-idnrk
+          AND werks = lc_plant
+          AND labst > 0.
+      LOOP AT lt_mard_raw INTO ls_mard_raw.
+        ls_mard_agg-matnr = ls_mard_raw-matnr.
+        ls_mard_agg-labst = ls_mard_raw-labst.
+        COLLECT ls_mard_agg INTO lt_mard_agg.
+      ENDLOOP.
+      SORT lt_mard_agg BY matnr.
+
+      " 7. Open PO dari EKPO (belum diterima, belum dihapus, belum delivery-complete)
+      SELECT * FROM ekpo
+        INTO CORRESPONDING FIELDS OF TABLE lt_ekpo_pre
+        FOR ALL ENTRIES IN lt_stpo_pre
+        WHERE matnr = lt_stpo_pre-idnrk
+          AND werks = lc_plant
+          AND loekz = ' '
+          AND elikz = ' '.
+      SORT lt_ekpo_pre BY matnr eildt.
     ENDIF.
+  ENDIF.
+
+  " Hitung ringkasan status item untuk tab Ringkasan
+  lv_tot_items = lines( lt_local_item ).
+  lv_tot_done = 0. lv_tot_inprg = 0. lv_tot_noprd = 0.
+  LOOP AT lt_local_item INTO ls_item_row.
+    IF ls_item_row-psmng > 0.
+      lv_prog = ls_item_row-wemng * 100 / ls_item_row-psmng.
+      IF lv_prog >= 100. lv_tot_done  = lv_tot_done  + 1.
+      ELSE.              lv_tot_inprg = lv_tot_inprg + 1.
+      ENDIF.
+    ELSE.
+      lv_tot_noprd = lv_tot_noprd + 1.
+    ENDIF.
+  ENDLOOP.
+  lv_ovr_pct = 0.
+  IF lv_tot_items > 0.
+    lv_ovr_pct = lv_tot_done * 100 / lv_tot_items.
   ENDIF.
 ENDIF.
 %>
@@ -130,131 +227,272 @@ ENDIF.
 <% ELSE. %>
 <div class="detail-content active" id="panel-<%= lv_vbeln %>">
   <div class="detail-header">
-    <h2>Komponen &amp; Progres Produksi &#8212; SO #<%= lv_vbeln %></h2>
+    <h2>SO #<%= lv_vbeln %><% IF ls_kna1_hdr-name1 IS NOT INITIAL. %> &#8212; <%= ls_kna1_hdr-name1 %><% ENDIF. %></h2>
   </div>
-  <div style="overflow-x: auto;">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th style="width: 8%;">Item</th>
-          <th style="width: 15%;">Material #</th>
-          <th style="width: 32%;">Deskripsi Komponen Mebel</th>
-          <th style="width: 10%; text-align: right;">Qty SO</th>
-          <th style="width: 10%; text-align: right;">Target</th>
-          <th style="width: 10%; text-align: right;">Hasil GR</th>
-          <th style="width: 15%; text-align: center;">Progres</th>
-        </tr>
-      </thead>
-      <tbody>
-        <%
-          lv_has_item = abap_false.
-          LOOP AT lt_local_item INTO ls_item_row.
-            lv_has_item = abap_true.
 
-            IF ls_item_row-psmng > 0.
-              lv_has_prd = abap_true.
-              lv_prog = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
-              IF lv_prog > 100. lv_prog = 100. ENDIF.
-              lv_bar_w = lv_prog.
-              IF lv_prog = 100.    lv_bcls = 'bg-green'. lv_pcls = 'txt-green'.
-              ELSEIF lv_prog >= 50. lv_bcls = 'bg-blue'.  lv_pcls = 'txt-blue'.
-              ELSE.                  lv_bcls = 'bg-amber'. lv_pcls = 'txt-amber'. ENDIF.
-            ELSE.
-              lv_has_prd = abap_false. lv_prog = 0.
-            ENDIF.
-        %>
-        <tr class="clickable-item-row" onclick="toggleBOMRow('<%= lv_vbeln %>-<%= ls_item_row-posnr %>')">
-          <td><strong><%= ls_item_row-posnr %></strong></td>
-          <td><%= ls_item_row-matnr %></td>
-          <td style="color:#2563eb; font-weight:600;"><%= ls_item_row-arktx %> <span style="font-size:0.75rem; color:#9ca3af;">(Klik untuk BOM)</span></td>
-          <td style="text-align: right;"><%= ls_item_row-kwmeng %> <%= ls_item_row-vrkme %></td>
-          <td style="text-align: right;"><%= ls_item_row-psmng %></td>
-          <td style="text-align: right; font-weight:700;"><%= ls_item_row-wemng %></td>
-          <td style="text-align: center;">
-            <% IF lv_has_prd = abap_true. %>
-            <div class="prog-container">
-              <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= lv_bar_w %>%;"></div></div></div>
-              <span class="prog-pct <%= lv_pcls %>"><%= lv_prog %>%</span>
-            </div>
+  <nav class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('tab-summary',this)">&#9635;&nbsp;Ringkasan</button>
+    <button class="tab-btn" onclick="switchTab('tab-items',this)">&#9776;&nbsp;Item &amp; BOM</button>
+    <button class="tab-btn" onclick="switchTab('tab-info',this)">&#9432;&nbsp;Info Order</button>
+  </nav>
+
+  <!-- ===== TAB 1: RINGKASAN ===== -->
+  <div class="tab-pane active" id="tab-summary">
+    <div class="sum-kpi-row">
+      <div class="sum-kpi-card">
+        <div class="sum-kpi-num"><%= lv_tot_items %></div>
+        <div class="sum-kpi-lbl">Total Item</div>
+      </div>
+      <div class="sum-kpi-card sum-kpi-done">
+        <div class="sum-kpi-num"><%= lv_tot_done %></div>
+        <div class="sum-kpi-lbl">Selesai</div>
+      </div>
+      <div class="sum-kpi-card sum-kpi-inprog">
+        <div class="sum-kpi-num"><%= lv_tot_inprg %></div>
+        <div class="sum-kpi-lbl">Proses</div>
+      </div>
+      <div class="sum-kpi-card sum-kpi-noprod">
+        <div class="sum-kpi-num"><%= lv_tot_noprd %></div>
+        <div class="sum-kpi-lbl">Belum Produksi</div>
+      </div>
+    </div>
+
+    <div class="ovr-prog-wrap">
+      <div class="ovr-prog-bar"><div class="ovr-prog-fill" style="width:<%= lv_ovr_pct %>%;"></div></div>
+      <span class="ovr-prog-pct"><%= lv_ovr_pct %>% selesai keseluruhan</span>
+    </div>
+
+    <div class="sum-item-list">
+      <% LOOP AT lt_local_item INTO ls_item_row.
+           lv_sum_prog = 0. lv_sum_cls = 'so-pf-noprod'.
+           IF ls_item_row-psmng > 0.
+             lv_sum_prog = ls_item_row-wemng * 100 / ls_item_row-psmng.
+             IF lv_sum_prog > 100. lv_sum_prog = 100. ENDIF.
+             IF lv_sum_prog >= 100. lv_sum_cls = 'so-pf-done'.
+             ELSE.                  lv_sum_cls = 'so-pf-inprog'. ENDIF.
+           ENDIF.
+      %>
+      <div class="sum-item-row">
+        <span class="sum-item-pos"><%= ls_item_row-posnr %></span>
+        <span class="sum-item-name" title="<%= ls_item_row-arktx %>"><%= ls_item_row-arktx %></span>
+        <div class="sum-item-right">
+          <div class="sum-item-bar"><div class="sum-item-fill <%= lv_sum_cls %>" style="width:<%= lv_sum_prog %>%;"></div></div>
+          <div class="sum-item-pct">
+            <% IF ls_item_row-psmng > 0. %>
+            <b><%= lv_sum_prog %>%</b>&nbsp;<span class="sum-item-sub"><%= ls_item_row-wemng %>&nbsp;/&nbsp;<%= ls_item_row-psmng %></span>
             <% ELSE. %>
-            <span style="font-style:italic; color:#9ca3af; font-size:0.8rem;">No Prod</span>
+            <span class="sum-item-sub" style="font-style:italic;">No order prod.</span>
             <% ENDIF. %>
-          </td>
-        </tr>
-
-        <tr id="bom-row-<%= lv_vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;">
-          <td colspan="7" style="padding: 0 16px 16px 16px;">
-            <div class="bom-section-wrapper" id="wrapper-<%= lv_vbeln %>-<%= ls_item_row-posnr %>">
-              <div class="bom-title">Daftar Komponen Rakitan BOM (Tabel MAST/STPO)</div>
-              <table class="bom-table">
-                <thead>
-                  <tr>
-                    <th style="width: 25%;">Material Komponen</th>
-                    <th style="width: 55%;">Nama Deskripsi Material</th>
-                    <th style="width: 20%; text-align: right;">Kuantitas Kebutuhan</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <%
-                    lv_has_bom = abap_false.
-                    REFRESH lt_local_bom.
-
-                    " Cari BOM dengan BINARY SEARCH (bukan LOOP WHERE)
-                    READ TABLE lt_mast_pre WITH KEY matnr = ls_item_row-matnr
-                      BINARY SEARCH TRANSPORTING NO FIELDS.
-                    IF sy-subrc = 0.
-                      lv_mast_idx = sy-tabix.
-                      LOOP AT lt_mast_pre FROM lv_mast_idx INTO ls_mast_pre.
-                        IF ls_mast_pre-matnr <> ls_item_row-matnr. EXIT. ENDIF.
-                        READ TABLE lt_stpo_pre WITH KEY stlnr = ls_mast_pre-stlnr
-                          BINARY SEARCH TRANSPORTING NO FIELDS.
-                        IF sy-subrc = 0.
-                          lv_stpo_idx = sy-tabix.
-                          LOOP AT lt_stpo_pre FROM lv_stpo_idx INTO ls_stpo_wk.
-                            IF ls_stpo_wk-stlnr <> ls_mast_pre-stlnr. EXIT. ENDIF.
-                            APPEND ls_stpo_wk TO lt_local_bom.
-                          ENDLOOP.
-                        ENDIF.
-                      ENDLOOP.
-                    ENDIF.
-
-                    IF lt_local_bom IS NOT INITIAL.
-                      LOOP AT lt_local_bom INTO ls_bom_row.
-                        lv_has_bom = abap_true.
-                        CLEAR lv_makt_text.
-                        READ TABLE lt_makt_pre INTO ls_makt_pre
-                          WITH KEY matnr = ls_bom_row-idnrk
-                          BINARY SEARCH.
-                        IF sy-subrc = 0. lv_makt_text = ls_makt_pre-maktx. ENDIF.
-                  %>
-                  <tr>
-                    <td><code><%= ls_bom_row-idnrk %></code></td>
-                    <td><%= lv_makt_text %></td>
-                    <td style="text-align: right; font-weight:600;"><%= ls_bom_row-menge %> <%= ls_bom_row-meins %></td>
-                  </tr>
-                  <%
-                      ENDLOOP.
-                    ENDIF.
-                  %>
-                  <% IF lv_has_bom = abap_false. %>
-                  <tr>
-                    <td colspan="3" style="color:#9ca3af; text-align:center; padding:12px;">BOM data kosong / Master data material belum terpasang di Plant 2000.</td>
-                  </tr>
-                  <% ENDIF. %>
-                </tbody>
-              </table>
-            </div>
-          </td>
-        </tr>
-        <% ENDLOOP. %>
-
-        <% IF lv_has_item = abap_false. %>
-        <tr>
-          <td colspan="7" style="text-align:center; padding:32px; color:#9ca3af;">Tidak ada item produksi terdaftar untuk Sales Order ini.</td>
-        </tr>
-        <% ENDIF. %>
-      </tbody>
-    </table>
+          </div>
+        </div>
+      </div>
+      <% ENDLOOP. %>
+    </div>
   </div>
+
+  <!-- ===== TAB 2: ITEM & BOM ===== -->
+  <div class="tab-pane" id="tab-items">
+    <div class="bom-ctrl-row">
+      <button class="bom-ctrl-btn" onclick="expandAllBOM()">&#43; Buka Semua BOM</button>
+      <button class="bom-ctrl-btn" onclick="collapseAllBOM()">&#8722; Tutup Semua BOM</button>
+    </div>
+    <div style="overflow-x: auto;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th class="sort-th" style="width: 8%;"                       onclick="sortCol(this,'num')">Item</th>
+            <th class="sort-th" style="width: 14%;"                      onclick="sortCol(this,'str')">Material #</th>
+            <th class="sort-th" style="width: 29%;"                      onclick="sortCol(this,'str')">Deskripsi Komponen</th>
+            <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')">Qty SO</th>
+            <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')">Target</th>
+            <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')">Hasil GR</th>
+            <th class="sort-th" style="width: 22%; text-align: center;"  onclick="sortCol(this,'num')">Progres &#9651;</th>
+          </tr>
+        </thead>
+        <tbody>
+          <%
+            lv_has_item = abap_false.
+            LOOP AT lt_local_item INTO ls_item_row.
+              lv_has_item = abap_true.
+              IF ls_item_row-psmng > 0.
+                lv_has_prd = abap_true.
+                lv_prog = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
+                IF lv_prog > 100. lv_prog = 100. ENDIF.
+                lv_bar_w = lv_prog.
+                IF lv_prog = 100.     lv_bcls = 'bg-green'. lv_pcls = 'txt-green'.
+                ELSEIF lv_prog >= 50. lv_bcls = 'bg-blue'.  lv_pcls = 'txt-blue'.
+                ELSE.                  lv_bcls = 'bg-amber'. lv_pcls = 'txt-amber'. ENDIF.
+              ELSE.
+                lv_has_prd = abap_false. lv_prog = 0.
+              ENDIF.
+              CLEAR: ls_afko_row, lv_status_lbl, lv_status_cls, lv_ftrmi_str.
+              IF ls_item_row-aufnr IS NOT INITIAL.
+                READ TABLE lt_afko_pre INTO ls_afko_row
+                  WITH KEY aufnr = ls_item_row-aufnr BINARY SEARCH.
+                IF sy-subrc = 0.
+                  IF ls_afko_row-gstrs CS 'TECO'.   lv_status_lbl = 'Selesai Teknis'. lv_status_cls = 'ord-teco'.
+                  ELSEIF ls_afko_row-gstrs CS 'CNF'. lv_status_lbl = 'Dikonfirmasi'.   lv_status_cls = 'ord-cnf'.
+                  ELSEIF ls_afko_row-gstrs CS 'REL'. lv_status_lbl = 'Diproses'.        lv_status_cls = 'ord-rel'.
+                  ELSE.                               lv_status_lbl = 'Dibuat'.           lv_status_cls = 'ord-crt'. ENDIF.
+                  IF ls_afko_row-ftrmi IS NOT INITIAL.
+                    lv_ftrmi_str = ls_afko_row-ftrmi+6(2) && '/' && ls_afko_row-ftrmi+4(2) && '/' && ls_afko_row-ftrmi(4).
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+          %>
+          <tr class="clickable-item-row" onclick="toggleBOMRow('<%= lv_vbeln %>-<%= ls_item_row-posnr %>')">
+            <td><strong><%= ls_item_row-posnr %></strong></td>
+            <td><%= ls_item_row-matnr %></td>
+            <td style="color:#2563eb; font-weight:600;"><%= ls_item_row-arktx %> <span style="font-size:0.75rem; color:#9ca3af;">(Klik BOM)</span></td>
+            <td style="text-align: right;" data-val="<%= ls_item_row-kwmeng %>"><%= ls_item_row-kwmeng %> <%= ls_item_row-vrkme %></td>
+            <td style="text-align: right;" data-val="<%= ls_item_row-psmng %>"><%= ls_item_row-psmng %></td>
+            <td style="text-align: right; font-weight:700;" data-val="<%= ls_item_row-wemng %>"><%= ls_item_row-wemng %></td>
+            <td style="text-align: center;" data-val="<%= lv_prog %>">
+              <% IF lv_has_prd = abap_true. %>
+              <div class="prog-container">
+                <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= lv_bar_w %>%;"></div></div></div>
+                <span class="prog-pct <%= lv_pcls %>"><%= lv_prog %>%</span>
+              </div>
+              <% ELSE. %><span style="font-style:italic; color:#9ca3af; font-size:0.8rem;">No Prod</span>
+              <% ENDIF. %>
+              <% IF lv_status_lbl IS NOT INITIAL. %>
+              <div class="ord-status-tag <%= lv_status_cls %>"><%= lv_status_lbl %></div>
+              <% IF lv_ftrmi_str IS NOT INITIAL. %><div class="ord-ftrmi">Target: <%= lv_ftrmi_str %></div><% ENDIF. %>
+              <% ENDIF. %>
+            </td>
+          </tr>
+          <tr id="bom-row-<%= lv_vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;">
+            <td colspan="7" style="padding: 0 16px 4px 16px;">
+              <div class="bom-section-wrapper" id="wrapper-<%= lv_vbeln %>-<%= ls_item_row-posnr %>">
+                <div class="bom-title">Daftar Komponen BOM (MAST/STPO)</div>
+                <table class="bom-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 25%;">Material Komponen</th>
+                      <th style="width: 55%;">Nama Material</th>
+                      <th style="width: 20%; text-align: right;">Kuantitas</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <%
+                      lv_has_bom = abap_false.
+                      REFRESH lt_local_bom.
+                      READ TABLE lt_mast_pre WITH KEY matnr = ls_item_row-matnr
+                        BINARY SEARCH TRANSPORTING NO FIELDS.
+                      IF sy-subrc = 0.
+                        lv_mast_idx = sy-tabix.
+                        LOOP AT lt_mast_pre FROM lv_mast_idx INTO ls_mast_pre.
+                          IF ls_mast_pre-matnr <> ls_item_row-matnr. EXIT. ENDIF.
+                          READ TABLE lt_stpo_pre WITH KEY stlnr = ls_mast_pre-stlnr
+                            BINARY SEARCH TRANSPORTING NO FIELDS.
+                          IF sy-subrc = 0.
+                            lv_stpo_idx = sy-tabix.
+                            LOOP AT lt_stpo_pre FROM lv_stpo_idx INTO ls_stpo_wk.
+                              IF ls_stpo_wk-stlnr <> ls_mast_pre-stlnr. EXIT. ENDIF.
+                              APPEND ls_stpo_wk TO lt_local_bom.
+                            ENDLOOP.
+                          ENDIF.
+                        ENDLOOP.
+                      ENDIF.
+                      IF lt_local_bom IS NOT INITIAL.
+                        LOOP AT lt_local_bom INTO ls_bom_row.
+                          lv_has_bom = abap_true.
+                          CLEAR lv_makt_text.
+                          READ TABLE lt_makt_pre INTO ls_makt_pre
+                            WITH KEY matnr = ls_bom_row-idnrk BINARY SEARCH.
+                          IF sy-subrc = 0. lv_makt_text = ls_makt_pre-maktx. ENDIF.
+                          CLEAR: ls_mard_agg, lv_comp_labst.
+                          READ TABLE lt_mard_agg INTO ls_mard_agg
+                            WITH KEY matnr = ls_bom_row-idnrk BINARY SEARCH.
+                          IF sy-subrc = 0. lv_comp_labst = ls_mard_agg-labst. ENDIF.
+                          lv_open_qty = 0. CLEAR lv_po_date.
+                          READ TABLE lt_ekpo_pre WITH KEY matnr = ls_bom_row-idnrk
+                            BINARY SEARCH TRANSPORTING NO FIELDS.
+                          IF sy-subrc = 0.
+                            lv_ekpo_start = sy-tabix.
+                            LOOP AT lt_ekpo_pre FROM lv_ekpo_start INTO ls_ekpo_pre.
+                              IF ls_ekpo_pre-matnr <> ls_bom_row-idnrk. EXIT. ENDIF.
+                              IF ls_ekpo_pre-menge > 0.
+                                lv_open_qty = lv_open_qty + ls_ekpo_pre-menge.
+                                IF lv_po_date IS INITIAL AND ls_ekpo_pre-eildt IS NOT INITIAL.
+                                  lv_po_date = ls_ekpo_pre-eildt+6(2) && '/' && ls_ekpo_pre-eildt+4(2).
+                                ENDIF.
+                              ENDIF.
+                            ENDLOOP.
+                          ENDIF.
+                    %>
+                    <tr>
+                      <td>
+                        <code class="mat-link"
+                              data-matnr="<%= ls_bom_row-idnrk %>"
+                              data-name="<%= lv_makt_text %>"
+                              data-need="<%= ls_bom_row-menge %>"
+                              data-unit="<%= ls_bom_row-meins %>"
+                              data-stock="<%= lv_comp_labst %>"
+                              data-po="<%= lv_open_qty %>"
+                              data-eta="<%= lv_po_date %>"
+                              onclick="showMatTooltip(this)">
+                          <%= ls_bom_row-idnrk %>
+                        </code>
+                      </td>
+                      <td><%= lv_makt_text %></td>
+                      <td style="text-align: right; font-weight:600;"><%= ls_bom_row-menge %> <%= ls_bom_row-meins %></td>
+                    </tr>
+                    <% ENDLOOP. ENDIF. %>
+                    <% IF lv_has_bom = abap_false. %>
+                    <tr><td colspan="3" style="color:#9ca3af; text-align:center; padding:12px;">BOM belum terpasang di Plant 2000.</td></tr>
+                    <% ENDIF. %>
+                  </tbody>
+                </table>
+              </div>
+            </td>
+          </tr>
+          <% ENDLOOP. %>
+          <% IF lv_has_item = abap_false. %>
+          <tr><td colspan="7" style="text-align:center; padding:32px; color:#9ca3af;">Tidak ada item produksi untuk Sales Order ini.</td></tr>
+          <% ENDIF. %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ===== TAB 3: INFO ORDER ===== -->
+  <div class="tab-pane" id="tab-info">
+    <div class="info-order-grid">
+      <div class="info-field">
+        <div class="info-field-lbl">Nomor SO</div>
+        <div class="info-field-val"><%= ls_vbak_hdr-vbeln %></div>
+      </div>
+      <div class="info-field">
+        <div class="info-field-lbl">Tanggal Dibuat</div>
+        <div class="info-field-val"><%= lv_hdr_date %></div>
+      </div>
+      <div class="info-field">
+        <div class="info-field-lbl">Tipe Dokumen</div>
+        <div class="info-field-val"><%= ls_vbak_hdr-auart %></div>
+      </div>
+      <div class="info-field">
+        <div class="info-field-lbl">Kode Customer</div>
+        <div class="info-field-val"><%= ls_vbak_hdr-kunnr %></div>
+      </div>
+      <div class="info-field info-field-full">
+        <div class="info-field-lbl">Nama Customer</div>
+        <div class="info-field-val"><%= ls_kna1_hdr-name1 %></div>
+      </div>
+      <% IF ls_kna1_hdr-ort01 IS NOT INITIAL. %>
+      <div class="info-field">
+        <div class="info-field-lbl">Kota</div>
+        <div class="info-field-val"><%= ls_kna1_hdr-ort01 %></div>
+      </div>
+      <% ENDIF. %>
+      <% IF ls_vbak_hdr-netwr > 0. %>
+      <div class="info-field">
+        <div class="info-field-lbl">Nilai SO</div>
+        <div class="info-field-val"><%= ls_vbak_hdr-netwr %> <%= ls_vbak_hdr-waerk %></div>
+      </div>
+      <% ENDIF. %>
+    </div>
+  </div>
+
 </div>
 <% ENDIF. %>
