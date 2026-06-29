@@ -56,6 +56,7 @@ DATA: ls_vbak_hdr   TYPE vbak,
       lv_tot_inprg  TYPE i,
       lv_tot_noprd  TYPE i,
       lv_ovr_pct    TYPE p DECIMALS 1,
+      lv_ovr_cls    TYPE string,
       lv_sum_prog   TYPE p DECIMALS 1,
       lv_sum_cls    TYPE string.
 
@@ -217,6 +218,12 @@ IF lv_req_vb IS NOT INITIAL.
   IF lv_tot_items > 0.
     lv_ovr_pct = lv_tot_done * 100 / lv_tot_items.
   ENDIF.
+  lv_ovr_cls = 'prog-red'.
+  IF lv_ovr_pct >= 100. lv_ovr_cls = 'prog-green'.
+  ELSEIF lv_ovr_pct > 70. lv_ovr_cls = 'prog-blue'.
+  ELSEIF lv_ovr_pct > 45. lv_ovr_cls = 'prog-yellow'.
+  ELSEIF lv_ovr_pct > 20. lv_ovr_cls = 'prog-orange'.
+  ENDIF.
 ENDIF.
 %>
 <% IF lv_vbeln IS INITIAL. %>
@@ -232,7 +239,7 @@ ENDIF.
 
   <nav class="tab-nav">
     <button class="tab-btn active" onclick="switchTab('tab-summary',this)">&#9635;&nbsp;Ringkasan</button>
-    <button class="tab-btn" onclick="switchTab('tab-items',this)">&#9776;&nbsp;Item &amp; BOM</button>
+    <button class="tab-btn" id="tab-items-btn" onclick="switchTab('tab-items',this)">&#9776;&nbsp;Item &amp; BOM</button>
     <button class="tab-btn" onclick="switchTab('tab-info',this)">&#9432;&nbsp;Info Order</button>
   </nav>
 
@@ -258,18 +265,21 @@ ENDIF.
     </div>
 
     <div class="ovr-prog-wrap">
-      <div class="ovr-prog-bar"><div class="ovr-prog-fill" style="width:<%= lv_ovr_pct %>%;"></div></div>
+      <div class="ovr-prog-bar"><div class="ovr-prog-fill <%= lv_ovr_cls %>" style="width:<%= lv_ovr_pct %>%;"></div></div>
       <span class="ovr-prog-pct"><%= lv_ovr_pct %>% selesai keseluruhan</span>
     </div>
 
     <div class="sum-item-list">
       <% LOOP AT lt_local_item INTO ls_item_row.
-           lv_sum_prog = 0. lv_sum_cls = 'so-pf-noprod'.
+           lv_sum_prog = 0. lv_sum_cls = 'prog-red'.
            IF ls_item_row-psmng > 0.
              lv_sum_prog = ls_item_row-wemng * 100 / ls_item_row-psmng.
              IF lv_sum_prog > 100. lv_sum_prog = 100. ENDIF.
-             IF lv_sum_prog >= 100. lv_sum_cls = 'so-pf-done'.
-             ELSE.                  lv_sum_cls = 'so-pf-inprog'. ENDIF.
+             IF lv_sum_prog >= 100. lv_sum_cls = 'prog-green'.
+             ELSEIF lv_sum_prog > 70. lv_sum_cls = 'prog-blue'.
+             ELSEIF lv_sum_prog > 45. lv_sum_cls = 'prog-yellow'.
+             ELSEIF lv_sum_prog > 20. lv_sum_cls = 'prog-orange'.
+             ENDIF.
            ENDIF.
       %>
       <div class="sum-item-row">
@@ -319,9 +329,11 @@ ENDIF.
                 lv_prog = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
                 IF lv_prog > 100. lv_prog = 100. ENDIF.
                 lv_bar_w = lv_prog.
-                IF lv_prog = 100.     lv_bcls = 'bg-green'. lv_pcls = 'txt-green'.
-                ELSEIF lv_prog >= 50. lv_bcls = 'bg-blue'.  lv_pcls = 'txt-blue'.
-                ELSE.                  lv_bcls = 'bg-amber'. lv_pcls = 'txt-amber'. ENDIF.
+                IF lv_prog >= 100.     lv_bcls = 'prog-green'. lv_pcls = 'txt-green'.
+                ELSEIF lv_prog > 70.   lv_bcls = 'prog-blue'.  lv_pcls = 'txt-blue'.
+                ELSEIF lv_prog > 45.   lv_bcls = 'prog-yellow'. lv_pcls = 'txt-amber'.
+                ELSEIF lv_prog > 20.   lv_bcls = 'prog-orange'. lv_pcls = 'txt-amber'.
+                ELSE.                  lv_bcls = 'prog-red'.    lv_pcls = 'txt-red'.   ENDIF.
               ELSE.
                 lv_has_prd = abap_false. lv_prog = 0.
               ENDIF.

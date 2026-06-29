@@ -58,7 +58,8 @@ DATA: lv_dd            TYPE string,
       lv_border_cls    TYPE string,
       lv_stat_cls      TYPE string,
       lv_stat_label    TYPE string,
-      lv_pf_cls        TYPE string.
+      lv_pf_cls        TYPE string,
+      lv_pf_txt        TYPE string.
 
 DATA: lv_ui_vbeln     TYPE string,
       lv_ui_kunnr     TYPE string,
@@ -242,7 +243,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Central Storage Production Dashboard - KMI 2 Sidoarjo</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?r=2">
 </head>
 <body>
 
@@ -251,7 +252,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <h1>Central Storage Production Dashboard</h1>
       <p>Monitoring Progres Produksi &amp; Alur Transit Material &#8212; Plant 2000 Sidoarjo</p>
     </div>
-    <div class="header-user"><span>User SAP: <%= lv_layout_user %></span></div>
+    <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_layout_user %></span>
+      <div class="user-dropdown" id="user-dropdown">
+        <div class="dropdown-userinfo"><%= lv_layout_user %></div>
+        <div class="dropdown-divider"></div>
+        <a href="javascript:void(0)" onclick="userLogout()">&#10007; Logout</a>
+      </div>
+    </div>
   </div>
 
   <div class="navbar">
@@ -332,24 +339,27 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               READ TABLE lt_so_stat INTO ls_so_stat_r
                 WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
               lv_done_pct = 0.
-              CLEAR: lv_border_cls, lv_stat_cls, lv_stat_label, lv_pf_cls.
+              CLEAR: lv_border_cls, lv_stat_cls, lv_stat_label, lv_pf_cls, lv_pf_txt.
               IF ls_so_stat_r-total > 0.
                 lv_done_pct = ls_so_stat_r-done * 100 / ls_so_stat_r-total.
                 IF ls_so_stat_r-done = ls_so_stat_r-total.
                   lv_border_cls = 'so-border-done'.
                   lv_stat_cls   = 'so-sl-done'.
                   lv_stat_label = 'Selesai'.
-                  lv_pf_cls     = 'so-pf-done'.
                 ELSEIF ls_so_stat_r-inprog > 0 OR ls_so_stat_r-done > 0.
                   lv_border_cls = 'so-border-inprog'.
                   lv_stat_cls   = 'so-sl-inprog'.
                   lv_stat_label = 'Proses'.
-                  lv_pf_cls     = 'so-pf-inprog'.
                 ELSE.
                   lv_border_cls = 'so-border-noprod'.
                   lv_stat_cls   = 'so-sl-noprod'.
                   lv_stat_label = 'Belum Produksi'.
-                  lv_pf_cls     = 'so-pf-noprod'.
+                ENDIF.
+                lv_pf_cls = 'prog-red'. lv_pf_txt = 'txt-red'.
+                IF lv_done_pct >= 100. lv_pf_cls = 'prog-green'. lv_pf_txt = 'txt-green'.
+                ELSEIF lv_done_pct > 70. lv_pf_cls = 'prog-blue'. lv_pf_txt = 'txt-blue'.
+                ELSEIF lv_done_pct > 45. lv_pf_cls = 'prog-yellow'. lv_pf_txt = 'txt-amber'.
+                ELSEIF lv_done_pct > 20. lv_pf_cls = 'prog-orange'. lv_pf_txt = 'txt-amber'.
                 ENDIF.
               ELSE.
                 lv_border_cls = 'so-border-noprod'.
@@ -368,7 +378,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               <% IF ls_so_stat_r-total > 0. %>
               <div class="so-prog-row">
                 <div class="so-prog-bar"><div class="so-prog-fill <%= lv_pf_cls %>" style="width:<%= lv_done_pct %>%;"></div></div>
-                <span class="so-prog-pct"><%= lv_done_pct %>%</span>
+                <span class="so-prog-pct <%= lv_pf_txt %>"><%= lv_done_pct %>%</span>
               </div>
               <div class="so-icon-row">
                 <span class="so-ic-done">&#10003; <%= ls_so_stat_r-done %></span>
@@ -396,7 +406,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     </div>
   </div>
 
-  <script src="js/js.js"></script>
+  <script src="js/js.js?r=2"></script>
   <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %> &bull; Plant: <%= lc_plant %></div>
 </body>
 </html>

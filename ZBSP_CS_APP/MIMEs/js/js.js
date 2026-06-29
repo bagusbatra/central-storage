@@ -380,6 +380,11 @@ function viewDetails(vbeln) {
   xhr.onload = function() {
     if (xhr.status === 200) {
       container.innerHTML = xhr.responseText;
+      var itemsBtn = document.querySelector('#tab-items-btn');
+      if (itemsBtn) {
+        switchTab('tab-items', itemsBtn);
+        expandAllBOM();
+      }
     } else {
       container.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Gagal memuat data (HTTP ' + xhr.status + ').</p></div>';
     }
@@ -605,6 +610,40 @@ function collapseAllBOM() {
   currentActiveBOMId = null;
 }
 
+/* ==================== Progress bar color helper ==================== */
+
+/** Kembalikan class warna progress berdasarkan persentase */
+function progClass(pct) {
+  if (pct >= 100) return 'prog-green';
+  if (pct > 70)   return 'prog-blue';
+  if (pct > 45)   return 'prog-yellow';
+  if (pct > 20)   return 'prog-orange';
+  return 'prog-red';
+}
+
+/* ==================== User dropdown (logout) ==================== */
+
+/** Toggle user dropdown menu */
+function toggleUserDropdown(e) {
+  e.stopPropagation();
+  var dd = document.getElementById('user-dropdown');
+  if (dd) dd.classList.toggle('open');
+}
+
+/** Tutup dropdown saat klik di luar */
+function closeUserDropdown(e) {
+  var dd = document.getElementById('user-dropdown');
+  var hu = document.querySelector('.header-user');
+  if (dd && hu && !hu.contains(e.target)) {
+    dd.classList.remove('open');
+  }
+}
+
+/** Logout — redirect ke halaman logoff SAP */
+function userLogout() {
+  window.location.href = 'index.htm?~logoff';
+}
+
 /* ------------------------------------------------------------------
    Entry point — inisialisasi setelah seluruh DOM siap
    ------------------------------------------------------------------ */
@@ -676,4 +715,7 @@ window.onload = function() {
       }
     });
   }
+
+  /* Tutup user dropdown saat klik di luar */
+  document.addEventListener('click', closeUserDropdown);
 };
