@@ -524,6 +524,19 @@ canvas { display: block; max-width: 100%; }
 /* ================================================================
    ITEM & BOM TAB — expand/collapse all buttons
    ================================================================ */
+.bom-loading {
+  text-align: center;
+  padding: 14px;
+  color: #9ca3af;
+  font-size: 0.8rem;
+  font-style: italic;
+  animation: bom-pulse 1.2s ease-in-out infinite;
+}
+@keyframes bom-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
 .bom-ctrl-row {
   display: flex;
   gap: 8px;

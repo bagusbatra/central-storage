@@ -1,0 +1,200 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Fragment — Lazy BOM Loader
+*& URL: monitoring_bom.htm?vbeln=XXXXXXXXXX&posnr=XXXXX
+*& Returns <tr> rows for BOM tbody only (no table wrapper)
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+
+TYPES: BEGIN OF ty_mard_agg,
+         matnr TYPE mara-matnr,
+         labst TYPE mard-labst,
+       END OF ty_mard_agg.
+
+TYPES: BEGIN OF ty_ekpo_slim,
+         matnr TYPE ekpo-matnr,
+         menge TYPE ekpo-menge,
+         eildt TYPE ekpo-eildt,
+       END OF ty_ekpo_slim.
+
+DATA: lt_mast_pre   TYPE TABLE OF mast,
+      lt_stpo_pre   TYPE TABLE OF stpo,
+      lt_makt_pre   TYPE TABLE OF makt,
+      lt_mard_raw   TYPE TABLE OF mard,
+      lt_mard_agg   TYPE TABLE OF ty_mard_agg,
+      lt_ekpo_pre   TYPE TABLE OF ty_ekpo_slim,
+      lt_local_bom  TYPE TABLE OF stpo,
+      ls_mast_pre   TYPE mast,
+      ls_stpo_wk    TYPE stpo,
+      ls_bom_row    TYPE stpo,
+      ls_makt_pre   TYPE makt,
+      ls_mard_raw   TYPE mard,
+      ls_mard_agg   TYPE ty_mard_agg,
+      ls_ekpo_pre   TYPE ty_ekpo_slim.
+
+DATA: lv_req_vb     TYPE string,
+      lv_req_pos    TYPE string,
+      lv_vbeln      TYPE vbak-vbeln,
+      lv_posnr      TYPE vbap-posnr,
+      lv_matnr      TYPE vbap-matnr,
+      lv_makt_text  TYPE maktx,
+      lv_mast_idx   TYPE i,
+      lv_stpo_idx   TYPE i,
+      lv_has_bom    TYPE abap_bool,
+      lv_comp_labst TYPE mard-labst,
+      lv_open_qty   TYPE p DECIMALS 3,
+      lv_po_date    TYPE string,
+      lv_ekpo_start TYPE i.
+
+lv_req_vb  = request->get_form_field( 'vbeln' ).
+lv_req_pos = request->get_form_field( 'posnr' ).
+
+IF lv_req_vb IS INITIAL OR lv_req_pos IS INITIAL.
+%>
+<tr><td colspan="3" style="color:#ef4444;text-align:center;padding:12px;">Parameter tidak valid.</td></tr>
+<%
+  RETURN.
+ENDIF.
+
+CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+  EXPORTING input  = lv_req_vb
+  IMPORTING output = lv_vbeln.
+
+CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+  EXPORTING input  = lv_req_pos
+  IMPORTING output = lv_posnr.
+
+" Ambil matnr item dari VBAP
+SELECT SINGLE matnr FROM vbap INTO lv_matnr
+  WHERE vbeln = lv_vbeln AND posnr = lv_posnr.
+
+IF sy-subrc <> 0 OR lv_matnr IS INITIAL.
+%>
+<tr><td colspan="3" style="color:#9ca3af;text-align:center;padding:12px;">Material tidak ditemukan untuk item ini.</td></tr>
+<%
+  RETURN.
+ENDIF.
+
+" 1. MAST
+SELECT matnr stlnr FROM mast
+  INTO CORRESPONDING FIELDS OF TABLE lt_mast_pre
+  WHERE matnr = lv_matnr AND werks = lc_plant.
+SORT lt_mast_pre BY matnr stlnr.
+
+IF lt_mast_pre IS INITIAL.
+%>
+<tr><td colspan="3" style="color:#9ca3af;text-align:center;padding:12px;">BOM belum terpasang di Plant 2000.</td></tr>
+<%
+  RETURN.
+ENDIF.
+
+" 2. STPO
+SELECT stlnr idnrk menge meins FROM stpo
+  INTO CORRESPONDING FIELDS OF TABLE lt_stpo_pre
+  FOR ALL ENTRIES IN lt_mast_pre
+  WHERE stlnr = lt_mast_pre-stlnr.
+SORT lt_stpo_pre BY stlnr.
+
+IF lt_stpo_pre IS INITIAL.
+%>
+<tr><td colspan="3" style="color:#9ca3af;text-align:center;padding:12px;">Komponen BOM kosong.</td></tr>
+<%
+  RETURN.
+ENDIF.
+
+" Kumpulkan komponen dari semua BOM entry
+LOOP AT lt_mast_pre INTO ls_mast_pre.
+  READ TABLE lt_stpo_pre WITH KEY stlnr = ls_mast_pre-stlnr
+    BINARY SEARCH TRANSPORTING NO FIELDS.
+  IF sy-subrc = 0.
+    lv_stpo_idx = sy-tabix.
+    LOOP AT lt_stpo_pre FROM lv_stpo_idx INTO ls_stpo_wk.
+      IF ls_stpo_wk-stlnr <> ls_mast_pre-stlnr. EXIT. ENDIF.
+      APPEND ls_stpo_wk TO lt_local_bom.
+    ENDLOOP.
+  ENDIF.
+ENDLOOP.
+
+" 3. MAKT — deskripsi material komponen
+SELECT matnr maktx FROM makt
+  INTO CORRESPONDING FIELDS OF TABLE lt_makt_pre
+  FOR ALL ENTRIES IN lt_stpo_pre
+  WHERE matnr = lt_stpo_pre-idnrk AND spras = sy-langu.
+SORT lt_makt_pre BY matnr.
+
+" 4. MARD — stok unrestricted, aggregate per material
+SELECT matnr labst FROM mard
+  INTO CORRESPONDING FIELDS OF TABLE lt_mard_raw
+  FOR ALL ENTRIES IN lt_stpo_pre
+  WHERE matnr = lt_stpo_pre-idnrk
+    AND werks = lc_plant
+    AND labst > 0.
+LOOP AT lt_mard_raw INTO ls_mard_raw.
+  ls_mard_agg-matnr = ls_mard_raw-matnr.
+  ls_mard_agg-labst = ls_mard_raw-labst.
+  COLLECT ls_mard_agg INTO lt_mard_agg.
+ENDLOOP.
+SORT lt_mard_agg BY matnr.
+
+" 5. EKPO — open PO (3 kolom saja: matnr, menge, eildt)
+SELECT matnr menge eildt FROM ekpo
+  INTO CORRESPONDING FIELDS OF TABLE lt_ekpo_pre
+  FOR ALL ENTRIES IN lt_stpo_pre
+  WHERE matnr = lt_stpo_pre-idnrk
+    AND werks = lc_plant
+    AND loekz = ' '
+    AND elikz = ' '.
+SORT lt_ekpo_pre BY matnr eildt.
+%>
+<%
+lv_has_bom = abap_false.
+LOOP AT lt_local_bom INTO ls_bom_row.
+  lv_has_bom = abap_true.
+  CLEAR lv_makt_text.
+  READ TABLE lt_makt_pre INTO ls_makt_pre
+    WITH KEY matnr = ls_bom_row-idnrk BINARY SEARCH.
+  IF sy-subrc = 0. lv_makt_text = ls_makt_pre-maktx. ENDIF.
+
+  CLEAR: ls_mard_agg, lv_comp_labst.
+  READ TABLE lt_mard_agg INTO ls_mard_agg
+    WITH KEY matnr = ls_bom_row-idnrk BINARY SEARCH.
+  IF sy-subrc = 0. lv_comp_labst = ls_mard_agg-labst. ENDIF.
+
+  lv_open_qty = 0. CLEAR lv_po_date.
+  READ TABLE lt_ekpo_pre WITH KEY matnr = ls_bom_row-idnrk
+    BINARY SEARCH TRANSPORTING NO FIELDS.
+  IF sy-subrc = 0.
+    lv_ekpo_start = sy-tabix.
+    LOOP AT lt_ekpo_pre FROM lv_ekpo_start INTO ls_ekpo_pre.
+      IF ls_ekpo_pre-matnr <> ls_bom_row-idnrk. EXIT. ENDIF.
+      IF ls_ekpo_pre-menge > 0.
+        lv_open_qty = lv_open_qty + ls_ekpo_pre-menge.
+        IF lv_po_date IS INITIAL AND ls_ekpo_pre-eildt IS NOT INITIAL.
+          lv_po_date = ls_ekpo_pre-eildt+6(2) && '/' && ls_ekpo_pre-eildt+4(2).
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+%>
+<tr>
+  <td>
+    <code class="mat-link"
+          data-matnr="<%= ls_bom_row-idnrk %>"
+          data-name="<%= lv_makt_text %>"
+          data-need="<%= ls_bom_row-menge %>"
+          data-unit="<%= ls_bom_row-meins %>"
+          data-stock="<%= lv_comp_labst %>"
+          data-po="<%= lv_open_qty %>"
+          data-eta="<%= lv_po_date %>"
+          onclick="showMatTooltip(this)">
+      <%= ls_bom_row-idnrk %>
+    </code>
+  </td>
+  <td><%= lv_makt_text %></td>
+  <td style="text-align:right; font-weight:600;"><%= ls_bom_row-menge %> <%= ls_bom_row-meins %></td>
+</tr>
+<% ENDLOOP. %>
+<% IF lv_has_bom = abap_false. %>
+<tr><td colspan="3" style="color:#9ca3af;text-align:center;padding:12px;">BOM belum terpasang di Plant 2000.</td></tr>
+<% ENDIF. %>
