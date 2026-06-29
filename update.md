@@ -1,172 +1,242 @@
-# Update & Rencana Pengembangan — Central Storage Production Dashboard
+# Update & Pedoman Pengembangan — Central Storage Production Dashboard
+
+> Dokumen ini ditulis ulang **29 Juni 2026** berdasarkan pembacaan menyeluruh seluruh kode terkini
+> (`index.htm`, `monitoring.htm`, `monitoring_detail.htm`, `main.htm`, `js/js.js`, `css/style.css`).
+> Banyak isu dari versi sebelumnya **sudah selesai** (lihat Bagian 1). Bagian A–H di bawah hanya memuat
+> temuan yang **masih relevan** pada kode saat ini.
 
 ---
 
-## A. Bug / Isu Teknis
+## 0. Pemahaman Sistem (ringkasan)
+
+**Apa ini:** aplikasi **SAP BSP** (ABAP *Page with Flow Logic*) untuk memonitor progres produksi di **Central Storage KMI 2 — Plant 2000 Surabaya**. Render server-side dengan tag `<%= %>`, ditambah AJAX untuk panel detail.
+
+**Tujuan:** memberi visibilitas real-time status produksi yang diturunkan dari Sales Order, membaca tabel SAP langsung tanpa database terpisah.
+
+**Rantai data inti:**
+`VBAK` (header SO) → `VBAP` (item, filter `werks='2000'`) → `AFPO` (`psmng`=target, `wemng`=hasil GR) → status item.
+Drill BOM: `MAST` → `STPO` → `MAKT` (+ `MARD` stok, `EKPO` open PO, `AFKO` status order). Nama customer dari `KNA1`.
+
+**Aturan status item:** AFPO ada & `psmng>0` → `pct = wemng/psmng*100`; `≥100` = **Selesai**, selain itu = **Proses**; tidak ada AFPO / `psmng=0` = **Belum Produksi**.
+
+**Halaman & alur:**
+| File | Peran |
+|------|-------|
+| `main.htm` | Flow Logic inisialisasi. Autentikasi = hanya cek `sy-uname` tidak kosong. |
+| `index.htm` | Dashboard: KPI, bar mingguan (Canvas), donut, kotak customer (KNA1), 10 SO terbaru. Filter periode 7/30/90 via POST reload. |
+| `monitoring.htm` | Pencarian (SO / kode cust / nama cust / rentang tanggal), sidebar daftar SO (paginasi 5/hal di sisi klien, **semua** baris dirender server-side), panel utama dimuat via AJAX. |
+| `monitoring_detail.htm` | Fragmen HTML AJAX (`?vbeln=`). Tab **Ringkasan / Item & BOM / Info Order**, expand BOM, tooltip material (stok & PO). |
+| `MIMEs/css/style.css`, `MIMEs/js/js.js` | Aset bersama (sudah dipisah dari HTML). Chart digambar manual via Canvas, tanpa library. |
+
+Plant 2000 di-*hardcode* (`CONSTANTS lc_plant`) di setiap halaman.
+
+---
+
+## 1. Sudah Selesai Sejak Versi Sebelumnya ✅
+
+Agar pedoman ini akurat, berikut item lama yang **kini sudah diimplementasikan** — jangan dikerjakan ulang:
+
+- CSS & JS dipisah ke file eksternal (`style.css`, `js.js`).
+- `SELECT *` diganti kolom spesifik di hampir semua query (sisa `SELECT SINGLE *` di detail — lihat D).
+- AJAX partial refresh untuk panel detail (`monitoring_detail.htm` via `XMLHttpRequest`) + cache per-VBELN di sisi klien.
+- Skeleton loading di panel detail.
+- Nama customer dari KNA1 (sidebar, kotak customer, detail).
+- Wildcard / partial search (opsi `CP`) untuk SO & kode customer; pencarian nama customer.
+- KPI tambahan: On-Time Delivery, Lead Time, Backlog (catatan akurasi di A).
+- Tooltip hover pada bar chart + drill-down klik bar.
+- Canvas chart responsif (redraw saat resize, debounce).
+- Header kolom tabel detail bisa di-sort (`sortCol`).
+- Tab di panel detail; tooltip material (MARD stok + EKPO open PO).
+- Timestamp "Data per: …" di footer.
+- Paginasi sidebar dengan state di URL hash (`#page=N`).
+- Optimasi hitung item per SO: `READ … BINARY SEARCH` + `LOOP FROM` (bukan nested loop penuh).
+- Empty state pencarian dengan ilustrasi SVG.
+
+---
+
+## A. Bug Fungsional (prioritaskan)
+
+> **STATUS — diperbaiki 29 Jun 2026 (A1–A8 sudah dikodekan).** Karena ini ABAP/BSP yang tidak bisa
+> dikompilasi di luar SAP, **wajib uji aktivasi di SE80 + smoke test runtime (ST22)** sebelum rilis.
+> Ringkasan perubahan ada di bawah tabel; baris tabel dipertahankan sebagai konteks bug awal.
 
 | # | Lokasi | Deskripsi | Prioritas |
 |---|--------|-----------|-----------|
-| 1 | `index.htm:225` | `lv_weekday = ( ls_vbak-erdat - '20240101' ) MOD 7` — Bergantung pada referensi tanggal 2024-01-01 (Monday). Untuk data sebelum 2024, hasil pengurangan negatif dan perilaku MOD di ABAP tidak terdefinisi. Ganti dengan fungsi weekday SAP bawaan. | Tinggi |
-| 2 | `index.htm:225` | Agregasi mingguan menggunakan `(erdat - ref_date) MOD 7` untuk menghitung hari dalam sepekan. Untuk data dengan rentang >1 tahun, offset tetap benar secara matematis, tetapi pendekatan ini rentan dan tidak portable. Gunakan `FUNCTION `DATE_GET_WEEK`` atau `sy-datum` sebagai referensi dinamis. | Sedang |
-| 3 | `monitoring.htm:109-113` | Query menggunakan `SELECT * FROM vbak` dengan RANGES `lr_vbeln` dan `lr_kunnr`. Jika kedua RANGES kosong (user isi tanggal saja tanpa SO/Customer), empty RANGES `IN` di Open SQL bisa mengembalikan semua record (tidak memfilter). Perilaku ini tergantung versi SAP — perlu dikonfirmasi dan ditangani eksplisit. | Sedang |
-| 4 | `monitoring.htm:119-122` | `SELECT * FROM vbap` — inkonsisten dengan index.htm yang menggunakan SELECT kolom spesifik. | Rendah |
-| 5 | `monitoring.htm:126-129` | `SELECT * FROM afpo` — inkonsisten dengan index.htm. | Rendah |
-| 6 | `index.htm:837` | Canvas chart tidak *responsive*. Ukuran canvas di-set sekali saat `window.onload`; jika window di-resize, chart tidak menyesuaikan. | Rendah |
-| 7 | `main.htm` | Autentikasi hanya memeriksa `sy-uname`. Tidak ada pengecekan otorisasi (SU53/PFCG). Jika user SAP valid tetapi tidak berhak, tetap bisa mengakses. | Sedang |
+| **A1** | `monitoring_detail.htm:201,208,221` | **Empty `FOR ALL ENTRIES`.** Query MAKT, MARD, EKPO dijalankan `FOR ALL ENTRIES IN lt_stpo_pre` **tanpa** `IF lt_stpo_pre IS NOT INITIAL`. MAST & STPO sudah dijaga, tetapi STPO→hilir tidak. Jika sebuah material punya MAST tapi STPO kosong (tidak ada komponen), `lt_stpo_pre` kosong → FAE dengan tabel driver kosong **mengembalikan SELURUH tabel** (full scan MAKT/MARD/EKPO). Potensi lambat parah / beban DB. | **Kritis** |
+| **A2** | `monitoring_detail.htm:350-353` | **Status order AFKO salah field.** Kode memakai `AFKO-GSTRS` (tanggal *scheduled start*, tipe DATS) seakan teks status: `gstrs CS 'TECO' / 'CNF' / 'REL'`. Tidak akan pernah cocok → selalu jatuh ke ELSE = "Dibuat". Status sistem order ada di `JEST`/`JCDS` via `AUFK-OBJNR`. Gunakan FM `STATUS_TEXT_EDIT` (objnr = `'OR' && aufnr` atau dari AUFK) atau baca `JEST` (`stat`, `inact=''`). | **Tinggi** |
+| **A3** | `index.htm:189-201,515-524` | **KPI "On-Time Delivery" menyesatkan.** Dihitung `on_time/total = done/(done+inprog)` **tanpa** membandingkan tanggal jatuh tempo apa pun. Itu bukan ketepatan waktu; nyaris menduplikasi *completion rate*. OTD sebenarnya butuh perbandingan tanggal target (mis. `AFKO-GLTRP`/`FTRMP`) vs tanggal GR aktual. Saat ini label "item tepat waktu" tidak benar. | **Tinggi** |
+| **A4** | `index.htm:198,259-262` | **Lead time tidak akurat.** `lv_lead_days += ( sy-datum - ls_vbak-erdat )` mengukur **umur SO sampai hari ini**, bukan durasi SO-dibuat → selesai. SO yang selesai lama tetap menyumbang umur penuhnya. Butuh tanggal penyelesaian aktual (tanggal GR terakhir, mis. dari `MSEG`/`AFRU`/`MKPF`) untuk lead time yang benar. | **Tinggi** |
+| **A5** | `monitoring.htm:121,135` | **Filter customer saling meniadakan.** Cabang kode customer hanya jalan jika `cust_name` kosong; cabang nama hanya jika `cust_num` kosong. Jika **keduanya** diisi, **tidak ada** filter customer yang ditambahkan → `lr_kunnr` kosong → query mengembalikan semua SO pada rentang tanggal (filter diam-diam diabaikan). Tetapkan prioritas eksplisit atau gabungkan. | Sedang |
+| **A6** | `monitoring.htm:136-140` | **Pencarian nama case-sensitive.** `TRANSLATE lv_ui_name TO UPPER CASE` lalu `WHERE name1 LIKE '%...%'`. Pada DB case-sensitive, pola huruf besar tidak cocok dengan `KNA1-name1` yang campuran huruf. Gunakan pembandingan yang konsisten (`UPPER( name1 ) LIKE`, atau filter di aplikasi atas hasil, atau field pencarian `MCOD1`). | Sedang |
+| **A7** | `monitoring_detail.htm:221-228,449` | **EKPO open-PO perlu verifikasi.** (a) `EKPO-EILDT` dipakai sebagai tanggal kirim — tanggal pengiriman standar ada di `EKET-EINDT`, bukan EKPO; pastikan field ini benar-benar ada/terisi di sistem Anda (kalau tidak, ETA selalu kosong / berisiko dump). (b) "Open PO" memakai `menge` penuh, bukan sisa belum-diterima (`menge − jumlah GR`). Pertimbangkan join `EKET`/`EKBE`. | Sedang |
+| **A8** | `index.htm:277` | **Agregasi mingguan pakai epoch hardcode** `( erdat - '20240101' ) MOD 7`. `20240101` memang Senin sehingga hasil benar, dan `MOD` ABAP non-negatif untuk pembagi positif, jadi tidak rusak — tetapi rapuh & tidak portable. Ganti dengan FM hari (`DATE_COMPUTE_DAY` → `sy-fdayw`) atau `lv_week_mon = erdat - ( ( erdat - <senin_referensi> ) MOD 7 )` dengan referensi dinamis. | Rendah |
+
+### Ringkasan perbaikan yang diterapkan (29 Jun 2026)
+
+- **A1 ✅** `monitoring_detail.htm` — query MAKT/MARD/EKPO kini dibungkus `IF lt_stpo_pre IS NOT INITIAL`. Empty-FAE tidak lagi mungkin.
+- **A2 ✅** Status order tidak lagi dari `AFKO-GSTRS`. Ditambah query `AUFK` (objnr) → `JEST` (status aktif, `inact=' '`), dipetakan prioritas CRTD/REL(I0002)/CNF(I0009)/TECO(I0045) → label & class. **Uji:** pastikan kode status internal sesuai customizing Anda (`I0002/I0009/I0045`).
+- **A3 ✅ (relabel jujur)** Kartu "On-Time Delivery Rate" → **"Penyelesaian Order Produksi"** (= item selesai / item ber-order). Teks "tepat waktu" & alert OTD disesuaikan. OTD sejati (vs tanggal jatuh tempo) tetap di roadmap (F).
+- **A4 ✅ (reposisi)** Kartu "Rata-rata Lead Time" → **"Rata-rata Umur Item Proses"** (WIP aging); akumulasi dipindah dari item *selesai* ke item *proses* sehingga angkanya bermakna. Lead-time selesai sejati (butuh tgl GR aktual) tetap roadmap.
+- **A5 ✅** `monitoring.htm` — kode customer kini diprioritaskan; jika kode & nama sama-sama diisi, kode dipakai (tidak lagi diam-diam mengabaikan filter).
+- **A6 ✅** Pencarian nama customer kini `WHERE mcod1 LIKE` (field pencarian huruf besar) → case-insensitive.
+- **A7 ✅** Open-PO dirombak: `EKPO` (item PO aktif) → `EKET` (jadwal kirim). Qty terbuka = `Σ(menge − wemng)` (sisa, bukan menge penuh); ETA = `EKET-EINDT` paling awal. **Uji:** verifikasi `EKET` terisi untuk PO Anda.
+- **A8 ✅** Agregasi mingguan pakai `DATE_COMPUTE_DAY` (Senin awal minggu dinamis), epoch `'20240101'` dihapus.
+
+**Catatan uji prioritas:** A2 (kode status JEST) & A7 (EKET) paling perlu diverifikasi dengan data nyata; A3/A4 adalah perubahan **label & makna KPI** — konfirmasikan definisinya cocok dengan kebutuhan bisnis sebelum rilis.
 
 ---
 
-## B. Fitur yang Belum Ada
+## B. Inkonsistensi & Masalah UI/UX
 
-### B.1 Dashboard
+> **STATUS — diperbaiki 29 Jun 2026 (B1–B7, B9).** Ringkasan ada di bawah tabel. **Uji di browser**
+> setelah aktivasi (terutama format angka & form GET). B8 dinilai *acceptable* (tidak diubah).
 
-| Fitur | Keterangan | Prioritas |
-|-------|-----------|-----------|
-| **Grafik trend harian/bulanan** | Hanya ada bar chart mingguan. Belum ada line chart untuk melihat tren harian atau bulanan. | Sedang |
-| **Tooltip pada chart** | Bar chart canvas murni tanpa tooltip. Saat hover bar, user tidak bisa melihat angka detail tanpa klik. | Rendah |
-| **Export data** (Excel/PDF) | Tidak ada tombol export untuk tabel SO, item, atau BOM. | Sedang |
-| **Filter User Preference** | Setiap reload, filter period kembali ke default 30 hari. Tidak ada persistensi (misal via SAP user parameter). | Rendah |
-| **KPI Tambahan** | Hanya completion rate. Belum ada: *on-time delivery rate*, *average production lead time*, *item backlog*. | Rendah |
+| # | Lokasi | Deskripsi | Prioritas |
+|---|--------|-----------|-----------|
+| **B1** | `js.js:391-395` | Setelah AJAX, panel **selalu dipaksa** ke tab "Item & BOM" + `expandAllBOM()`. Tab default "Ringkasan" (yang dirender server-side dengan KPI ringkas) **tidak pernah tampil pertama**. Tentukan: apakah Ringkasan atau Item yang jadi landing tab, lalu konsistenkan dengan markup `active` di server. | Sedang |
+| **B2** | CSS warna "Belum Produksi" | Tidak konsisten: di chart/donut/pill = **abu-abu** (`#d1d5db`), tetapi border SO card & progress fill `prog-black` = **hitam** (`#1f2937`). Sinyal visual untuk status yang sama berbeda. Samakan. | Rendah |
+| **B3** | `style.css:399-401`, `.so-sl-noprod` | Chip "Belum Produksi" = teks `#9ca3af` di atas `#f3f4f6` → kontras rendah (gagal WCAG AA). Pertegas warna teks. | Rendah |
+| **B4** | Form pencarian (3 pola berbeda) | Dashboard period (POST reload), dashboard customer search (POST reload), monitoring search (POST reload), detail (AJAX). Tidak ada pola POST-redirect-GET → refresh memunculkan dialog "kirim ulang form", dan hasil tidak bisa di-*bookmark*. | Sedang |
+| **B5** | `monitoring.htm` saat load awal | Tanpa pencarian, sidebar tampil "Daftar Sales Order (0 Dokumen)" kosong tanpa panduan, sementara panel kanan punya placeholder. Tambah hint "Mulai dengan mencari SO/customer/tanggal" di sidebar. | Rendah |
+| **B6** | `index.htm:652`, `monitoring_detail.htm:508` | Nilai uang `netwr` & angka qty (`kwmeng/psmng/wemng/menge`) ditampilkan mentah dari ABAP (mis. `1234567.890000`), tanpa pemisah ribuan / pembulatan. Format via `WRITE … TO` atau helper JS `toLocaleString` (sudah dipakai di tooltip material — terapkan konsisten). | Sedang |
+| **B7** | Double-submit | Tombol "CARI DATA" / period / customer tidak dicegah dari klik ganda → query duplikat. Disable tombol + spinner saat submit. | Rendah |
+| **B8** | Paginasi sidebar | Setelah POST (search), URL hash `#page=N` hilang → halaman balik ke 1. Karena search = full reload, state paginasi tidak bertahan antar pencarian (hanya bertahan saat back/forward tanpa reload). | Rendah |
+| **B9** | Keyboard & a11y | Baris/kartu pakai `onclick` pada `<div>`/`<tr>` tanpa `role`/`tabindex`/handler keyboard. Tidak bisa dioperasikan keyboard. Tambah dukungan Enter/Escape & shortcut periode. | Rendah |
 
-### B.2 Monitoring
+### Ringkasan perbaikan yang diterapkan (29 Jun 2026)
 
-| Fitur | Keterangan | Prioritas |
-|-------|-----------|-----------|
-| **Wildcard / partial search** | Filter SO dan Customer hanya exact match (EQ). Tidak bisa mencari dengan pola (pattern search / CP). | Sedang |
-| **Nama Customer** | Hanya menampilkan kode customer (KUNNR). Tidak mengambil nama dari tabel KNA1. | Sedang |
-| **Status produksi header SO** | Sidebar hanya menampilkan jumlah item, belum ada ringkasan status progres per SO. | Rendah |
-| **Loading skeleton** | monitoring.htm tidak memiliki skeleton loading seperti index.htm. | Rendah |
-| **Pagination state di URL** | Pagination SO di-reset setiap reload. Tidak ada state di URL parameter. | Rendah |
+- **B1 ✅** `js.js viewDetails` — tidak lagi memaksa tab "Item & BOM" + `expandAllBOM()` setelah AJAX. Panel mendarat di tab **Ringkasan** (sesuai markup server). Lebih ringan & konsisten.
+- **B2 ✅** `style.css` — "Belum Produksi" diseragamkan ke abu-abu: `prog-black`, `txt-black`, `so-border-noprod` (dari hitam `#1f2937` → `#9ca3af`/`#6b7280`).
+- **B3 ✅** `.so-sl-noprod` kontras dinaikkan (`#e5e7eb` + `#4b5563`).
+- **B4 ✅** Semua form filter (dashboard period, dashboard customer search, monitoring search) → `method="get"`. Hasil idempotent: reload tidak memunculkan dialog "kirim ulang", URL bisa di-*bookmark*/share. `get_form_field` membaca query GET sama seperti POST.
+- **B5 ✅** `monitoring.htm` — sidebar menampilkan panduan **"Mulai Pencarian"** saat halaman dibuka sebelum ada pencarian.
+- **B6 ✅** Format angka via helper JS `formatNumbers()` (kelas `.cur-fmt` uang & `.num-fmt` kuantitas, `toLocaleString('id-ID')`). Diterapkan ke netwr (dashboard & Info Order), qty/target/GR di tabel item, dan qty komponen BOM. Dipanggil saat load **dan** setelah AJAX (termasuk dari cache). `data-val` numerik untuk sort tetap utuh.
+- **B7 ✅** `lockAllForms()` — tombol submit dinonaktifkan (ditunda 0ms agar value tetap terkirim) untuk cegah klik ganda.
+- **B9 ✅** `enhanceA11y()` menambah `role="button"` + `tabindex="0"` ke baris yang bisa diklik (saat load & setelah AJAX); `handleGlobalKeydown` menambah **Enter/Space** untuk aktivasi & **Escape** untuk menutup tooltip/dropdown.
+- **B8 ⏸️ (acceptable, tidak diubah)** Dengan B4 (GET), pencarian baru wajar reset ke halaman 1; hash `#page` tetap bertahan saat back/forward. Tidak ada perubahan.
 
-### B.3 Umum
+**Bonus (sekaligus):** C3 ditangani — `getElementsByTagName('div')` diganti `querySelectorAll('[data-type="so-card"]')`. Listener "klik di luar untuk tutup dropdown" kini juga dipasang di halaman Monitoring (sebelumnya hanya di Dashboard).
 
-| Fitur | Keterangan | Prioritas |
-|-------|-----------|-----------|
-| **Multi-Plant** | Plant 2000 hardcoded di semua query (`werks = '2000'`). Aplikasi tidak bisa digunakan untuk plant lain tanpa modifikasi kode. | Tinggi |
-| **Role-based access** | Tidak ada pembedaan role (viewer, supervisor, admin). | Sedang |
-| **Dark mode** | Hanya tema terang. | Rendah |
-| **Responsive layout** | Layout menggunakan `display: table` — tidak responsif di mobile/tablet. | Rendah |
+**Perlu uji:** format angka di browser (pastikan `<%= %>` ABAP mengeluarkan desimal dengan titik), perilaku form GET (URL & reload), dan navigasi keyboard.
 
 ---
 
-## C. Perbaikan Kinerja
+## C. Performa
+
+> **STATUS — 29 Jun 2026:** C1 ✅, C3 ✅, C4 ✅ dikerjakan. **C2/C5/C6 ditunda** (alasan di bawah tabel). Uji setelah aktivasi.
 
 | # | Lokasi | Issue | Saran | Prioritas |
 |---|--------|-------|-------|-----------|
-| 1 | `monitoring.htm:119,126,160,166,172` | Menggunakan `SELECT *` untuk semua tabel (VBAP, AFPO, MAST, STPO, MAKT). | Ubah ke SELECT kolom spesifik seperti index.htm. | Tinggi |
-| 2 | `index.htm:97-101` | Query `lt_recent` menggunakan subquery `IN (SELECT...)` untuk verifikasi Plant 2000. Untuk dataset besar, subquery bisa lambat. | Alternatif: gunakan `FOR ALL ENTRIES` + pruning seperti query utama. | Rendah |
-| 3 | `monitoring.htm:461-466` | `getElementsByTagName('div')` mengiterasi SEMUA div di DOM. Tidak efisien. | Gunakan `document.querySelectorAll('[data-type="so-card"]')`. | Rendah |
-| 4 | Seluruh halaman | Tidak ada caching. Setiap request memicu query ke database SAP. | Implementasikan ABAP buffer / shared memory untuk data agregat yang jarang berubah. | Rendah |
+| **C1** | `index.htm:212` | `READ TABLE lt_so_prog WITH KEY vbeln` **tanpa** BINARY SEARCH di dalam LOOP item → O(item × SO). Hotspot utama dashboard untuk periode 90 hari. | Pakai *sorted/hashed table* untuk `lt_so_prog`, atau akumulasi via `COLLECT`, atau jaga terurut + `READ … BINARY SEARCH` + sisipan. | Sedang/Tinggi |
+| **C2** | `monitoring.htm:320-392` | Semua baris SO dirender server-side, lalu disembunyikan via CSS; hanya 5 tampil. Untuk ratusan SO, DOM membengkak. | Render hanya halaman aktif, ambil halaman lain via AJAX (detail sudah AJAX — terapkan pola sama ke daftar). | Sedang |
+| **C3 ✅** | `js.js:663` | ~~`getElementsByTagName('div')` mengiterasi **semua** div untuk mengumpulkan kartu SO.~~ **Selesai (29 Jun 2026)** — diganti `querySelectorAll('[data-type="so-card"]')` saat mengerjakan B. | `document.querySelectorAll('[data-type="so-card"]')`. | Rendah |
+| **C4** | `monitoring_detail.htm:195-228` | FAE ke STPO/MAKT/MARD/EKPO tanpa `DELETE ADJACENT DUPLICATES … COMPARING` pada kunci driver (`idnrk`). Banyak `idnrk` duplikat → driver membengkak. | Dedup tabel driver sebelum FAE. (Sekaligus memperbaiki A1 dengan guard kosong.) | Rendah |
+| **C5** | Semua halaman | Tidak ada caching layer ABAP; data agregat KPI sama untuk semua user tetapi di-query tiap request. | Shared memory / buffer (`CL_SHM_AREA` atau `EXPORT … TO SHARED BUFFER`), refresh tiap N menit. | Rendah |
+| **C6** | `index.htm:122`, `monitoring.htm:160` | Filter Plant via subquery `vbeln IN ( SELECT vbeln FROM vbap WHERE werks=… )`. Optimizer kadang kurang optimal dibanding `FOR ALL ENTRIES` + pruning (pola yang sudah dipakai untuk `lt_vbak`). | Konsistenkan ke pola pruning. | Rendah |
+
+### Ringkasan perbaikan yang diterapkan (29 Jun 2026)
+
+- **C1 ✅ (hotspot utama)** `index.htm` — loop klasifikasi item ditulis ulang jadi **O(n)** dengan *control-break manual* (lt_vbap sudah terurut `BY vbeln`). Menghilangkan `READ lt_so_prog` linear per item **dan** mengurangi `READ lt_vbak` jadi sekali per SO (bukan per item). `erdat` SO disimpan di `lv_so_erdat` untuk WIP aging. Hasil agregat identik.
+- **C3 ✅** (lihat Bagian B) — `querySelectorAll('[data-type="so-card"]')`.
+- **C4 ✅** `monitoring_detail.htm` — dibuat driver komponen unik `lt_comp` (`SORT` + `DELETE ADJACENT DUPLICATES COMPARING idnrk`); MAKT/MARD/EKPO kini FAE `IN lt_comp` (bukan `lt_stpo_pre` yang penuh duplikat). `lt_stpo_pre` tetap terurut `BY stlnr` agar binary-search BOM tidak rusak.
+
+### Ditunda — alasan
+
+- **C2 (Sedang) ⏸️** *Lazy pagination* sidebar butuh endpoint/parameter baru untuk merender **satu halaman** kartu SO + query `COUNT` total + refactor JS paginasi. Perubahan arsitektur cukup besar dan berisiko bila diubah tanpa bisa diuji. Untuk jumlah SO tipikal (puluhan–ratusan) DOM masih wajar. **Rekomendasi:** kerjakan saat ada akses uji di sistem; pola AJAX `monitoring_detail.htm` bisa jadi acuan. **Prasyarat D1 (ZCL_CS_UTIL) kini sudah ✅**, jadi endpoint baru bisa langsung memakai helper warna tanpa menduplikasi logika.
+- **C5 (Rendah) ⏸️** Caching shared memory (`CL_SHM_AREA`) = pekerjaan infrastruktur (kelas SHM, area, invalidasi) — bukan edit halaman; masuk roadmap.
+- **C6 (Rendah) ⏸️** Mengganti subquery `IN (SELECT…)` ke FAE+prune menambah ~10 baris + loop prune di tiap query, untuk manfaat marginal (optimizer HANA menangani IN-subquery dengan baik). Risiko > manfaat tanpa uji. Dibiarkan.
 
 ---
 
-## D. Code Quality & Maintainability
+## D. Kualitas Kode & Maintainability
+
+> **STATUS — 29 Jun 2026:** D1 ✅ dikerjakan via **global class `ZCL_CS_UTIL`** (lihat ringkasan di bawah tabel).
+> **WAJIB:** buat & aktifkan class di SE24/ADT **sebelum** mengaktifkan `monitoring.htm` & `monitoring_detail.htm`.
 
 | # | Lokasi | Issue | Saran |
 |---|--------|-------|-------|
-| 1 | `index.htm`, `monitoring.htm` | CSS embedded langsung di HTML. | Pisahkan ke file CSS eksternal. |
-| 2 | `index.htm`, `monitoring.htm` | JavaScript embedded langsung di HTML. | Pisahkan ke file JS eksternal. |
-| 3 | `index.htm`, `monitoring.htm` | Plant 2000 hardcoded di banyak tempat. | Buat konstanta atau parameter BSP di awal halaman. |
-| 4 | `index.htm` | Format JSON arrays manual via CONCATENATE. Rawan error delimiter/quote. | Gunakan class transformasi ABAP (cl_trex_json_serializer) atau method `/UI2/CL_JSON=>SERIALIZE`. |
-| 5 | `index.htm:225` | `'20240101'` hardcoded. | Jadikan parameter aplikasi atau gunakan perhitungan dinamis. |
-| 6 | `monitoring.htm:300-304` | `LOOP AT lt_local_item WHERE vbeln = ...` di dalam LOOP AT lt_local_hdr — nested loop tidak efisien. | Pre-process: SORT lt_local_item BY vbeln + READ BINARY SEARCH. |
-| 7 | Kedua halaman | Tidak ada komentar pada JavaScript frontend. | Tambahkan komentar minimal untuk fungsi utama. |
-| 8 | `README.md` | Tidak ada informasi tentang persyaratan sistem SAP (min release, OSS notes, dll). | Tambahkan prerequisite. |
+| **D1 ✅** | 4 tempat | ~~**Logika klasifikasi status & ambang warna diduplikasi**~~ **Selesai** — pemetaan persentase→warna (100/70/45/20) dipusatkan di `ZCL_CS_UTIL`. (`js.js progClass` ternyata *dead code* → catat di D3.) | Pusatkan: satu method ABAP. ✔ `zcl_cs_util=>prog_bar_class()` / `prog_txt_class()`. |
+| **D2 ✅** | `monitoring_detail.htm:97,101` | ~~`SELECT SINGLE * FROM vbak` / `kna1`~~ **Selesai** — kolom spesifik. | Pilih kolom spesifik (vbeln, erdat, auart, kunnr, netwr, waerk / name1, ort01). |
+| **D3 ✅** | `style.css`, `js.js` | ~~**CSS mati** + `progClass` mati~~ **Selesai** — semua dihapus. | Hapus untuk mengurangi ukuran & kebingungan. |
+| **D4** | Plant 2000 | Di-hardcode sebagai `CONSTANTS lc_plant` di tiga halaman terpisah. | Pindahkan ke satu include/konstanta bersama, atau parameter aplikasi (lihat F — multi-plant). |
+| **D5** | `index.htm:392-414` | JSON array chart dibangun manual via `CONCATENATE`, rawan delimiter/quote. | `/UI2/CL_JSON=>SERIALIZE` atau `cl_trex_json_serializer`. |
+| **D6 ✅** | Format tanggal | ~~Pola `+6(2)/+4(2)/+0(4)` diulang~~ **Selesai** — `zcl_cs_util=>fmt_date()`. | FORM/METHOD `format_date_ddmmyyyy` reusable. ✔ |
+| **D7 ✅** | `monitoring_detail.htm:129` | ~~`gamng`/`gstrs`~~ **Selesai otomatis saat A2** (select AFKO kini `aufnr gltrp`). | Bersihkan select list setelah A2 diperbaiki; pertimbangkan `GLTRP` untuk target finish. |
+| **D8** | Dokumentasi | `README.md`, `erd.md`, `flowchart.md` belum mencerminkan KNA1/AFKO/MARD/EKPO, `monitoring_detail.htm`, AJAX, tab, KPI baru. | Sinkronkan (lihat Bagian G). |
+
+### Ringkasan perbaikan yang diterapkan (29 Jun 2026)
+
+- **D1 ✅** Dibuat global class **`ZCL_CS_UTIL`** (source: `ZBSP_CS_APP/classes/ZCL_CS_UTIL.abap`) dengan `prog_bar_class( pct )` & `prog_txt_class( pct )`. Empat titik ABAP yang sebelumnya menyalin ambang 100/70/45/20 kini memanggil class:
+  - `monitoring.htm` sidebar (progress fill SO),
+  - `monitoring_detail.htm` — overall bar (Ringkasan), per-item summary, dan tabel Item & BOM.
+  - Kasus *belum produksi* (`prog-black`/`txt-black`) tetap di pemanggil karena kontekstual (psmng=0 / semua noprod).
+  - Mengubah ambang/warna progres cukup di satu tempat → drift hilang.
+- **Catatan dependency (PENTING):** `monitoring.htm` & `monitoring_detail.htm` sekarang memanggil `zcl_cs_util=>...`. **Buat & aktifkan `ZCL_CS_UTIL` di SE24/ADT dulu** (assign ke package & transport ZBSP_CS_APP) sebelum aktivasi halaman, kalau tidak halaman gagal kompilasi.
+- **D2 ✅** `monitoring_detail.htm` — `SELECT SINGLE *` VBAK/KNA1 diganti kolom spesifik (`vbeln erdat auart kunnr netwr waerk` / `kunnr name1 ort01`).
+- **D3 ✅** Dihapus CSS mati: `.prog-bar`, `.prog-bar-inner`, `.info-icon`, blok `.so-stat-row`/`.so-pill-*`/`.so-mini-bar*`, `.bom-loading` + `@keyframes bom-pulse`. Dihapus pula fungsi JS mati `progClass()`.
+- **D6 ✅** Ditambah `zcl_cs_util=>fmt_date( dats )` → 'DD/MM/YYYY'; pola `+6(2)/+4(2)/(4)` yang berulang (erdat SO, recent, footer di index & monitoring; header & target di detail) kini memanggil helper. (Format khusus tetap dibiarkan: kunci YYYYMMDD mingguan, label DD/MM chart, ETA DD/MM.)
+- **D7 ✅ (otomatis saat A2)** `gstrs`/`gamng` sudah hilang dari select AFKO.
+
+**Belum dikerjakan di D:** D5 (JSON via CONCATENATE) — **ditunda**: `/UI2/CL_JSON` menghasilkan array-of-objects sehingga JS chart (`weekLabels`/`doneCounts` paralel) harus direstrukturisasi; risiko > manfaat karena data hanya angka & label DD/MM (risiko injeksi delimiter rendah). D8 (sinkron dokumentasi) → ditangani di **Bagian G**.
 
 ---
 
-## E. Saran Fitur Baru (Jangka Panjang)
+## E. Keamanan & Robustness
 
-| Fitur | Deskripsi | Estimasi Dampak |
-|-------|-----------|----------------|
-| **Dashboard per Shift** | Menampilkan breakdown produksi per shift (pagi/siang/malam) dengan filter shift. | Sedang |
-| **QR Code / Barcode** | Scan SO atau material via barcode scanner untuk快速 lookup. | Sedang |
-| **Integration dengan EWM/PP** | Ambil data dari tabel produksi lain (AFKO, AFRU, MSEG) untuk akurasi progress real-time. | Besar |
-| **Grafik Perbandingan** | Bandingkan periode saat ini vs periode sebelumnya (month-over-month, year-over-year). | Sedang |
-| **User Activity Log** | Catat siapa mengakses dashboard dan kapan. | Rendah |
-| **Dashboard Export Gambar** | Export grafik dashboard sebagai PNG. | Rendah |
+| # | Lokasi | Issue | Saran |
+|---|--------|-------|-------|
+| **E1** | Semua output `<%= %>` | BSP **tidak meng-encode HTML** secara default. Field seperti `arktx`, `name1`, `maktx`, dan input pencarian yang dipantulkan kembali (`value="<%= lv_ui_vbeln %>"`) bisa memicu **XSS terpantul/tersimpan** bila berisi `<`, `"`, `&`. | Encode via `cl_http_utility=>escape_html( )` untuk semua data yang berasal dari master data/input user, terutama yang masuk ke atribut HTML (`data-name`). |
+| **E2** | `main.htm` | Autentikasi hanya cek `sy-uname` non-kosong. Tidak ada `AUTHORITY-CHECK` / objek otorisasi. User SAP valid mana pun bisa akses. | Tambah `AUTHORITY-CHECK` (mis. atas plant/area) + tampilkan pesan tolak. |
+| **E3** | Form POST | Tidak ada token anti-CSRF. (Risiko rendah, app internal.) | Pertimbangkan CSRF token BSP bila terekspos lebih luas. |
+| **E4** | `monitoring_detail.htm` AJAX | Endpoint menerima `vbeln` apa pun tanpa cek apakah user berhak; tidak ada rate limiting. | Validasi & terapkan otorisasi yang sama dengan E2 di endpoint fragmen. |
 
----
-
-## F. Prioritas Pelaksanaan
-
-### Fase 1 — Critical (Bug Fix)
-1. Perbaiki agregasi mingguan (`index.htm:225`) — ganti `'20240101'` dengan referensi dinamis atau fungsi SAP.
-2. Tambah validasi RANGES kosong di monitoring.htm (pastikan filter bekerja dengan benar).
-3. Tambah pengecekan otorisasi user di main.htm.
-
-### Fase 2 — High (Fitur Missing)
-1. Support multi-plant (parameter BSP untuk plant code).
-2. Export Excel/PDF untuk tabel.
-3. Auto-refresh dashboard (interval timer).
-4. Tampilkan nama customer dari KNA1.
-
-### Fase 3 — Medium (Performance)
-1. Ubah `SELECT *` jadi SELECT kolom spesifik di monitoring.htm.
-2. Optimasi nested loop di monitoring.htm (SORT + BINARY SEARCH).
-3. Responsive chart canvas (redraw on resize).
-
-### Fase 4 — Low (Code Quality)
-1. Pisahkan CSS/JS ke file eksternal.
-2. Gunakan JSON serializer daripada CONCATENATE manual.
-3. Tambah print-friendly CSS.
-4. Dark mode.
+> Catatan positif: query memakai `CONVERSION_EXIT_ALPHA_INPUT` + `RANGES` + host variable (`LIKE lv_name_pattern`), sehingga **aman dari SQL injection** (tidak ada Open SQL dinamis). Pertahankan pola ini.
 
 ---
 
-## G. Optimasi Performa & UX Lanjutan
+## F. Fitur yang Belum Ada / Roadmap
 
-### G.1 Arsitektur Query & Database
+| Fitur | Keterangan | Prioritas |
+|-------|-----------|-----------|
+| **Multi-plant** | Plant 2000 hardcoded. Jadikan parameter (dropdown plant + `lc_plant` dari input/parameter aplikasi). | Tinggi |
+| **OTD & lead time yang benar** | Implementasikan dengan tanggal target vs aktual (AFKO/AFRU/MSEG) — sekaligus menyelesaikan A3/A4. | Tinggi |
+| **Export Excel/PDF** | Tidak ada export untuk tabel SO/item/BOM. | Sedang |
+| **Auto-refresh dashboard** | Timer interval + indikator "live". | Sedang |
+| **Trend line harian/bulanan** | Saat ini hanya bar mingguan. | Sedang |
+| **Role-based access** | Viewer / supervisor / admin (sejalan E2). | Sedang |
+| **Persistensi preferensi user** | Periode & filter reset tiap reload; simpan via SAP user parameter / `localStorage`. | Rendah |
+| **Integrasi PP/EWM lebih dalam** | `AFKO`/`AFRU`/`MSEG` untuk akurasi progress & tanggal nyata. | Besar |
+| **Perbandingan periode** | Month-over-month / year-over-year. | Sedang |
+| **Dark mode** | Hanya tema terang. | Rendah |
 
-| # | Issue | Dampak | Solusi |
-|---|-------|--------|--------|
-| 1 | **`DELETE lt_vbak` di dalam LOOP** — `index.htm:126-132`. Setiap DELETE menggeser indeks internal tabel. Untuk 1000+ SO, overhead akumulasi signifikan. | Sedang | Gunakan pendekatan *flag-based*: tambah field `lv_pruned`, set flag, lalu `DELETE lt_vbak WHERE flag = 'X'` di luar LOOP. |
-| 2 | **Nested LOOP untuk hitung item per SO** — `monitoring.htm:300-304`. `LOOP AT lt_local_item WHERE vbeln = ...` dijalankan untuk setiap header SO. Kompleksitas O(n×m). | Tinggi | Pre-komputasi: `lt_item_count` via LOOP tunggal `lt_local_item`, akumulasi count per vbeln, kemudian READ TABLE. |
-| 3 | **FOR ALL ENTRIES tanpa deduplikasi** — Monitoring.htm query MAKT (`idnrk`). Jika source table memiliki banyak duplikat `idnrk`, query jadi *bloated* dan berpotensi *short dump* karena batas 9999 baris per batch. | Tinggi | Gunakan `DELETE ADJACENT DUPLICATES FROM` sebelum `FOR ALL ENTRIES`. |
-| 4 | **SELECT * vs SELECT kolom** — Masih ada beberapa `SELECT *` di monitoring.htm. Transfer data semua kolom dari DB ke application server memboroskan memory dan network. | Tinggi | Ganti semua `SELECT *` dengan daftar kolom eksplisit. |
-| 5 | **Subquery di VBAK untuk filter Plant** — `index.htm:101` dan `monitoring.htm:113`. Subquery `IN(SELECT ...)` seringkali kurang optimal dibanding `FOR ALL ENTRIES` oleh optimizer SAP. | Rendah | Konsisten gunakan `FOR ALL ENTRIES` + pruning pattern seperti di index.htm. |
-| 6 | **Tidak ada query hint / index hint** — Query tidak memanfaatkan index spesifik. Untuk tabel VBAK/VBAP yang besar (>1 juta record), *full table scan* bisa terjadi. | Sedang | Analisis ST05, tambah *database hint* jika diperlukan (misal `%_HINTS ORACLE 'INDEX(...)'`). |
-| 7 | **AFPO query tanpa filter status produksi** — `index.htm:139-145` mengambil semua AFPO tanpa filter status (CRTD, REL, CNF, DLVR, TECO). Data produksi yang sudah *closed* tetap ditarik. | Rendah | Tambah filter `afpo-status` di mana relevan untuk mengurangi volume data. |
+---
 
-### G.2 ABAP Processing
+## G. Sinkronisasi Dokumentasi
 
-| # | Issue | Dampak | Solusi |
-|---|-------|--------|--------|
-| 8 | **CONCATENATE manual untuk JSON** — `index.htm:268-290`. String concatenation di LOOP untuk setiap minggu. Untuk 52 minggu, ini 5×52 = 260 operasi CONCATENATE. | Rendah | Gunakan class `cl_trex_json_serializer` atau `cl_bcs_json` (SAP 7.40+). Lebih cepat dan aman dari *delimiter injection*. |
-| 9 | **Konversi tanggal berulang** — Format DD/MM/YYYY via `CONCATENATE` dengan offset `+6(2)/+4(2)/+0(4)` diulang di 3 tempat (index.htm:191,597; monitoring.htm:305). | Rendah | Buat FORM/METHOD `format_date` reusable. |
-| 10 | **Variabel p DECIMALS berlebihan** — Banyak variabel `p LENGTH 8 DECIMALS 2` yang hanya dipakai untuk perhitungan sementara. Tipe p dengan decimals tinggi boros CPU. | Rendah | Gunakan tipe integer untuk counter, `p DECIMALS 2` hanya untuk rate/prosentase akhir. |
-| 11 | **lt_so_prog di-sort 2×** — `index.htm:223` (SORT BY vbeln) dan `index.htm:538` (SORT BY rate ASCENDING). Bisa digabung jadi 1 sort dengan secondary key. | Rendah | Gunakan `SORT lt_so_prog BY rate ASCENDING vbeln ASCENDING`. |
+- **README.md**: perbarui struktur file (folder `MIMEs/css`, `MIMEs/js`, `monitoring_detail.htm`), tabel SAP baru (KNA1, AFKO, MARD, EKPO), arsitektur AJAX, daftar fitur (tab, tooltip material, KPI baru), serta prasyarat sistem (rilis SAP min., otorisasi).
+- **erd.md**: tambah KNA1, AFKO, MARD, EKPO ke ERD & kardinalitas; tambah struktur `ty_local_item` versi detail (dengan `aufnr`), `ty_cust_info`, `ty_so_stat`, `ty_mard_agg`, `ty_ekpo_slim`.
+- **flowchart.md**: tambahkan alur AJAX `viewDetails → monitoring_detail.htm`, alur tab, tooltip material, dan KPI OTD/lead time/backlog di dashboard.
 
-### G.3 Frontend & Rendering
+---
 
-| # | Issue | Dampak | Solusi |
-|---|-------|--------|--------|
-| 12 | **Semua SO di-render server-side, disembunyikan via CSS** — `monitoring.htm:296-315`. 100 SO → 100 div di-render, padahal hanya 5 yang tampil. DOM *bloated*. | Sedang | Render hanya 5 per halaman di server, kirim AJAX request saat ganti halaman (lazy pagination). |
-| 13 | **Canvas chart blocking main thread** — `index.htm:669-814`. Drawing chart via Canvas API di `window.onload` memblokir interaksi user hingga selesai. | Sedang | Gunakan `requestAnimationFrame` + `setTimeout(0)` untuk *deferred rendering*. Atau pindah ke `Chart.js` / `D3.js` yang sudah *async-friendly*. |
-| 14 | **Full page reload setiap filter** — Setiap klik "7/30/90 Hari" atau "Cari" melakukan POST → full page reload. | Tinggi | Implementasikan **AJAX partial refresh** (SAP BSP + XML/JSON response + JS update DOM). Filter period dan search jadi *instant*. |
-| 15 | **Formulir monitoring tidak ada validasi HTML5** — Input tanggal bisa diisi asal, tidak ada `required`, `min`, `max`. Jika user isi format salah, page error. | Sedang | Tambah `type="date"`, `required`, `min`/`max` pada field. Validasi client-side + server-side. |
-| 16 | **Parameter filter tidak tercermin di URL** — Setelah search, user tidak bisa *bookmark* atau *share* hasil filter. | Rendah | Update `history.replaceState`/`pushState` dengan parameter filter di URL. |
-| 17 | **Tidak ada timestamp data** — User tidak tahu kapan data terakhir di-refresh (tanggal query dieksekusi). | Rendah | Tambah informasi `"Data per: DD/MM/YYYY HH:MM"` di footer atau header. |
-| 18 | **Skeleton loading hanya di dashboard** — monitoring.htm tidak punya skeleton. | Sedang | Terapkan skeleton untuk sidebar SO list dan panel detail. |
-| 19 | **Chart bar tidak ada tooltip** — User harus klik bar untuk melihat detail. Tidak bisa hover untuk lihat angka. | Rendah | Implementasikan *canvas hover detection* untuk tooltip, atau migrasi ke library chart yang sudah mendukung. |
-| 20 | **Table columns tidak sortable** — User tidak bisa sortir kolom (misal klik header "Rate" untuk sort ASC/DESC). | Rendah | Tambah JS click handler pada header tabel untuk *client-side sorting*. |
+## H. Urutan Pelaksanaan yang Disarankan
 
-### G.4 Jaringan & Infrastructure
+**Fase 1 — Kritis/Tinggi (benerin dulu)**
+1. **A1** guard `IF lt_stpo_pre IS NOT INITIAL` sebelum MAKT/MARD/EKPO (cepat, dampak besar).
+2. **A2** status order AFKO via JEST/`STATUS_TEXT_EDIT` (saat ini selalu "Dibuat").
+3. **A3 + A4** perbaiki/relabel KPI OTD & lead time agar tidak menyesatkan (minimal beri label jujur sambil menunggu data tanggal aktual).
+4. **A7** verifikasi `EKPO-EILDT` di ST22/runtime sebelum dianggap aman.
 
-| # | Issue | Dampak | Solusi |
-|---|-------|--------|--------|
-| 21 | **Tidak ada compression untuk response HTML** — BSP page output bisa >200KB untuk banyak data. | Rendah | Aktifkan HTTP compression (gzip) di level ICM / SICF. |
-| 22 | **No CDN / cache for static assets** — Logo dan background via MIME repository. Setiap load halaman di-download ulang. | Rendah | Set HTTP cache headers untuk MIME assets (Expires / Cache-Control). |
-| 23 | **Data tidak di-cache di layer ABAP** — Setiap request user → query DB → response. Data agregat (total SO, rate) sama untuk semua user. | Tinggi | Implementasikan **shared memory** (CL_SHM_AREA) atau **buffer internal** (EXPORT/IMPORT TO SHARED MEMORY) untuk data KPI yang berubah lambat. Refresh buffer setiap N menit. |
-| 24 | **Parallel data fetching tidak dimanfaatkan** — Query recent (index.htm:97) dan query utama (index.htm:107) independen, bisa dijalankan paralel. ABAP tidak mendukung *async query*, tetapi bisa via RFC parallel task. | Rendah | Pisahkan block query ke RFC function module dan panggil parallel via `CALL FUNCTION... STARTING NEW TASK`. |
+**Fase 2 — Sedang**
+1. **A5** logika filter customer saat dua field diisi; **A6** case-insensitive name search.
+2. **B1** tentukan landing tab; **B6** format angka/uang.
+3. **C1** optimasi `lt_so_prog`; **C2** paginasi sidebar via AJAX.
+4. **E1/E2** HTML-escape output + `AUTHORITY-CHECK`.
 
-### G.5 UX Flow Improvements
+**Fase 3 — Rendah / Kualitas**
+1. **D1** pusatkan logika klasifikasi; **D3** hapus CSS mati; **D2/D5/D6** kebersihan ABAP.
+2. **B2/B3** konsistensi warna & kontras; **B5/B7/B9** UX kecil.
+3. **A8** ganti epoch hardcode agregasi mingguan.
 
-| # | Saran UX | Detail |
-|---|----------|--------|
-| 25 | **Redirect setelah search** | monitoring.htm saat ini menggunakan POST → prevent re-submit dialog. Ubah ke GET + redirect agar URL bisa di-bookmark. |
-| 26 | **Date shortcut buttons** | Tambah tombol "Bulan Ini", "Minggu Ini", "Tahun Ini" di monitoring, seperti filter period di dashboard. |
-| 27 | **Double-click protection** | Form submit tidak dicegah dari double-click. User bisa double-klik "CARI" → query duplikat. | 
-| 28 | **Loading spinner on search** | Tidak ada feedback visual saat search berlangsung. Tambah spinner overlay dengan timeout. |
-| 29 | **BOM row animation** | Expand BOM sudah ada animasi fadeIn, tapi collapse instant. Konsistenkan animasi. |
-| 30 | **Keyboard shortcut** | Tekan Enter untuk search, Escape untuk reset filter, shortcut 1/2/3 untuk period filter. |
+**Fase 4 — Roadmap**
+- Multi-plant, export, auto-refresh, OTD/lead time berbasis data aktual, dark mode, sinkron dokumentasi (G).

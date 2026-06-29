@@ -183,8 +183,6 @@ canvas { display: block; max-width: 100%; }
   border-radius: 20px; font-size: 0.73rem; font-weight: 700;
 }
 .no-data { text-align: center; padding: 40px; color: #9ca3af; font-size: 0.9rem; }
-.prog-bar { flex: 1; height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; min-width: 80px; }
-.prog-bar-inner { height: 100%; border-radius: 4px; }
 
 /* ===== MONITORING (shared from monitoring.htm) ===== */
 .filter-card { background: #ffffff; padding: 24px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 24px; border: 1px solid #e5e7eb; }
@@ -229,9 +227,9 @@ canvas { display: block; max-width: 100%; }
 .prog-yellow { background-color: #eab308; }
 .prog-blue   { background-color: #3b82f6; }
 .prog-green  { background-color: #22c55e; }
-.prog-black  { background-color: #1f2937; }
+.prog-black  { background-color: #9ca3af; } /* "belum produksi" — abu-abu, konsisten dgn chart/donut (B2) */
 .prog-pct { font-size: 0.8rem; font-weight: 700; margin-left: 8px; display: inline-block; vertical-align: middle; }
-.txt-green { color: #059669; } .txt-amber { color: #d97706; } .txt-blue { color: #2563eb; } .txt-red { color: #dc2626; } .txt-black { color: #1f2937; }
+.txt-green { color: #059669; } .txt-amber { color: #d97706; } .txt-blue { color: #2563eb; } .txt-red { color: #dc2626; } .txt-black { color: #6b7280; }
 /* BOM wrapper: animasi dua arah (expand & collapse) via CSS transition */
 .bom-section-wrapper {
   overflow: hidden;
@@ -254,7 +252,6 @@ canvas { display: block; max-width: 100%; }
 .bom-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .bom-table th { background: #e2e8f0; color: #334155; padding: 8px 12px; font-weight: 700; text-align: left; }
 .bom-table td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; color: #475569; }
-.info-icon { display: inline-block; font-size: 0.8rem; color: #3b82f6; cursor: help; margin-left: 6px; }
 .cust-box { text-decoration:none; display:block; flex:1; min-width:200px; background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:18px 22px; box-shadow:0 1px 3px rgba(0,0,0,0.05); transition:box-shadow 0.2s, border-color 0.2s; cursor:pointer; }
 .cust-box:hover { box-shadow:0 4px 12px rgba(0,0,0,0.1); border-color:#93c5fd; }
 .cust-box-code { font-size:0.78rem; font-weight:700; text-transform:uppercase; color:#6b7280; margin-bottom:6px; }
@@ -262,15 +259,6 @@ canvas { display: block; max-width: 100%; }
 .cust-box-so { font-size:0.85rem; color:#4b5563; }
 .cust-box-so strong { color:#2563eb; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
-
-/* ===== SO STAT PILLS (sidebar monitoring) ===== */
-.so-stat-row { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
-.so-pill { display: inline-block; font-size: 0.7rem; font-weight: 700; padding: 1px 7px; border-radius: 10px; }
-.so-pill-done   { background: #d1fae5; color: #065f46; }
-.so-pill-inprog { background: #dbeafe; color: #1d4ed8; }
-.so-pill-noprod { background: #f3f4f6; color: #6b7280; }
-.so-mini-bar { height: 3px; background: #e5e7eb; border-radius: 2px; overflow: hidden; margin-top: 5px; }
-.so-mini-bar-fill { height: 100%; background: #10b981; border-radius: 2px; transition: width 0.4s ease; }
 
 /* ===== ORDER STATUS TAG (monitoring_detail) ===== */
 .ord-status-tag { display: inline-block; font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-top: 5px; letter-spacing: 0.02em; }
@@ -380,9 +368,9 @@ canvas { display: block; max-width: 100%; }
 }
 
 /* ===== SO CARD — BORDER STATUS + LABEL (opsi C) ===== */
-.so-border-done   { border-left: 4px solid #10b981; padding-left: 16px; }
-.so-border-inprog { border-left: 4px solid #3b82f6; padding-left: 16px; }
-.so-border-noprod { border-left: 4px solid #e5e7eb; padding-left: 16px; }
+.so-border-done   { border-left: 4px solid #16a34a; padding-left: 16px; }
+.so-border-inprog { border-left: 4px solid #2563eb; padding-left: 16px; }
+.so-border-noprod { border-left: 4px solid #9ca3af; padding-left: 16px; } /* B2: abu-abu, bukan hitam */
 
 /* Saat card dipilih, border biru aktif selalu menang (specificity lebih tinggi) */
 .so-item-row.active.so-border-done,
@@ -398,7 +386,7 @@ canvas { display: block; max-width: 100%; }
 }
 .so-sl-done   { background: #d1fae5; color: #065f46; }
 .so-sl-inprog { background: #dbeafe; color: #1d4ed8; }
-.so-sl-noprod { background: #f3f4f6; color: #9ca3af; }
+.so-sl-noprod { background: #e5e7eb; color: #4b5563; } /* B3: kontras dinaikkan (WCAG AA) */
 
 /* Progress bar tebal (6px) + persentase */
 .so-prog-row  { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
@@ -555,19 +543,6 @@ canvas { display: block; max-width: 100%; }
 /* ================================================================
    ITEM & BOM TAB — expand/collapse all buttons
    ================================================================ */
-.bom-loading {
-  text-align: center;
-  padding: 14px;
-  color: #9ca3af;
-  font-size: 0.8rem;
-  font-style: italic;
-  animation: bom-pulse 1.2s ease-in-out infinite;
-}
-@keyframes bom-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
-}
-
 .bom-ctrl-row {
   display: flex;
   gap: 8px;

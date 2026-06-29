@@ -1,6 +1,6 @@
 # Central Storage Production Dashboard — KMI 2 (Plant 2000)
 
-Aplikasi **SAP BSP (Business Server Pages)** berbasis ABAP untuk memonitor dan menganalisis progres produksi di **Central Storage KMI 2 — Plant 2000 Sidoarjo**.
+Aplikasi **SAP BSP (Business Server Pages)** berbasis ABAP untuk memonitor dan menganalisis progres produksi di **Central Storage KMI 2 — Plant 2000 Surabaya**.
 
 ## Tujuan
 
@@ -34,7 +34,7 @@ Memberikan visibilitas real-time terhadap status produksi dari data *Sales Order
 - **Bahasa**: SAP ABAP (BSP Page with Flow Logic)
 - **Frontend**: HTML5, CSS3, Canvas API (chart murni tanpa library eksternal)
 - **Database SAP**: VBAK, VBAP, AFPO, MAST, STPO, MAKT
-- **Plant**: 2000 (Sidoarjo)
+- **Plant**: 2000 (Surabaya)
 
 ## Struktur File
 

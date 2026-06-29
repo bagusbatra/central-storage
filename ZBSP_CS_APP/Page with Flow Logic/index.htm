@@ -53,6 +53,9 @@ DATA: lv_user         TYPE string,
       lv_mm           TYPE string,
       lv_idx          TYPE i,
       lv_is_done      TYPE i,
+      lv_cur_vbeln    TYPE vbak-vbeln,
+      lv_so_erdat     TYPE d,
+      lv_sp_filled    TYPE abap_bool,
       lv_weekday      TYPE i,
       lv_week_mon     TYPE d,
       lv_cnt_str      TYPE string,
@@ -165,7 +168,31 @@ IF lt_vbak IS NOT INITIAL.
   ENDIF.
 
   " === Klasifikasi item + akumulasi per-SO ===
+  " C1: lt_vbap sudah terurut BY vbeln, jadi item satu SO berurutan. Pakai
+  "     control-break manual → O(n): tanpa READ lt_so_prog linear per item,
+  "     dan READ lt_vbak hanya sekali per SO (bukan per item).
+  CLEAR: lv_cur_vbeln, lv_so_erdat, lv_sp_filled.
   LOOP AT lt_vbap INTO ls_vbap.
+    " --- Control break: pindah ke SO baru ---
+    IF ls_vbap-vbeln <> lv_cur_vbeln.
+      IF lv_sp_filled = abap_true.
+        APPEND ls_so_prog TO lt_so_prog.
+      ENDIF.
+      CLEAR: ls_so_prog, lv_so_erdat.
+      ls_so_prog-vbeln = ls_vbap-vbeln.
+      READ TABLE lt_vbak INTO ls_vbak
+        WITH KEY vbeln = ls_vbap-vbeln BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_so_prog-kunnr = ls_vbak-kunnr.
+        ls_so_prog-auart = ls_vbak-auart.
+        lv_so_erdat      = ls_vbak-erdat.
+        ls_so_prog-erdat = zcl_cs_util=>fmt_date( ls_vbak-erdat ).
+      ENDIF.
+      lv_cur_vbeln = ls_vbap-vbeln.
+      lv_sp_filled = abap_true.
+    ENDIF.
+
+    " --- Klasifikasi status item ---
     CLEAR ls_afpo.
     READ TABLE lt_afpo INTO ls_afpo
       WITH KEY kdauf = ls_vbap-vbeln kdpos = ls_vbap-posnr
@@ -186,64 +213,37 @@ IF lt_vbak IS NOT INITIAL.
       lv_is_done = 3.
     ENDIF.
 
-    " === KPI Accumulation ===
+    " --- KPI: penyelesaian order produksi (A3) + umur WIP & backlog (A4) ---
     IF lv_is_done = 1 OR lv_is_done = 2.
       lv_otd_total = lv_otd_total + 1.
       IF lv_is_done = 1.
         lv_otd_on_time = lv_otd_on_time + 1.
-        READ TABLE lt_vbak INTO ls_vbak
-          WITH KEY vbeln = ls_vbap-vbeln
-          BINARY SEARCH.
-        IF sy-subrc = 0.
-          lv_lead_days = lv_lead_days + ( sy-datum - ls_vbak-erdat ).
+      ELSE.
+        " item proses → umur WIP (pakai erdat SO yang sudah dibaca di control-break)
+        IF lv_so_erdat IS NOT INITIAL.
+          lv_lead_days  = lv_lead_days + ( sy-datum - lv_so_erdat ).
           lv_lead_count = lv_lead_count + 1.
-        ENDIF.
-      ENDIF.
-      IF lv_is_done = 2.
-        READ TABLE lt_vbak INTO ls_vbak
-          WITH KEY vbeln = ls_vbap-vbeln
-          BINARY SEARCH.
-        IF sy-subrc = 0 AND ( sy-datum - ls_vbak-erdat ) > 30.
-          lv_backlog_cnt = lv_backlog_cnt + 1.
+          IF ( sy-datum - lv_so_erdat ) > 30.
+            lv_backlog_cnt = lv_backlog_cnt + 1.
+          ENDIF.
         ENDIF.
       ENDIF.
     ENDIF.
 
-    READ TABLE lt_so_prog INTO ls_so_prog WITH KEY vbeln = ls_vbap-vbeln.
-    IF sy-subrc = 0.
-      lv_idx = sy-tabix.
-      ls_so_prog-total = ls_so_prog-total + 1.
-      IF lv_is_done = 1.
-        ls_so_prog-done   = ls_so_prog-done + 1.
-      ELSEIF lv_is_done = 2.
-        ls_so_prog-inprog = ls_so_prog-inprog + 1.
-      ELSE.
-        ls_so_prog-noprod = ls_so_prog-noprod + 1.
-      ENDIF.
-      MODIFY lt_so_prog FROM ls_so_prog INDEX lv_idx.
+    " --- Akumulasi per-SO (di working area control-break) ---
+    ls_so_prog-total = ls_so_prog-total + 1.
+    IF lv_is_done = 1.
+      ls_so_prog-done   = ls_so_prog-done + 1.
+    ELSEIF lv_is_done = 2.
+      ls_so_prog-inprog = ls_so_prog-inprog + 1.
     ELSE.
-      CLEAR ls_so_prog.
-      ls_so_prog-vbeln = ls_vbap-vbeln.
-      READ TABLE lt_vbak INTO ls_vbak
-        WITH KEY vbeln = ls_vbap-vbeln
-        BINARY SEARCH.
-      IF sy-subrc = 0.
-        ls_so_prog-kunnr = ls_vbak-kunnr.
-        ls_so_prog-auart = ls_vbak-auart.
-        CONCATENATE ls_vbak-erdat+6(2) '/' ls_vbak-erdat+4(2) '/'
-                    ls_vbak-erdat(4) INTO ls_so_prog-erdat.
-      ENDIF.
-      ls_so_prog-total = 1.
-      IF lv_is_done = 1.
-        ls_so_prog-done = 1.
-      ELSEIF lv_is_done = 2.
-        ls_so_prog-inprog = 1.
-      ELSE.
-        ls_so_prog-noprod = 1.
-      ENDIF.
-      APPEND ls_so_prog TO lt_so_prog.
+      ls_so_prog-noprod = ls_so_prog-noprod + 1.
     ENDIF.
   ENDLOOP.
+  " flush SO terakhir
+  IF lv_sp_filled = abap_true.
+    APPEND ls_so_prog TO lt_so_prog.
+  ENDIF.
 
   " === Overall completion rate ===
   IF lv_total_item > 0.
@@ -251,12 +251,12 @@ IF lt_vbak IS NOT INITIAL.
     lv_rate = ( lv_pct / lv_total_item ) * 100.
   ENDIF.
 
-  " === On-Time Delivery Rate ===
+  " === Penyelesaian Order Produksi (% item produksi yang selesai) ===
   IF lv_otd_total > 0.
     lv_otd_rate = ( lv_otd_on_time / lv_otd_total ) * 100.
   ENDIF.
 
-  " === Average Production Lead Time (hari) ===
+  " === Rata-rata Umur Item Proses (hari, WIP aging) ===
   IF lv_lead_count > 0.
     lv_leadtime = lv_lead_days / lv_lead_count.
   ENDIF.
@@ -274,8 +274,11 @@ IF lt_vbak IS NOT INITIAL.
   " === Agregasi per minggu ===
   SORT lt_so_prog BY vbeln.
   LOOP AT lt_vbak INTO ls_vbak.
-    lv_weekday  = ( ls_vbak-erdat - '20240101' ) MOD 7.
-    lv_week_mon = ls_vbak-erdat - lv_weekday.
+    " A8 — Senin awal minggu via aritmetika tanggal murni (1=Senin..7=Minggu).
+    "       Tanpa DATE_COMPUTE_DAY agar bebas konflik tipe parameter FM.
+    "       2024-01-01 adalah hari Senin; MOD ABAP selalu mengembalikan 0..6.
+    lv_weekday  = ( ls_vbak-erdat - '20240101' ) MOD 7 + 1.
+    lv_week_mon = ls_vbak-erdat - ( lv_weekday - 1 ).
     CONCATENATE lv_week_mon(4) lv_week_mon+4(2) lv_week_mon+6(2) INTO lv_mm.
 
     CLEAR ls_so_prog.
@@ -367,17 +370,17 @@ ELSE.
   lv_rate_alert = 'KRITIS: penyelesaian sangat rendah, perlu tindakan segera!'.
 ENDIF.
 
-" === OTD Thresholds ===
+" === Penyelesaian Order Produksi Thresholds ===
 IF lv_otd_total = 0.
   lv_otd_cls = 'kpi-gray'.
 ELSEIF lv_otd_rate >= 80.
   lv_otd_cls = 'kpi-green'.
 ELSEIF lv_otd_rate >= 50.
   lv_otd_cls = 'kpi-amber'.
-  lv_otd_alert = 'OTD di bawah target 80%'.
+  lv_otd_alert = 'Penyelesaian order produksi di bawah target 80%'.
 ELSE.
   lv_otd_cls = 'kpi-red'.
-  lv_otd_alert = 'KRITIS: OTD sangat rendah!'.
+  lv_otd_alert = 'KRITIS: penyelesaian order produksi sangat rendah!'.
 ENDIF.
 
 " === Backlog Thresholds ===
@@ -415,7 +418,7 @@ CONCATENATE lv_jnoprod ']' INTO lv_jnoprod.
 
 DATA: lv_ts_date TYPE string,
       lv_ts_time TYPE string.
-lv_ts_date = sy-datum+6(2) && '/' && sy-datum+4(2) && '/' && sy-datum(4).
+lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
 lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 %>
 <!DOCTYPE html>
@@ -424,14 +427,14 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard - Central Storage KMI 2</title>
-  <link rel="stylesheet" href="css/style.css?r=2">
+  <link rel="stylesheet" href="css/style.css?r=3">
 </head>
 <body class="page-loading">
 
   <div class="header-bar">
     <div class="header-title">
       <h1>Central Storage Production Dashboard</h1>
-      <p>Ringkasan Statistik &amp; Analitik Produksi &#8212; Plant 2000 Sidoarjo</p>
+      <p>Ringkasan Statistik &amp; Analitik Produksi &#8212; Plant 2000 Surabaya</p>
     </div>
     <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_user %></span>
       <div class="user-dropdown" id="user-dropdown">
@@ -449,8 +452,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
   <div class="content">
 
-    <!-- PERIOD FILTER -->
-    <form method="post" action="index.htm">
+    <!-- PERIOD FILTER (B4: GET → idempotent, bisa di-reload/bookmark tanpa dialog kirim ulang) -->
+    <form method="get" action="index.htm">
       <input type="hidden" name="cust_search" value="<%= lv_cust_search %>">
       <div class="filter-bar">
         <span class="filter-label">Periode:</span>
@@ -512,11 +515,11 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card <%= lv_otd_cls %>">
           <div class="stat-header">
-            <span class="stat-label">On-Time Delivery Rate</span>
+            <span class="stat-label">Penyelesaian Order Produksi</span>
             <span class="stat-icon"><span class="ic-blue">&#9200;</span></span>
           </div>
           <div class="stat-value"><%= lv_otd_rate %>%</div>
-          <div class="stat-sub"><%= lv_otd_on_time %> / <%= lv_otd_total %> item tepat waktu</div>
+          <div class="stat-sub"><%= lv_otd_on_time %> / <%= lv_otd_total %> item produksi selesai</div>
           <% IF lv_otd_alert <> ''. %>
           <div class="kpi-alert">&#9888; <%= lv_otd_alert %></div>
           <% ENDIF. %>
@@ -525,11 +528,11 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Rata-rata Lead Time</span>
+            <span class="stat-label">Rata-rata Umur Item Proses</span>
             <span class="stat-icon"><span class="ic-amber">&#128197;</span></span>
           </div>
           <div class="stat-value"><%= lv_leadtime %></div>
-          <div class="stat-sub">hari dari SO dibuat hingga selesai</div>
+          <div class="stat-sub">hari rata-rata item yang masih diproduksi</div>
         </div>
       </div>
       <div class="stat-cell" style="width:33.33%;">
@@ -577,7 +580,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
     <!-- CUSTOMER BOXES -->
     <div style="margin-bottom:24px;">
-      <form method="post" action="index.htm" style="margin-bottom:16px;">
+      <form method="get" action="index.htm" style="margin-bottom:16px;">
         <input type="hidden" name="period" value="<%= lv_period_param %>">
         <div style="display:flex;align-items:center;gap:8px;">
           <input type="text" name="cust_search" id="cust_search" value="<%= lv_cust_search %>" placeholder="Cari nama atau kode customer..." style="flex:1;padding:10px 14px;border:1px solid #d1d5db;border-radius:8px;font-size:0.85rem;background:#f9fafb;">
@@ -641,15 +644,14 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         <tbody>
           <%
             LOOP AT lt_recent INTO ls_recent.
-              CLEAR lv_recent_dd.
-              CONCATENATE ls_recent-erdat+6(2) '/' ls_recent-erdat+4(2) '/' ls_recent-erdat(4) INTO lv_recent_dd.
+              lv_recent_dd = zcl_cs_util=>fmt_date( ls_recent-erdat ).
           %>
           <tr onclick="window.location.href='monitoring.htm?so_num=<%= ls_recent-vbeln %>&amp;search_btn=X'" style="cursor:pointer;">
             <td><strong style="color:#1e3a8a;">SO #<%= ls_recent-vbeln %></strong></td>
             <td><%= ls_recent-kunnr %></td>
             <td><span class="badge-type"><%= ls_recent-auart %></span></td>
             <td><%= lv_recent_dd %></td>
-            <td style="text-align:right; font-weight:600;"><%= ls_recent-netwr %></td>
+            <td style="text-align:right; font-weight:600;"><span class="cur-fmt"><%= ls_recent-netwr %></span></td>
             <td><%= ls_recent-waerk %></td>
           </tr>
           <% ENDLOOP. %>

@@ -1,7 +1,7 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Page — Monitoring Produksi, Plant 2000 Sidoarjo
+*& BSP Page — Monitoring Produksi, Plant 2000 Surabaya
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
 
@@ -54,7 +54,7 @@ DATA: lv_dd            TYPE string,
       lv_cust_name_dsp TYPE kna1-name1,
       lv_layout_user   TYPE string,
       lv_stat_pct      TYPE p DECIMALS 2,
-      lv_done_pct      TYPE p DECIMALS 1,
+      lv_done_pct      TYPE zcl_cs_util=>ty_pct,
       lv_border_cls    TYPE string,
       lv_stat_cls      TYPE string,
       lv_stat_label    TYPE string,
@@ -117,8 +117,9 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
     APPEND ls_vbeln TO lr_vbeln.
   ENDIF.
 
-  " Filter Kode Customer — exact + partial; hanya jika nama tidak diisi
-  IF lv_ui_kunnr IS NOT INITIAL AND lv_ui_name IS INITIAL.
+  " Filter Kode Customer — exact + partial. Kode customer diprioritaskan:
+  " jika kode & nama sama-sama diisi, kode yang dipakai (A5).
+  IF lv_ui_kunnr IS NOT INITIAL.
     CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
       EXPORTING input  = lv_ui_kunnr
       IMPORTING output = lv_search_kun.
@@ -131,13 +132,14 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
     APPEND ls_kunnr TO lr_kunnr.
   ENDIF.
 
-  " Filter Nama Customer — cari KNA1 dan masukkan kunnr ke range
+  " Filter Nama Customer — cari KNA1 dan masukkan kunnr ke range.
+  " Pakai MCOD1 (field pencarian huruf besar) agar pencarian case-insensitive (A6).
   IF lv_ui_name IS NOT INITIAL AND lv_ui_kunnr IS INITIAL.
     TRANSLATE lv_ui_name TO UPPER CASE.
     lv_name_pattern = '%' && lv_ui_name && '%'.
     SELECT kunnr name1 FROM kna1
       INTO CORRESPONDING FIELDS OF TABLE lt_kna1_srch
-      WHERE name1 LIKE lv_name_pattern.
+      WHERE mcod1 LIKE lv_name_pattern.
     IF lt_kna1_srch IS NOT INITIAL.
       LOOP AT lt_kna1_srch INTO ls_kna1_srch.
         ls_kunnr-sign   = 'I'.
@@ -234,7 +236,7 @@ lv_local_cnt = lines( lt_local_hdr ).
 
 DATA: lv_ts_date TYPE string,
       lv_ts_time TYPE string.
-lv_ts_date = sy-datum+6(2) && '/' && sy-datum+4(2) && '/' && sy-datum(4).
+lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
 lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 %>
 <!DOCTYPE html>
@@ -242,15 +244,15 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Central Storage Production Dashboard - KMI 2 Sidoarjo</title>
-  <link rel="stylesheet" href="css/style.css?r=2">
+  <title>Central Storage Production Dashboard - KMI 2 Surabaya</title>
+  <link rel="stylesheet" href="css/style.css?r=3">
 </head>
 <body>
 
   <div class="header-bar">
     <div class="header-title">
       <h1>Central Storage Production Dashboard</h1>
-      <p>Monitoring Progres Produksi &amp; Alur Transit Material &#8212; Plant 2000 Sidoarjo</p>
+      <p>Monitoring Progres Produksi &amp; Alur Transit Material &#8212; Plant 2000 Surabaya</p>
     </div>
     <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_layout_user %></span>
       <div class="user-dropdown" id="user-dropdown">
@@ -267,7 +269,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   </div>
 
   <div class="filter-card">
-    <form method="post" action="">
+    <!-- B4: GET → hasil pencarian bisa di-bookmark & reload tanpa dialog kirim ulang -->
+    <form method="get" action="">
       <div class="filter-form">
         <div class="form-group" style="width:16%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_vbeln %>" placeholder="10000021 atau sebagian"></div>
         <div class="form-group" style="width:13%;"><label>Kode Customer</label><input type="text" id="cust_num" name="cust_num" value="<%= lv_ui_kunnr %>" placeholder="Kode SAP"></div>
@@ -284,6 +287,16 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="list-container">
         <div class="list-header">Daftar Sales Order (<%= lv_local_cnt %> Dokumen)</div>
         <div id="so-list-viewport" style="max-height: 520px; overflow-y: auto;">
+          <% IF lv_is_srch = abap_false. %>
+          <!-- B5: panduan saat halaman dibuka sebelum pencarian dilakukan -->
+          <div class="empty-state">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
+            </svg>
+            <h3>Mulai Pencarian</h3>
+            <p>Masukkan Nomor SO, kode/nama customer, atau rentang tanggal di atas, lalu klik <strong>CARI DATA</strong> untuk menampilkan daftar Sales Order.</p>
+          </div>
+          <% ENDIF. %>
           <% IF lv_is_srch = abap_true AND lv_local_cnt = 0. %>
           <div class="empty-state">
             <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -330,7 +343,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                   lv_item_cnt = lv_item_cnt + 1.
                 ENDLOOP.
               ENDIF.
-              lv_dd = ls_hdr_row-erdat+6(2) && '/' && ls_hdr_row-erdat+4(2) && '/' && ls_hdr_row-erdat(4).
+              lv_dd = zcl_cs_util=>fmt_date( ls_hdr_row-erdat ).
               CLEAR lv_cust_name_dsp.
               READ TABLE lt_cust_names INTO ls_cust_name
                 WITH KEY kunnr = ls_hdr_row-kunnr BINARY SEARCH.
@@ -355,13 +368,12 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                   lv_stat_cls   = 'so-sl-noprod'.
                   lv_stat_label = 'Belum Produksi'.
                 ENDIF.
-                lv_pf_cls = 'prog-red'. lv_pf_txt = 'txt-red'.
+                " D1: warna progres dipusatkan di ZCL_CS_UTIL; "black" tetap kontekstual
                 IF ls_so_stat_r-noprod = ls_so_stat_r-total.
                   lv_pf_cls = 'prog-black'. lv_pf_txt = 'txt-black'.
-                ELSEIF lv_done_pct >= 100. lv_pf_cls = 'prog-green'. lv_pf_txt = 'txt-green'.
-                ELSEIF lv_done_pct > 70. lv_pf_cls = 'prog-blue'. lv_pf_txt = 'txt-blue'.
-                ELSEIF lv_done_pct > 45. lv_pf_cls = 'prog-yellow'. lv_pf_txt = 'txt-amber'.
-                ELSEIF lv_done_pct > 20. lv_pf_cls = 'prog-orange'. lv_pf_txt = 'txt-amber'.
+                ELSE.
+                  lv_pf_cls = zcl_cs_util=>prog_bar_class( lv_done_pct ).
+                  lv_pf_txt = zcl_cs_util=>prog_txt_class( lv_done_pct ).
                 ENDIF.
               ELSE.
                 lv_border_cls = 'so-border-noprod'.

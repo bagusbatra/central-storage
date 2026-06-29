@@ -366,6 +366,8 @@ function viewDetails(vbeln) {
   /* Sajikan dari cache jika sudah pernah dimuat */
   if (soDetailCache[vbeln]) {
     container.innerHTML = soDetailCache[vbeln];
+    formatNumbers(container);
+    enhanceA11y(container);
     return;
   }
 
@@ -388,11 +390,10 @@ function viewDetails(vbeln) {
     if (xhr.status === 200) {
       soDetailCache[vbeln] = xhr.responseText;
       container.innerHTML = xhr.responseText;
-      var itemsBtn = document.querySelector('#tab-items-btn');
-      if (itemsBtn) {
-        switchTab('tab-items', itemsBtn);
-        expandAllBOM();
-      }
+      formatNumbers(container);
+      enhanceA11y(container);
+      /* B1: biarkan tab default "Ringkasan" tampil (sesuai markup server);
+         tidak lagi memaksa ke Item & BOM + buka semua BOM. */
     } else {
       container.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Gagal memuat data (HTTP ' + xhr.status + ').</p></div>';
     }
@@ -619,17 +620,6 @@ function collapseAllBOM() {
   currentActiveBOMId = null;
 }
 
-/* ==================== Progress bar color helper ==================== */
-
-/** Kembalikan class warna progress berdasarkan persentase */
-function progClass(pct) {
-  if (pct >= 100) return 'prog-green';
-  if (pct > 70)   return 'prog-blue';
-  if (pct > 45)   return 'prog-yellow';
-  if (pct > 20)   return 'prog-orange';
-  return 'prog-red';
-}
-
 /* ==================== User dropdown (logout) ==================== */
 
 /** Toggle user dropdown menu */
@@ -653,19 +643,90 @@ function userLogout() {
   window.location.href = 'index.htm?~logoff';
 }
 
+/* ==================== Format angka (B6) ==================== */
+
+/** Format satu elemen angka mentah ABAP ke format lokal id-ID (titik ribuan). */
+function fmtCell(el, maxDec) {
+  if (!el || el.getAttribute('data-fmt') === '1') return;
+  var v = parseFloat(el.textContent.trim());
+  if (isNaN(v)) return;
+  el.textContent = v.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: maxDec });
+  el.setAttribute('data-fmt', '1');
+}
+
+/** Format semua .cur-fmt (uang) & .num-fmt (kuantitas) di dalam root. */
+function formatNumbers(root) {
+  root = root || document;
+  var cur = root.querySelectorAll('.cur-fmt');
+  for (var i = 0; i < cur.length; i++) { fmtCell(cur[i], 2); }
+  var num = root.querySelectorAll('.num-fmt');
+  for (var j = 0; j < num.length; j++) { fmtCell(num[j], 3); }
+}
+
+/* ==================== Cegah double-submit (B7) ==================== */
+
+/** Setelah form di-submit, nonaktifkan tombol submit (ditunda agar value tetap terkirim). */
+function lockAllForms() {
+  var forms = document.querySelectorAll('form');
+  for (var i = 0; i < forms.length; i++) {
+    forms[i].addEventListener('submit', function(ev) {
+      var f = ev.currentTarget;
+      setTimeout(function() {
+        var btns = f.querySelectorAll('button[type="submit"], button:not([type])');
+        for (var k = 0; k < btns.length; k++) { btns[k].disabled = true; btns[k].style.opacity = '0.6'; }
+      }, 0);
+    });
+  }
+}
+
+/* ==================== Aksesibilitas keyboard (B9) ==================== */
+
+/** Tandai baris yang bisa diklik agar bisa difokus & diaktifkan keyboard. */
+function enhanceA11y(root) {
+  root = root || document;
+  var rows = root.querySelectorAll('.so-item-row, .clickable-item-row, tr[onclick]');
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].getAttribute('data-a11y') === '1') continue;
+    rows[i].setAttribute('tabindex', '0');
+    rows[i].setAttribute('role', 'button');
+    rows[i].setAttribute('data-a11y', '1');
+  }
+}
+
+/** Esc menutup tooltip/dropdown; Enter/Space mengaktifkan elemen role=button. */
+function handleGlobalKeydown(e) {
+  if (e.key === 'Escape' || e.keyCode === 27) {
+    closeMatTooltip();
+    var dd = document.getElementById('user-dropdown');
+    if (dd) dd.classList.remove('open');
+    return;
+  }
+  if (e.key === 'Enter' || e.key === ' ' || e.keyCode === 13 || e.keyCode === 32) {
+    var el = document.activeElement;
+    if (el && el.getAttribute && el.getAttribute('role') === 'button' &&
+        el.tagName !== 'BUTTON' && el.tagName !== 'A' && el.tagName !== 'INPUT') {
+      e.preventDefault();
+      el.click();
+    }
+  }
+}
+
 /* ------------------------------------------------------------------
    Entry point — inisialisasi setelah seluruh DOM siap
    ------------------------------------------------------------------ */
 window.onload = function() {
+  /* === Inisialisasi bersama (dipakai kedua halaman) === */
+  lockAllForms();
+  formatNumbers(document);
+  enhanceA11y(document);
+  document.addEventListener('click', closeUserDropdown);
+  document.addEventListener('keydown', handleGlobalKeydown);
+
   var soViewport = document.getElementById('so-list-viewport');
   if (soViewport) {
     /* === Halaman Monitoring: kumpulkan SO card & init paginasi === */
-    var elements = document.getElementsByTagName('div');
-    for (var i = 0; i < elements.length; i++) {
-      if (elements[i].getAttribute('data-type') === 'so-card') {
-        soCards.push(elements[i]);
-      }
-    }
+    var cards = document.querySelectorAll('[data-type="so-card"]');
+    for (var i = 0; i < cards.length; i++) { soCards.push(cards[i]); }
     currentPage = getPageFromHash();
     renderPagination();
     return;
@@ -724,7 +785,4 @@ window.onload = function() {
       }
     });
   }
-
-  /* Tutup user dropdown saat klik di luar */
-  document.addEventListener('click', closeUserDropdown);
 };
