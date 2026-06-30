@@ -771,36 +771,49 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <% ENDIF. %>
     </div>
 
-    <!-- OLD CARD (kiri) + RECENT CARD (kanan) — gaya inline + kelas/JS yang sudah ter-deploy -->
-    <div style="display:flex; gap:24px; margin-bottom:24px; align-items:stretch;">
+    <!-- OLD CARD (kiri) + RECENT CARD (kanan) — 100% mandiri: gaya inline + JS inline -->
+    <div style="display:flex; gap:24px; margin-bottom:24px; align-items:stretch; flex-wrap:wrap;">
 
       <!-- KIRI: SO tertua yang belum selesai -->
-      <div style="flex:1; min-width:0;">
+      <div style="flex:1; min-width:280px;">
         <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
           <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
-            <h3 style="font-size:0.85rem; font-weight:700; color:#374151;">&#9203; SO Tertua Belum Selesai</h3>
+            <h3 style="font-size:0.85rem; font-weight:700; color:#374151; margin:0;">&#9203; SO Tertua Belum Selesai</h3>
             <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">Backlog terlama yang masih ada item belum selesai &#8212; sejak <%= lv_bl_lbl %> (Plant 2000)</div>
           </div>
           <div>
             <% IF lt_old_card IS INITIAL. %>
-            <div class="no-data" style="padding:28px;">Tidak ada SO yang belum selesai di Plant 2000.</div>
+            <div style="padding:28px; text-align:center; color:#9ca3af; font-size:0.9rem;">Tidak ada SO yang belum selesai di Plant 2000.</div>
             <% ELSE. %>
             <% LOOP AT lt_old_card INTO ls_card.
-                 lv_card_cls = zcl_cs_util=>prog_bar_class( ls_card-rate ).
-                 IF ls_card-noprod = ls_card-items. lv_card_cls = 'prog-black'. ENDIF.
+                 IF     ls_card-noprod = ls_card-items. lv_card_cls = '#9ca3af'.
+                 ELSEIF ls_card-rate_i >= 100.          lv_card_cls = '#22c55e'.
+                 ELSEIF ls_card-rate_i > 70.            lv_card_cls = '#3b82f6'.
+                 ELSEIF ls_card-rate_i > 45.            lv_card_cls = '#eab308'.
+                 ELSEIF ls_card-rate_i > 20.            lv_card_cls = '#f97316'.
+                 ELSE.                                  lv_card_cls = '#ef4444'.
+                 ENDIF.
             %>
             <div style="padding:12px 18px; border-bottom:1px solid #f3f4f6; cursor:pointer;" onclick="window.location.href='monitoring.htm?so_num=<%= ls_card-vbeln %>&amp;search_btn=X'">
               <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
                 <span style="font-weight:700; color:#1e3a8a; font-size:0.9rem;">SO #<%= ls_card-vbeln %></span>
-                <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Customer <%= ls_card-kunnr %> | Tipe <%= ls_card-auart %> | Item selesai <%= ls_card-done %>/<%= ls_card-items %> | Dalam proses <%= ls_card-inprog %> | Belum produksi <%= ls_card-noprod %> | Penyelesaian <%= ls_card-rate_i %>%">i</button>
+                <button type="button" title="Lihat detail" style="width:22px; height:22px; border-radius:50%; border:1px solid #cbd5e1; background:#fff; color:#2563eb; font-style:italic; font-weight:700; font-size:0.8rem; line-height:1; padding:0; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); var d=document.getElementById('det-o-<%= ls_card-vbeln %>'); d.style.display=(d.style.display=='block'?'none':'block');">i</button>
               </div>
               <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
-                <span class="badge"><%= ls_card-items %> Item</span>
+                <span style="background:#dbeafe; color:#1e40af; padding:3px 10px; border-radius:20px; font-size:0.75rem; font-weight:700;"><%= ls_card-items %> Item</span>
                 <span style="font-size:0.78rem; color:#6b7280;">Dibuat: <%= ls_card-erdat_s %></span>
               </div>
               <div style="display:flex; align-items:center; gap:8px;">
-                <div class="prog-bg" style="flex:1; height:7px;"><div class="prog-fill <%= lv_card_cls %>" style="width:<%= ls_card-rate_i %>%;"></div></div>
+                <div style="flex:1; height:7px; background:#e5e7eb; border-radius:4px; overflow:hidden;"><div style="height:100%; width:<%= ls_card-rate_i %>%; background:<%= lv_card_cls %>; border-radius:4px;"></div></div>
                 <span style="font-size:0.75rem; font-weight:700; color:#374151; min-width:36px; text-align:right;"><%= ls_card-rate_i %>%</span>
+              </div>
+              <div id="det-o-<%= ls_card-vbeln %>" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #e5e7eb; font-size:0.78rem; color:#4b5563;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Kode Customer</span><span style="font-weight:600; color:#374151;"><%= ls_card-kunnr %></span></div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Tipe Dokumen</span><span style="font-weight:600; color:#374151;"><%= ls_card-auart %></span></div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Item Selesai</span><span style="font-weight:600; color:#374151;"><%= ls_card-done %> / <%= ls_card-items %></span></div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Dalam Proses</span><span style="font-weight:600; color:#374151;"><%= ls_card-inprog %></span></div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Belum Produksi</span><span style="font-weight:600; color:#374151;"><%= ls_card-noprod %></span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Penyelesaian</span><span style="font-weight:600; color:#374151;"><%= ls_card-rate_i %>%</span></div>
               </div>
             </div>
             <% ENDLOOP. %>
@@ -810,25 +823,32 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       </div>
 
       <!-- KANAN: SO terbaru -->
-      <div style="flex:1; min-width:0;">
+      <div style="flex:1; min-width:280px;">
         <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
           <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
-            <h3 style="font-size:0.85rem; font-weight:700; color:#374151;">&#128338; Sales Order Terbaru</h3>
+            <h3 style="font-size:0.85rem; font-weight:700; color:#374151; margin:0;">&#128338; Sales Order Terbaru</h3>
             <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">Berdasarkan tanggal buat terbaru &#8212; <%= lv_period_lbl %></div>
           </div>
           <div>
             <% IF lt_recent_card IS INITIAL. %>
-            <div class="no-data" style="padding:28px;">Tidak ada data Sales Order dalam periode ini di Plant 2000.</div>
+            <div style="padding:28px; text-align:center; color:#9ca3af; font-size:0.9rem;">Tidak ada data Sales Order dalam periode ini di Plant 2000.</div>
             <% ELSE. %>
             <% LOOP AT lt_recent_card INTO ls_card. %>
             <div style="padding:12px 18px; border-bottom:1px solid #f3f4f6; cursor:pointer;" onclick="window.location.href='monitoring.htm?so_num=<%= ls_card-vbeln %>&amp;search_btn=X'">
               <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
                 <span style="font-weight:700; color:#1e3a8a; font-size:0.9rem;">SO #<%= ls_card-vbeln %></span>
-                <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Customer <%= ls_card-kunnr %> | Tipe <%= ls_card-auart %> | Item selesai <%= ls_card-done %>/<%= ls_card-items %> | Dalam proses <%= ls_card-inprog %> | Belum produksi <%= ls_card-noprod %> | Penyelesaian <%= ls_card-rate_i %>%">i</button>
+                <button type="button" title="Lihat detail" style="width:22px; height:22px; border-radius:50%; border:1px solid #cbd5e1; background:#fff; color:#2563eb; font-style:italic; font-weight:700; font-size:0.8rem; line-height:1; padding:0; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); var d=document.getElementById('det-r-<%= ls_card-vbeln %>'); d.style.display=(d.style.display=='block'?'none':'block');">i</button>
               </div>
               <div style="display:flex; align-items:center; gap:10px;">
-                <span class="badge"><%= ls_card-items %> Item</span>
+                <span style="background:#dbeafe; color:#1e40af; padding:3px 10px; border-radius:20px; font-size:0.75rem; font-weight:700;"><%= ls_card-items %> Item</span>
                 <span style="font-size:0.78rem; color:#6b7280;">Dibuat: <%= ls_card-erdat_s %></span>
+              </div>
+              <div id="det-r-<%= ls_card-vbeln %>" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #e5e7eb; font-size:0.78rem; color:#4b5563;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Kode Customer</span><span style="font-weight:600; color:#374151;"><%= ls_card-kunnr %></span></div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Tipe Dokumen</span><span style="font-weight:600; color:#374151;"><%= ls_card-auart %></span></div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Item Selesai</span><span style="font-weight:600; color:#374151;"><%= ls_card-done %> / <%= ls_card-items %></span></div>
+                <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Dalam Proses</span><span style="font-weight:600; color:#374151;"><%= ls_card-inprog %></span></div>
+                <div style="display:flex; justify-content:space-between;"><span>Belum Produksi</span><span style="font-weight:600; color:#374151;"><%= ls_card-noprod %></span></div>
               </div>
             </div>
             <% ENDLOOP. %>

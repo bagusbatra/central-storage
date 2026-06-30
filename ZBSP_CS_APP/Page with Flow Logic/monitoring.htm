@@ -86,6 +86,10 @@ lv_ui_edt      = request->get_form_field( 'date_to' ).
 
 IF lv_ui_edf IS NOT INITIAL AND STRLEN( lv_ui_edf ) = 10.
   lv_erdat_from = lv_ui_edf(4) && lv_ui_edf+5(2) && lv_ui_edf+8(2).
+ELSEIF lv_ui_vbeln IS NOT INITIAL.
+  " Pencarian by Nomor SO tanpa tanggal (mis. klik kartu SO Tertua/Terbaru di
+  " dashboard): jangan batasi tanggal agar SO lama tetap ketemu.
+  lv_erdat_from = '19000101'.
 ELSE.
   lv_erdat_from = sy-datum - 30.
 ENDIF.

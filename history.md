@@ -1,28 +1,8 @@
 # Rencana Pengembangan — Menu "Riwayat" (Arsip SO Selesai)
 
-> Status: **SUDAH DIIMPLEMENTASIKAN** (file lokal) — siap di-upload & aktivasi di SE80.
+> Status: **DRAFT RENCANA** — untuk direvisi dulu sebelum pengkodean.
 > Aplikasi: BSP `ZBSP_CS_APP`, Plant 2000 Surabaya.
-> Disusun & dikerjakan: 2026-06-29.
-
-## STATUS IMPLEMENTASI
-
-Dikerjakan sesuai rencana ini dengan **default Bagian 9** (belum ada revisi dari user):
-
-| File | Aksi |
-|---|---|
-| `riwayat.htm` | **DIBUAT** — list arsip SO selesai + filter + panel detail |
-| `index.htm` | **DIUBAH** — tambah link navbar "Riwayat" |
-| `monitoring.htm` | **DIUBAH** — tambah link navbar "Riwayat" |
-| `monitoring_detail.htm`, `js.js`, `style.css`, `ZCL_CS_UTIL` | Reuse penuh (tidak diubah) |
-
-Default yang dipakai: 9.1 = 90 hari terakhir · 9.2 = `erdat` terbaru di atas · 9.3 = paginasi
-client-side (reuse `so-list-viewport`) · 9.4 = kolom "Tanggal Selesai" di-skip · 9.5 = Nilai SO
-ditampilkan · 9.6 = filter pakai `erdat` · 9.7 = ada empty state.
-
-**Langkah deploy SE80:** buat page `riwayat.htm` (salin isi file), lalu aktifkan ulang
-`index.htm` & `monitoring.htm` (navbar berubah). Pastikan `ZCL_CS_UTIL` sudah aktif.
-
----
+> Disusun: 2026-06-29.
 
 ---
 
@@ -158,13 +138,13 @@ Layout 2 kolom (list + detail) mengikuti pola `monitoring.htm` agar konsisten.
 
 ---
 
-## 9. Keputusan yang Masih Terbuka (mohon direvisi)
+## 9. Keputusan yang Masih Terbuka (FINAL)
 
 | # | Pertanyaan | Usulan default saya |
 |---|---|---|
-| 9.1 | **Default rentang tanggal** saat halaman pertama dibuka? | 90 hari terakhir (konsisten dgn opsi Dashboard). Alternatif: tahun berjalan / semua data |
+| 9.1 | **Default rentang tanggal** saat halaman pertama dibuka? | 1 tahun terakhir (konsisten dgn opsi Dashboard). Alternatif: tahun berjalan / semua data |
 | 9.2 | **Urutan sort** daftar riwayat? | Tanggal buat SO (`erdat`) terbaru di atas |
-| 9.3 | **Batas jumlah baris / paginasi?** | Cap awal (mis. 200 baris) + paginasi client-side seperti Monitoring, agar tidak berat |
+| 9.3 | **Batas jumlah baris / paginasi?** | Cap awal (mis. 100 baris) + paginasi client-side seperti Monitoring, agar tidak berat |
 | 9.4 | Tampilkan kolom **"Tanggal Selesai"** (tanggal GR terakhir)? | **Skip di v1** — butuh query histori GR (MSEG/AFRU) yang menambah beban. Bisa ditambah nanti |
 | 9.5 | Tampilkan **Nilai SO** (`netwr` + `waerk`) di list? | Ya, sebagai info tambahan (data sudah ada di VBAK) |
 | 9.6 | Dasar **rentang tanggal**: tanggal buat SO (`erdat`) atau tanggal selesai produksi? | `erdat` dulu (sederhana). Tanggal selesai menyusul bila 9.4 disetujui |
