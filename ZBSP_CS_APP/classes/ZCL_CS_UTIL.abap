@@ -35,6 +35,21 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
                 iv_wemng       TYPE afpo-wemng
       RETURNING VALUE(rv_code) TYPE i.
 
+    "! Persentase progres SATU item = wemng/psmng*100, dibatasi maks 100.
+    "! psmng=0 (belum produksi) → 0. Dipakai untuk MERATA-RATA progres per SO
+    "! (jumlahkan hasil ini lalu bagi jumlah item) — bukan rasio done/total.
+    CLASS-METHODS item_pct
+      IMPORTING iv_psmng      TYPE afpo-psmng
+                iv_wemng      TYPE afpo-wemng
+      RETURNING VALUE(rv_pct) TYPE ty_pct.
+
+    "! Persentase → string lebar CSS yang aman lokal: dibatasi 0..100, dan
+    "! pemisah desimal DIPAKSA titik (mencegah "width:66,7%" yang invalid di
+    "! sistem dgn notasi koma). Dipakai pada style="width:...%".
+    CLASS-METHODS css_pct
+      IMPORTING iv_pct         TYPE ty_pct
+      RETURNING VALUE(rv_text) TYPE string.
+
     "! Kelas warna BAR progres dari persentase.
     "! >=100 prog-green | >70 prog-blue | >45 prog-yellow | >20 prog-orange | else prog-red
     CLASS-METHODS prog_bar_class
@@ -66,6 +81,25 @@ CLASS zcl_cs_util IMPLEMENTATION.
     ELSE.
       rv_code = gc_st_noprod.
     ENDIF.
+  ENDMETHOD.
+
+  METHOD item_pct.
+    IF iv_psmng > 0.
+      rv_pct = iv_wemng * 100 / iv_psmng.
+      IF rv_pct > 100. rv_pct = 100. ENDIF.
+    ELSE.
+      rv_pct = 0.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD css_pct.
+    DATA lv_w TYPE ty_pct.
+    lv_w = iv_pct.
+    IF lv_w > 100. lv_w = 100. ENDIF.
+    IF lv_w < 0.   lv_w = 0.   ENDIF.
+    rv_text = lv_w.
+    REPLACE ALL OCCURRENCES OF ',' IN rv_text WITH '.'.
+    CONDENSE rv_text.
   ENDMETHOD.
 
   METHOD prog_bar_class.

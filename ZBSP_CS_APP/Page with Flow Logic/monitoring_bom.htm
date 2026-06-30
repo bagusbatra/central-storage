@@ -462,7 +462,7 @@ ENDIF.
         <td style="text-align: center;" data-val="<%= lv_prog %>">
           <% IF lv_has_prd = abap_true. %>
           <div class="prog-container">
-            <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= lv_bar_w %>%;"></div></div></div>
+            <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= zcl_cs_util=>css_pct( lv_bar_w ) %>%;"></div></div></div>
             <span class="prog-pct <%= lv_pcls %>"><%= lv_prog %>%</span>
           </div>
           <% ELSE. %><span style="font-style:italic; color:#9ca3af; font-size:0.8rem;">No Prod</span>

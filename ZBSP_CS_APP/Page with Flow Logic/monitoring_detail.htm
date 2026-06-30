@@ -47,6 +47,7 @@ DATA: ls_vbak_hdr   TYPE vbak,
       lv_tot_noprd  TYPE i,
       lv_ovr_pct    TYPE zcl_cs_util=>ty_pct,
       lv_ovr_cls    TYPE string,
+      lv_sum_pct    TYPE zcl_cs_util=>ty_pct,
       lv_sum_prog   TYPE zcl_cs_util=>ty_pct,
       lv_sum_cls    TYPE string.
 
@@ -113,6 +114,8 @@ IF lv_req_vb IS NOT INITIAL.
   " 4. Hitung ringkasan status item untuk tab Ringkasan (via ZCL_CS_UTIL)
   lv_tot_items = lines( lt_local_item ).
   LOOP AT lt_local_item INTO ls_item_row.
+    lv_sum_pct = lv_sum_pct + zcl_cs_util=>item_pct( iv_psmng = ls_item_row-psmng
+                                                     iv_wemng = ls_item_row-wemng ).
     CASE zcl_cs_util=>item_status( iv_psmng = ls_item_row-psmng
                                    iv_wemng = ls_item_row-wemng ).
       WHEN zcl_cs_util=>gc_st_done.   lv_tot_done  = lv_tot_done  + 1.
@@ -121,7 +124,8 @@ IF lv_req_vb IS NOT INITIAL.
     ENDCASE.
   ENDLOOP.
   IF lv_tot_items > 0.
-    lv_ovr_pct = lv_tot_done * 100 / lv_tot_items.
+    " Persentase keseluruhan = RATA-RATA progres item (Σ pct / jumlah item)
+    lv_ovr_pct = lv_sum_pct / lv_tot_items.
   ENDIF.
   " D1: warna progres dipusatkan di ZCL_CS_UTIL; "black" = semua item belum produksi
   IF lv_tot_noprd = lv_tot_items AND lv_tot_items > 0.
@@ -170,7 +174,7 @@ ENDIF.
     </div>
 
     <div class="ovr-prog-wrap">
-      <div class="ovr-prog-bar"><div class="ovr-prog-fill <%= lv_ovr_cls %>" style="width:<%= lv_ovr_pct %>%;"></div></div>
+      <div class="ovr-prog-bar"><div class="ovr-prog-fill <%= lv_ovr_cls %>" style="width:<%= zcl_cs_util=>css_pct( lv_ovr_pct ) %>%;"></div></div>
       <span class="ovr-prog-pct"><%= lv_ovr_pct %>% selesai keseluruhan</span>
     </div>
 
@@ -187,7 +191,7 @@ ENDIF.
         <span class="sum-item-pos"><%= ls_item_row-posnr %></span>
         <span class="sum-item-name" title="<%= ls_item_row-arktx %>"><%= ls_item_row-arktx %></span>
         <div class="sum-item-right">
-          <div class="sum-item-bar"><div class="sum-item-fill <%= lv_sum_cls %>" style="width:<%= lv_sum_prog %>%;"></div></div>
+          <div class="sum-item-bar"><div class="sum-item-fill <%= lv_sum_cls %>" style="width:<%= zcl_cs_util=>css_pct( lv_sum_prog ) %>%;"></div></div>
           <div class="sum-item-pct">
             <% IF ls_item_row-psmng > 0. %>
             <b><%= lv_sum_prog %>%</b>&nbsp;<span class="sum-item-sub"><span class="num-fmt"><%= ls_item_row-wemng %></span>&nbsp;/&nbsp;<span class="num-fmt"><%= ls_item_row-psmng %></span></span>

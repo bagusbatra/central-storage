@@ -22,11 +22,12 @@ TYPES: BEGIN OF ty_cust_name,
        END OF ty_cust_name.
 
 TYPES: BEGIN OF ty_so_stat,
-         vbeln  TYPE vbap-vbeln,
-         total  TYPE i,
-         done   TYPE i,
-         inprog TYPE i,
-         noprod TYPE i,
+         vbeln   TYPE vbap-vbeln,
+         total   TYPE i,
+         done    TYPE i,
+         inprog  TYPE i,
+         noprod  TYPE i,
+         sum_pct TYPE zcl_cs_util=>ty_pct,  " Σ persentase per item → utk rata-rata
        END OF ty_so_stat.
 
 " AFPO diagregasi per item SO (1 item bisa punya >1 order produksi). Tanpa
@@ -238,6 +239,9 @@ lv_is_srch = abap_true.
         CLEAR ls_so_stat.
         ls_so_stat-vbeln = ls_item_row-vbeln.
         ls_so_stat-total = 1.
+        " Persentase progres tiap item (utk rata-rata SO), bukan rasio done/total
+        ls_so_stat-sum_pct = zcl_cs_util=>item_pct( iv_psmng = ls_item_row-psmng
+                                                     iv_wemng = ls_item_row-wemng ).
         CASE zcl_cs_util=>item_status( iv_psmng = ls_item_row-psmng
                                        iv_wemng = ls_item_row-wemng ).
           WHEN zcl_cs_util=>gc_st_done.   ls_so_stat-done   = 1.
@@ -375,7 +379,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               lv_done_pct = 0.
               CLEAR: lv_border_cls, lv_stat_cls, lv_stat_label, lv_pf_cls, lv_pf_txt.
               IF ls_so_stat_r-total > 0.
-                lv_done_pct = ls_so_stat_r-done * 100 / ls_so_stat_r-total.
+                " Persentase SO = RATA-RATA progres item (Σ pct / jumlah item)
+                lv_done_pct = ls_so_stat_r-sum_pct / ls_so_stat_r-total.
                 IF ls_so_stat_r-done = ls_so_stat_r-total.
                   lv_border_cls = 'so-border-done'.
                   lv_stat_cls   = 'so-sl-done'.
@@ -412,7 +417,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               <div class="so-date">Tgl: <%= lv_dd %> | Tipe: <%= ls_hdr_row-auart %></div>
               <% IF ls_so_stat_r-total > 0. %>
               <div class="so-prog-row">
-                <div class="so-prog-bar"><div class="so-prog-fill <%= lv_pf_cls %>" style="width:<%= lv_done_pct %>%;"></div></div>
+                <div class="so-prog-bar"><div class="so-prog-fill <%= lv_pf_cls %>" style="width:<%= zcl_cs_util=>css_pct( lv_done_pct ) %>%;"></div></div>
                 <span class="so-prog-pct <%= lv_pf_txt %>"><%= lv_done_pct %>%</span>
               </div>
               <div class="so-icon-row">
