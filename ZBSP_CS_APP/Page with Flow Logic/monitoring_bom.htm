@@ -24,6 +24,7 @@ TYPES: BEGIN OF ty_local_item,
          vrkme   TYPE vbap-vrkme,
          psmng   TYPE afpo-psmng,
          wemng   TYPE afpo-wemng,
+         meins   TYPE afpo-meins,
          aufnr   TYPE afpo-aufnr,
        END OF ty_local_item.
 
@@ -141,7 +142,7 @@ IF lv_req_vb IS NOT INITIAL.
   " 2. AFPO — termasuk AUFNR untuk join ke AFKO/status. Disimpan mentah (per
   "    order) agar bisa: (a) dijumlah per item, (b) memilih order wakil.
   IF lt_temp_vbap IS NOT INITIAL.
-    SELECT kdauf kdpos psmng wemng aufnr FROM afpo
+    SELECT kdauf kdpos psmng wemng meins aufnr FROM afpo
       INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
       FOR ALL ENTRIES IN lt_temp_vbap
       WHERE kdauf = lt_temp_vbap-vbeln
@@ -212,6 +213,8 @@ IF lv_req_vb IS NOT INITIAL.
         ENDIF.
         ls_item_row-psmng = ls_item_row-psmng + ls_afpo_row-psmng.
         ls_item_row-wemng = ls_item_row-wemng + ls_afpo_row-wemng.
+        " Satuan dasar (MEINS) sama untuk semua order produksi item → ambil saja
+        IF ls_item_row-meins IS INITIAL. ls_item_row-meins = ls_afpo_row-meins. ENDIF.
         IF ls_afpo_row-psmng > 0.
           lv_ratio = ls_afpo_row-wemng / ls_afpo_row-psmng.
         ELSE.
@@ -389,8 +392,8 @@ ENDIF.
         <td><%= ls_item_row-matnr %></td>
         <td style="color:#2563eb; font-weight:600;"><%= ls_item_row-arktx %> <span style="font-size:0.75rem; color:#9ca3af;">(Klik BOM)</span></td>
         <td style="text-align: right;" data-val="<%= ls_item_row-kwmeng %>"><span class="num-fmt"><%= ls_item_row-kwmeng %></span> <%= ls_item_row-vrkme %></td>
-        <td style="text-align: right;" data-val="<%= ls_item_row-psmng %>"><span class="num-fmt"><%= ls_item_row-psmng %></span></td>
-        <td style="text-align: right; font-weight:700;" data-val="<%= ls_item_row-wemng %>"><span class="num-fmt"><%= ls_item_row-wemng %></span></td>
+        <td style="text-align: right;" data-val="<%= ls_item_row-psmng %>"><span class="num-fmt"><%= ls_item_row-psmng %></span> <%= ls_item_row-meins %></td>
+        <td style="text-align: right; font-weight:700;" data-val="<%= ls_item_row-wemng %>"><span class="num-fmt"><%= ls_item_row-wemng %></span> <%= ls_item_row-meins %></td>
         <td style="text-align: center;" data-val="<%= lv_prog %>">
           <% IF lv_has_prd = abap_true. %>
           <div class="prog-container">
