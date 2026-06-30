@@ -724,7 +724,9 @@ window.onload = function() {
 
   var soViewport = document.getElementById('so-list-viewport');
   if (soViewport) {
-    /* === Halaman Monitoring: kumpulkan SO card & init paginasi === */
+    /* === Halaman list (Monitoring/Riwayat): kumpulkan SO card & init paginasi === */
+    var ps = parseInt(soViewport.getAttribute('data-page-size'), 10);
+    if (ps > 0) { rowsPerPage = ps; }
     var cards = document.querySelectorAll('[data-type="so-card"]');
     for (var i = 0; i < cards.length; i++) { soCards.push(cards[i]); }
     currentPage = getPageFromHash();

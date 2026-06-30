@@ -25,9 +25,18 @@ TYPES: BEGIN OF ty_so_stat,
          done  TYPE i,
        END OF ty_so_stat.
 
+" AFPO diagregasi per item SO (1 item bisa punya >1 order produksi)
+TYPES: BEGIN OF ty_afpo_agg,
+         kdauf TYPE afpo-kdauf,
+         kdpos TYPE afpo-kdpos,
+         psmng TYPE afpo-psmng,
+         wemng TYPE afpo-wemng,
+       END OF ty_afpo_agg.
+
 DATA: lt_local_hdr  TYPE TABLE OF vbak,
       lt_temp_vbap  TYPE TABLE OF vbap,
       lt_afpo_pre   TYPE TABLE OF afpo,
+      lt_afpo_agg   TYPE TABLE OF ty_afpo_agg,
       lt_local_item TYPE TABLE OF ty_local_item,
       lt_cust_names TYPE TABLE OF ty_cust_name,
       lt_kna1_srch  TYPE TABLE OF ty_cust_name,
@@ -35,6 +44,7 @@ DATA: lt_local_hdr  TYPE TABLE OF vbak,
       ls_hdr_row    TYPE vbak,
       ls_vbap_row   TYPE vbap,
       ls_afpo_row   TYPE afpo,
+      ls_afpo_agg   TYPE ty_afpo_agg,
       ls_item_row   TYPE ty_local_item,
       ls_cust_name  TYPE ty_cust_name,
       ls_kna1_srch  TYPE ty_cust_name,
@@ -146,26 +156,38 @@ IF lv_name_no_match = abap_false.
       WHERE vbeln = lt_local_hdr-vbeln
         AND werks = lc_plant.
 
-    " 3. AFPO untuk klasifikasi GR
+    " 3. AFPO untuk klasifikasi GR. Satu item SO (kdauf/kdpos) bisa punya >1
+    "    order produksi (produksi terpisah/parsial). psmng & wemng DIJUMLAHKAN
+    "    per item via COLLECT, agar item hanya dianggap "selesai" bila TOTAL GR
+    "    >= TOTAL target — bukan dari salah satu order saja. Ini mencegah SO
+    "    bocor ke Riwayat saat masih ada order produksi yang belum tuntas.
     IF lt_temp_vbap IS NOT INITIAL.
       SELECT kdauf kdpos psmng wemng FROM afpo
         INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
         FOR ALL ENTRIES IN lt_temp_vbap
         WHERE kdauf = lt_temp_vbap-vbeln
           AND kdpos = lt_temp_vbap-posnr.
-      SORT lt_afpo_pre BY kdauf kdpos.
+      LOOP AT lt_afpo_pre INTO ls_afpo_row.
+        CLEAR ls_afpo_agg.
+        ls_afpo_agg-kdauf = ls_afpo_row-kdauf.
+        ls_afpo_agg-kdpos = ls_afpo_row-kdpos.
+        ls_afpo_agg-psmng = ls_afpo_row-psmng.
+        ls_afpo_agg-wemng = ls_afpo_row-wemng.
+        COLLECT ls_afpo_agg INTO lt_afpo_agg.
+      ENDLOOP.
+      SORT lt_afpo_agg BY kdauf kdpos.
     ENDIF.
 
-    " 4. Gabungkan VBAP + AFPO
+    " 4. Gabungkan VBAP + AFPO (agregat semua order produksi per item)
     LOOP AT lt_temp_vbap INTO ls_vbap_row.
-      CLEAR: ls_item_row, ls_afpo_row.
+      CLEAR: ls_item_row, ls_afpo_agg.
       ls_item_row-vbeln = ls_vbap_row-vbeln.
       ls_item_row-posnr = ls_vbap_row-posnr.
-      READ TABLE lt_afpo_pre INTO ls_afpo_row
+      READ TABLE lt_afpo_agg INTO ls_afpo_agg
         WITH KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr BINARY SEARCH.
       IF sy-subrc = 0.
-        ls_item_row-psmng = ls_afpo_row-psmng.
-        ls_item_row-wemng = ls_afpo_row-wemng.
+        ls_item_row-psmng = ls_afpo_agg-psmng.
+        ls_item_row-wemng = ls_afpo_agg-wemng.
       ENDIF.
       APPEND ls_item_row TO lt_local_item.
     ENDLOOP.

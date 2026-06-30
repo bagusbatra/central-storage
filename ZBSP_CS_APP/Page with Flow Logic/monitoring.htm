@@ -96,12 +96,8 @@ ELSE.
   lv_erdat_to = sy-datum.
 ENDIF.
 
-IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
-  OR lv_ui_vbeln IS NOT INITIAL
-  OR lv_ui_kunnr IS NOT INITIAL
-  OR lv_ui_name  IS NOT INITIAL.
-
-  lv_is_srch = abap_true.
+" Selalu jalankan query: daftar tampil secara default tanpa harus mencari dulu.
+lv_is_srch = abap_true.
 
   " Filter SO — exact match + partial match (CP) untuk wildcard pencarian
   IF lv_ui_vbeln IS NOT INITIAL.
@@ -230,8 +226,9 @@ IF request->get_form_field( 'search_btn' ) IS NOT INITIAL
       SORT lt_so_stat BY vbeln.
     ENDIF.
   ENDIF.
-ENDIF.
 
+" Urut tanggal buat terbaru di atas → halaman 1 menampilkan SO paling baru.
+SORT lt_local_hdr BY erdat DESCENDING vbeln DESCENDING.
 lv_local_cnt = lines( lt_local_hdr ).
 
 DATA: lv_ts_date TYPE string,
@@ -287,7 +284,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <div class="sidebar-panel">
       <div class="list-container">
         <div class="list-header">Daftar Sales Order (<%= lv_local_cnt %> Dokumen)</div>
-        <div id="so-list-viewport" style="max-height: 520px; overflow-y: auto;">
+        <div id="so-list-viewport" data-page-size="10" style="max-height: 520px; overflow-y: auto;">
           <% IF lv_is_srch = abap_false. %>
           <!-- B5: panduan saat halaman dibuka sebelum pencarian dilakukan -->
           <div class="empty-state">
