@@ -351,6 +351,21 @@ function changePage(direction) {
   renderPagination();
 }
 
+/* ==================== Dashboard mini-cards (index) ==================== */
+
+/** Klik kartu SO (Recent/Old) → buka halaman Monitoring untuk SO tersebut */
+function goMonitoring(vbeln) {
+  window.location.href = 'monitoring.htm?so_num=' + encodeURIComponent(vbeln) + '&search_btn=X';
+}
+
+/** Tombol "i" mini-card → buka/tutup detail tanpa ikut memicu navigasi kartu */
+function toggleMiniDetail(e, id) {
+  e.stopPropagation();
+  var el = document.getElementById('md-' + id);
+  if (!el) return;
+  el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+}
+
 /** Muat detail panel SO via AJAX; gunakan cache jika tersedia */
 function viewDetails(vbeln) {
   if (currentActiveVBELN) {
@@ -643,6 +658,50 @@ function userLogout() {
   window.location.href = 'index.htm?~logoff';
 }
 
+/* ==================== Info popover (tombol "i" pada card index) ==================== */
+var infoPopEl = null, infoPopSrc = null;
+
+/** Toggle popover penjelasan padat dari tombol .info-btn (teks di data-info). */
+function toggleInfo(btn, ev) {
+  if (ev) ev.stopPropagation();
+  var same = (infoPopSrc === btn);
+  closeInfoPop();
+  if (same) return;
+  infoPopSrc = btn;
+
+  var pop = document.createElement('div');
+  pop.className = 'info-pop';
+  pop.textContent = btn.getAttribute('data-info') || '';
+  document.body.appendChild(pop);
+
+  /* Posisi: di bawah tombol, clamp agar tidak keluar layar */
+  var rect = btn.getBoundingClientRect();
+  var popW = 260;
+  var top  = rect.bottom + window.pageYOffset + 8;
+  var left = rect.left + window.pageXOffset;
+  if (left + popW > window.innerWidth - 12) left = window.innerWidth - popW - 12;
+  if (left < 8) left = 8;
+  pop.style.top  = top + 'px';
+  pop.style.left = left + 'px';
+
+  infoPopEl = pop;
+  setTimeout(function() { document.addEventListener('click', closeInfoOnOutside); }, 10);
+}
+
+/** Tutup popover info & lepas listener */
+function closeInfoPop() {
+  if (infoPopEl) { infoPopEl.remove(); infoPopEl = null; }
+  infoPopSrc = null;
+  document.removeEventListener('click', closeInfoOnOutside);
+}
+
+/** Tutup saat klik di luar popover (dan bukan tombol pembukanya) */
+function closeInfoOnOutside(e) {
+  if (infoPopEl && !infoPopEl.contains(e.target) && e.target !== infoPopSrc) {
+    closeInfoPop();
+  }
+}
+
 /* ==================== Format angka (B6) ==================== */
 
 /** Format satu elemen angka mentah ABAP ke format lokal id-ID (titik ribuan). */
@@ -697,6 +756,7 @@ function enhanceA11y(root) {
 function handleGlobalKeydown(e) {
   if (e.key === 'Escape' || e.keyCode === 27) {
     closeMatTooltip();
+    closeInfoPop();
     var dd = document.getElementById('user-dropdown');
     if (dd) dd.classList.remove('open');
     return;

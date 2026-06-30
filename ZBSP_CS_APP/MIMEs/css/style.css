@@ -144,6 +144,25 @@ body.page-loading canvas { display: none; }
 .stat-card.kpi-red   .kpi-alert { background: #fee2e2; color: #991b1b; }
 .stat-grid-2 { display: table; width: 100%; margin-bottom: 24px; border-spacing: 0; }
 
+/* ===== INFO BUTTON (i) + POPOVER (index cards) ===== */
+.info-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid #cbd5e1; background: #fff; color: #6b7280;
+  font-family: Georgia, 'Times New Roman', serif; font-style: italic;
+  font-weight: 700; font-size: 0.7rem; line-height: 1; padding: 0;
+  text-transform: none; margin-left: 6px; vertical-align: middle; cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.info-btn:hover { background: #2563eb; color: #fff; border-color: #2563eb; }
+.info-pop {
+  position: absolute; z-index: 9999; width: 260px;
+  background: #1f2937; color: #e5e7eb; border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.3), 0 2px 6px rgba(0,0,0,0.15);
+  padding: 12px 14px; font-size: 0.78rem; line-height: 1.55;
+}
+.info-pop b { color: #fff; }
+
 /* ===== CHARTS ===== */
 .chart-grid { display: table; width: 100%; margin-bottom: 24px; }
 .chart-cell { display: table-cell; vertical-align: top; }
@@ -183,6 +202,30 @@ canvas { display: block; max-width: 100%; }
   border-radius: 20px; font-size: 0.73rem; font-weight: 700;
 }
 .no-data { text-align: center; padding: 40px; color: #9ca3af; font-size: 0.9rem; }
+
+/* ===== SPLIT CARDS (Dashboard: SO Tertua Belum Selesai + SO Terbaru) ===== */
+.so-split-grid { display: table; width: 100%; table-layout: fixed; border-spacing: 0; margin-bottom: 24px; }
+.split-col { display: table-cell; width: 50%; vertical-align: top; }
+.split-col:first-child { padding-right: 12px; }
+.split-col:last-child { padding-left: 12px; }
+.split-card { background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; }
+.split-card-header { background: #f9fafb; padding: 14px 20px; border-bottom: 1px solid #e5e7eb; }
+.split-card-header h3 { font-size: 0.85rem; font-weight: 700; color: #374151; }
+.split-card-header .sub { font-size: 0.72rem; color: #9ca3af; font-weight: 500; margin-top: 2px; }
+.so-mini-row { padding: 12px 18px; border-bottom: 1px solid #f3f4f6; cursor: pointer; transition: background 0.15s; }
+.so-mini-row:last-child { border-bottom: none; }
+.so-mini-row:hover { background: #f9fafb; }
+.so-mini-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.so-mini-id { font-weight: 700; color: #1e3a8a; font-size: 0.9rem; }
+.so-mini-info { width: 22px; height: 22px; border-radius: 50%; border: 1px solid #cbd5e1; background: #fff; color: #2563eb; font-style: italic; font-weight: 700; font-size: 0.8rem; cursor: pointer; line-height: 1; flex-shrink: 0; padding: 0; }
+.so-mini-info:hover { background: #eff6ff; border-color: #2563eb; }
+.so-mini-sub { display: flex; align-items: center; gap: 10px; }
+.so-mini-date { font-size: 0.78rem; color: #6b7280; }
+.so-mini-detail { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #e5e7eb; font-size: 0.78rem; color: #4b5563; }
+.so-mini-detail .dline { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.so-mini-detail .dline span:last-child { font-weight: 600; color: #374151; }
+.mini-prog { background: #e5e7eb; border-radius: 5px; height: 8px; width: 100%; overflow: hidden; margin-top: 8px; }
+.mini-prog-fill { height: 100%; border-radius: 5px; transition: width 0.3s ease; }
 
 /* ===== MONITORING (shared from monitoring.htm) ===== */
 .filter-card { background: #ffffff; padding: 24px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); margin-bottom: 24px; border: 1px solid #e5e7eb; }

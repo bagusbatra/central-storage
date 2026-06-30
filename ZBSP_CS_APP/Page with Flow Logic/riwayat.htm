@@ -71,7 +71,13 @@ DATA: lv_layout_user   TYPE string,
       lv_disp_from     TYPE string,
       lv_disp_to       TYPE string,
       lv_lbl_from      TYPE string,
-      lv_lbl_to        TYPE string.
+      lv_lbl_to        TYPE string,
+      lv_keep_incompl  TYPE abap_bool,
+      lv_is_complete   TYPE abap_bool,
+      lv_done_pct      TYPE zcl_cs_util=>ty_pct,
+      lv_not_done      TYPE i,
+      lv_pf_cls        TYPE string,
+      lv_pf_txt        TYPE string.
 
 DATA: lr_vbeln TYPE RANGE OF vbak-vbeln,
       ls_vbeln LIKE LINE OF lr_vbeln,
@@ -207,12 +213,20 @@ IF lv_name_no_match = abap_false.
     ENDLOOP.
     SORT lt_so_stat BY vbeln.
 
-    " 6. FILTER INTI: simpan hanya SO yang SEMUA item GR 100% (done = total, total > 0)
+    " 6. FILTER INTI: default hanya SO yang SEMUA item GR 100% (done = total).
+    "    PENGECUALIAN: jika user mencari berdasarkan Nomor SO, SO yang belum
+    "    selesai TETAP ditampilkan (nanti diberi keterangan + klik ke Monitoring).
+    IF lv_ui_vbeln IS NOT INITIAL.
+      lv_keep_incompl = abap_true.
+    ENDIF.
     LOOP AT lt_local_hdr INTO ls_hdr_row.
       READ TABLE lt_so_stat INTO ls_so_stat_r
         WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
-      IF sy-subrc <> 0 OR ls_so_stat_r-total = 0
-         OR ls_so_stat_r-done <> ls_so_stat_r-total.
+      IF sy-subrc <> 0 OR ls_so_stat_r-total = 0.
+        " SO tanpa item produksi terhitung — tetap dibuang
+        DELETE lt_local_hdr.
+      ELSEIF ls_so_stat_r-done <> ls_so_stat_r-total
+             AND lv_keep_incompl = abap_false.
         DELETE lt_local_hdr.
       ENDIF.
     ENDLOOP.
@@ -318,7 +332,19 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               CLEAR ls_so_stat_r.
               READ TABLE lt_so_stat INTO ls_so_stat_r
                 WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
+              lv_is_complete = abap_false.
+              lv_done_pct    = 0.
+              lv_not_done    = 0.
+              IF ls_so_stat_r-total > 0.
+                lv_done_pct = ls_so_stat_r-done * 100 / ls_so_stat_r-total.
+                lv_not_done = ls_so_stat_r-total - ls_so_stat_r-done.
+                IF ls_so_stat_r-done = ls_so_stat_r-total.
+                  lv_is_complete = abap_true.
+                ENDIF.
+              ENDIF.
             %>
+            <% IF lv_is_complete = abap_true. %>
+            <!-- SO selesai: klik -> panel detail AJAX di halaman ini -->
             <div class="so-item-row so-border-done" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card" onclick="viewDetails('<%= ls_hdr_row-vbeln %>')">
               <div class="so-meta">
                 <span class="so-id">SO #<%= ls_hdr_row-vbeln %></span>
@@ -336,6 +362,34 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                 <span class="so-ic-done">&#10003; <%= ls_so_stat_r-done %> selesai</span>
               </div>
             </div>
+            <% ELSE. %>
+            <!-- SO belum selesai (hanya muncul saat pencarian by Nomor SO): klik -> Monitoring -->
+            <%
+              lv_pf_cls = zcl_cs_util=>prog_bar_class( lv_done_pct ).
+              lv_pf_txt = zcl_cs_util=>prog_txt_class( lv_done_pct ).
+            %>
+            <div class="so-item-row so-border-inprog" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card"
+                 title="SO belum selesai — klik untuk membuka di Monitoring"
+                 onclick="window.location.href='monitoring.htm?so_num=<%= ls_hdr_row-vbeln %>&amp;search_btn=X'">
+              <div class="so-meta">
+                <span class="so-id">SO #<%= ls_hdr_row-vbeln %></span>
+                <span class="so-badge"><span class="badge"><%= ls_so_stat_r-total %> Item</span></span>
+              </div>
+              <div class="so-cust-name"><%= lv_cust_name_dsp %></div>
+              <span class="so-status-label so-sl-inprog">SO Belum Selesai</span>
+              <div class="so-date">Tgl: <%= lv_dd %> | Tipe: <%= ls_hdr_row-auart %></div>
+              <div class="so-date">Nilai: <span class="cur-fmt"><%= ls_hdr_row-netwr %></span> <%= ls_hdr_row-waerk %></div>
+              <div class="so-prog-row">
+                <div class="so-prog-bar"><div class="so-prog-fill <%= lv_pf_cls %>" style="width:<%= lv_done_pct %>%;"></div></div>
+                <span class="so-prog-pct <%= lv_pf_txt %>"><%= lv_done_pct %>%</span>
+              </div>
+              <div class="so-icon-row">
+                <span class="so-ic-done">&#10003; <%= ls_so_stat_r-done %> selesai</span>
+                <span class="so-ic-none">&#9675; <%= lv_not_done %> belum</span>
+              </div>
+              <div class="so-date" style="color:#2563eb; font-weight:600; margin-top:4px;">&#8594; Buka di Monitoring</div>
+            </div>
+            <% ENDIF. %>
             <% ENDLOOP. %>
           <% ENDIF. %>
         </div>

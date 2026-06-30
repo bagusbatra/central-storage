@@ -3,7 +3,8 @@
 *&---------------------------------------------------------------------*
 *& Dashboard Statistik & Grafik — Central Storage KMI 2 — Plant 2000
 *&---------------------------------------------------------------------*
-CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+CONSTANTS: lc_plant        TYPE vbap-werks VALUE '2000',
+           lc_backlog_days TYPE i          VALUE 730.  " horizon scan "SO Tertua Belum Selesai" (hari) — atur sesuai kebutuhan
 
 TYPES: BEGIN OF ty_cust_info,
          kunnr  TYPE kna1-kunnr,
@@ -31,6 +32,20 @@ TYPES: BEGIN OF ty_so_prog,
          noprod TYPE i,
           rate   TYPE p LENGTH 8 DECIMALS 1,
         END OF ty_so_prog.
+
+TYPES: BEGIN OF ty_card,
+         vbeln   TYPE vbak-vbeln,
+         erdat   TYPE d,
+         erdat_s TYPE string,
+         items   TYPE i,
+         done    TYPE i,
+         inprog  TYPE i,
+         noprod  TYPE i,
+         rate    TYPE zcl_cs_util=>ty_pct,
+         rate_i  TYPE i,
+         kunnr   TYPE vbak-kunnr,
+         auart   TYPE vbak-auart,
+       END OF ty_card.
 
 DATA: lv_user         TYPE string,
       lv_period_param TYPE string,
@@ -65,7 +80,6 @@ DATA: lv_user         TYPE string,
       lv_jdone        TYPE string,
       lv_jinprog      TYPE string,
       lv_jnoprod      TYPE string,
-      lv_recent_dd    TYPE string,
 
       lv_otd_on_time  TYPE i,
       lv_otd_total    TYPE i,
@@ -89,12 +103,16 @@ DATA: lv_user         TYPE string,
       ls_vbap         TYPE vbap,
       lt_afpo         TYPE TABLE OF afpo,
       ls_afpo         TYPE afpo,
-      lt_recent       TYPE TABLE OF vbak,
-      ls_recent       TYPE vbak,
       lt_mth          TYPE TABLE OF ty_mth,
       ls_mth          TYPE ty_mth,
       lt_so_prog      TYPE TABLE OF ty_so_prog,
       ls_so_prog      TYPE ty_so_prog.
+
+DATA: lt_card        TYPE TABLE OF ty_card,
+      lt_recent_card TYPE TABLE OF ty_card,
+      lt_old_card    TYPE TABLE OF ty_card,
+      ls_card        TYPE ty_card,
+      lv_card_cls    TYPE string.
 
 lv_user = sy-uname.
 
@@ -117,14 +135,7 @@ ENDIF.
 lv_dfrom = sy-datum - lv_period_days.
 lv_dto   = sy-datum.
 
-" === Query terpisah untuk tabel Recent (10 baris, netwr + waerk) ===
-SELECT vbeln erdat kunnr auart netwr waerk
-  INTO CORRESPONDING FIELDS OF TABLE lt_recent
-  FROM vbak
-  WHERE erdat BETWEEN lv_dfrom AND lv_dto
-    AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
-SORT lt_recent BY erdat DESCENDING.
-DELETE lt_recent FROM 11.
+" === Kartu "SO Terbaru" & "SO Tertua Belum Selesai" dibangun dari lt_so_prog (lihat bawah) ===
 
 " === SELECT kolom spesifik — lt_vbak tanpa subquery (untuk chart) ===
 SELECT vbeln erdat kunnr auart
@@ -271,6 +282,34 @@ IF lt_vbak IS NOT INITIAL.
     MODIFY lt_so_prog FROM ls_so_prog INDEX lv_idx.
   ENDLOOP.
 
+  " === Data kartu dashboard: gabung lt_so_prog + erdat mentah (untuk sorting) ===
+  LOOP AT lt_so_prog INTO ls_so_prog.
+    CLEAR ls_card.
+    ls_card-vbeln   = ls_so_prog-vbeln.
+    ls_card-items   = ls_so_prog-total.
+    ls_card-done    = ls_so_prog-done.
+    ls_card-inprog  = ls_so_prog-inprog.
+    ls_card-noprod  = ls_so_prog-noprod.
+    ls_card-rate    = ls_so_prog-rate.
+    ls_card-rate_i  = ls_so_prog-rate.
+    ls_card-kunnr   = ls_so_prog-kunnr.
+    ls_card-auart   = ls_so_prog-auart.
+    ls_card-erdat_s = ls_so_prog-erdat.
+    READ TABLE lt_vbak INTO ls_vbak
+      WITH KEY vbeln = ls_so_prog-vbeln BINARY SEARCH.
+    IF sy-subrc = 0.
+      ls_card-erdat = ls_vbak-erdat.
+    ENDIF.
+    APPEND ls_card TO lt_card.
+  ENDLOOP.
+
+  " Kartu kanan: 5 SO dengan tanggal buat TERBARU
+  lt_recent_card = lt_card.
+  SORT lt_recent_card BY erdat DESCENDING vbeln DESCENDING.
+  DELETE lt_recent_card FROM 6.
+
+  " Kartu kiri (old-card) dibangun TERPISAH tanpa batas periode (lihat blok di bawah).
+
   " === Agregasi per minggu ===
   SORT lt_so_prog BY vbeln.
   LOOP AT lt_vbak INTO ls_vbak.
@@ -305,6 +344,112 @@ IF lt_vbak IS NOT INITIAL.
     ENDIF.
   ENDLOOP.
   SORT lt_mth BY month ASCENDING.
+ENDIF.
+
+" === Old-card: backlog SO TERTUA yang belum selesai (independen periode dashboard) ===
+" PERF: dibatasi horizon lc_backlog_days agar tidak memindai SELURUH histori VBAK
+"       tiap load. Backlog di luar horizon ini hampir selalu data lama/closed.
+TYPES: BEGIN OF ty_bl_stat,
+         vbeln  TYPE vbak-vbeln,
+         total  TYPE i,
+         done   TYPE i,
+         inprog TYPE i,
+         noprod TYPE i,
+       END OF ty_bl_stat.
+DATA: lt_bl_hdr    TYPE TABLE OF vbak,
+      ls_bl_hdr    TYPE vbak,
+      lt_bl_vbap   TYPE TABLE OF vbap,
+      ls_bl_vbap   TYPE vbap,
+      lt_bl_afpo   TYPE TABLE OF afpo,
+      ls_bl_afpo   TYPE afpo,
+      lt_bl_stat   TYPE TABLE OF ty_bl_stat,
+      ls_bl_stat   TYPE ty_bl_stat,
+      ls_bl_stat_r TYPE ty_bl_stat,
+      lv_bl_from   TYPE d,
+      lv_bl_lbl    TYPE string.
+
+lv_bl_from = sy-datum - lc_backlog_days.
+lv_bl_lbl  = zcl_cs_util=>fmt_date( lv_bl_from ).
+
+SELECT vbeln erdat kunnr auart FROM vbak
+  INTO CORRESPONDING FIELDS OF TABLE lt_bl_hdr
+  WHERE erdat >= lv_bl_from
+    AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
+SORT lt_bl_hdr BY vbeln.
+
+IF lt_bl_hdr IS NOT INITIAL.
+  SELECT vbeln posnr FROM vbap
+    INTO CORRESPONDING FIELDS OF TABLE lt_bl_vbap
+    FOR ALL ENTRIES IN lt_bl_hdr
+    WHERE vbeln = lt_bl_hdr-vbeln
+      AND werks = lc_plant.
+  SORT lt_bl_vbap BY vbeln posnr.
+
+  IF lt_bl_vbap IS NOT INITIAL.
+    SELECT kdauf kdpos psmng wemng FROM afpo
+      INTO CORRESPONDING FIELDS OF TABLE lt_bl_afpo
+      FOR ALL ENTRIES IN lt_bl_vbap
+      WHERE kdauf = lt_bl_vbap-vbeln
+        AND kdpos = lt_bl_vbap-posnr.
+    SORT lt_bl_afpo BY kdauf kdpos.
+  ENDIF.
+
+  " Status per SO via COLLECT (1 item = 1 baris total)
+  LOOP AT lt_bl_vbap INTO ls_bl_vbap.
+    CLEAR: ls_bl_afpo, ls_bl_stat.
+    ls_bl_stat-vbeln = ls_bl_vbap-vbeln.
+    ls_bl_stat-total = 1.
+    READ TABLE lt_bl_afpo INTO ls_bl_afpo
+      WITH KEY kdauf = ls_bl_vbap-vbeln kdpos = ls_bl_vbap-posnr BINARY SEARCH.
+    IF sy-subrc = 0 AND ls_bl_afpo-psmng > 0.
+      IF ls_bl_afpo-wemng >= ls_bl_afpo-psmng.
+        ls_bl_stat-done = 1.
+      ELSE.
+        ls_bl_stat-inprog = 1.
+      ENDIF.
+    ELSE.
+      ls_bl_stat-noprod = 1.
+    ENDIF.
+    COLLECT ls_bl_stat INTO lt_bl_stat.
+  ENDLOOP.
+  SORT lt_bl_stat BY vbeln.
+
+  " Sisakan hanya SO yang BELUM selesai (done < total)
+  LOOP AT lt_bl_hdr INTO ls_bl_hdr.
+    READ TABLE lt_bl_stat INTO ls_bl_stat_r
+      WITH KEY vbeln = ls_bl_hdr-vbeln BINARY SEARCH.
+    IF sy-subrc <> 0 OR ls_bl_stat_r-total = 0
+       OR ls_bl_stat_r-done >= ls_bl_stat_r-total.
+      DELETE lt_bl_hdr.
+    ENDIF.
+  ENDLOOP.
+
+  " Urut TERTUA dulu, ambil 5
+  SORT lt_bl_hdr BY erdat ASCENDING vbeln ASCENDING.
+  DELETE lt_bl_hdr FROM 6.
+
+  " Bangun lt_old_card
+  LOOP AT lt_bl_hdr INTO ls_bl_hdr.
+    CLEAR ls_card.
+    ls_card-vbeln   = ls_bl_hdr-vbeln.
+    ls_card-erdat   = ls_bl_hdr-erdat.
+    ls_card-erdat_s = zcl_cs_util=>fmt_date( ls_bl_hdr-erdat ).
+    ls_card-kunnr   = ls_bl_hdr-kunnr.
+    ls_card-auart   = ls_bl_hdr-auart.
+    READ TABLE lt_bl_stat INTO ls_bl_stat_r
+      WITH KEY vbeln = ls_bl_hdr-vbeln BINARY SEARCH.
+    IF sy-subrc = 0.
+      ls_card-items  = ls_bl_stat_r-total.
+      ls_card-done   = ls_bl_stat_r-done.
+      ls_card-inprog = ls_bl_stat_r-inprog.
+      ls_card-noprod = ls_bl_stat_r-noprod.
+      IF ls_bl_stat_r-total > 0.
+        ls_card-rate = ls_bl_stat_r-done * 100 / ls_bl_stat_r-total.
+        ls_card-rate_i = ls_card-rate.
+      ENDIF.
+    ENDIF.
+    APPEND ls_card TO lt_old_card.
+  ENDLOOP.
 ENDIF.
 
 " === Customer list by SO ===
@@ -470,7 +615,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Total Sales Order</span>
+            <span class="stat-label">Total Sales Order <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Jumlah Sales Order Plant 2000 dengan tanggal buat pada periode terpilih dan memiliki minimal satu item produksi (VBAP werks 2000).">i</button></span>
             <span class="stat-icon"><span class="ic-blue">&#128196;</span></span>
           </div>
           <div class="stat-value"><%= lv_total_so %></div>
@@ -480,7 +625,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Total Item Produksi</span>
+            <span class="stat-label">Total Item Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Total baris item produksi (VBAP, werks 2000) dari seluruh SO pada periode ini.">i</button></span>
             <span class="stat-icon"><span class="ic-amber">&#128295;</span></span>
           </div>
           <div class="stat-value"><%= lv_total_item %></div>
@@ -490,7 +635,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Item Selesai (GR 100%)</span>
+            <span class="stat-label">Item Selesai (GR 100%) <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang hasil Goods Receipt (wemng) sudah mencapai atau melebihi target produksi (psmng). Sub-teks menunjukkan jumlah item yang masih dalam proses.">i</button></span>
             <span class="stat-icon"><span class="ic-green">&#10003;</span></span>
           </div>
           <div class="stat-value"><%= lv_done %></div>
@@ -500,7 +645,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell">
         <div class="stat-card <%= lv_rate_class %>">
           <div class="stat-header">
-            <span class="stat-label">Tingkat Penyelesaian</span>
+            <span class="stat-label">Tingkat Penyelesaian <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Persentase item selesai dibanding total item. Warna kartu: hijau jika 80% ke atas, kuning 50-79%, merah di bawah 50%.">i</button></span>
             <span class="stat-icon"><span class="ic-gray">&#9203;</span></span>
           </div>
           <div class="stat-value"><%= lv_rate %>%</div>
@@ -516,7 +661,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card <%= lv_otd_cls %>">
           <div class="stat-header">
-            <span class="stat-label">Penyelesaian Order Produksi</span>
+            <span class="stat-label">Penyelesaian Order Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Persentase item selesai dibanding item yang sudah punya order produksi (selesai + proses). Item belum produksi tidak dihitung. Catatan: ini bukan ketepatan waktu pengiriman.">i</button></span>
             <span class="stat-icon"><span class="ic-blue">&#9200;</span></span>
           </div>
           <div class="stat-value"><%= lv_otd_rate %>%</div>
@@ -529,7 +674,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Rata-rata Umur Item Proses</span>
+            <span class="stat-label">Rata-rata Umur Item Proses <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Rata-rata umur (hari) item yang masih diproduksi, dihitung dari tanggal SO dibuat sampai hari ini. Indikator penuaan WIP (work in process).">i</button></span>
             <span class="stat-icon"><span class="ic-amber">&#128197;</span></span>
           </div>
           <div class="stat-value"><%= lv_leadtime %></div>
@@ -539,7 +684,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card <%= lv_backlog_cls %>">
           <div class="stat-header">
-            <span class="stat-label">Item Backlog</span>
+            <span class="stat-label">Item Backlog <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Jumlah item proses yang SO-nya dibuat lebih dari 30 hari lalu tetapi belum selesai. Warna kartu: merah jika lebih dari 5, kuning 1-5, hijau jika 0.">i</button></span>
             <span class="stat-icon"><span class="ic-gray">&#128203;</span></span>
           </div>
           <div class="stat-value"><%= lv_backlog_cnt %></div>
@@ -552,7 +697,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <div class="chart-grid">
       <div class="chart-cell chart-bar-cell">
         <div class="chart-card">
-          <div class="chart-title">Item Produksi per Minggu</div>
+          <div class="chart-title">Item Produksi per Minggu <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Distribusi status item (Selesai, Proses, Belum) dikelompokkan per minggu berdasarkan tanggal SO dibuat (label = Senin awal minggu). Klik bar untuk drill-down ke halaman Monitoring pada minggu tersebut.">i</button></div>
           <div class="chart-sub">Distribusi status item per minggu &#8212; <%= lv_period_lbl %> (Plant 2000, label = Senin awal minggu)</div>
           <div class="chart-skel" style="height:240px;"></div>
           <canvas id="barChart" height="240"></canvas>
@@ -566,7 +711,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       </div>
       <div class="chart-cell chart-donut-cell">
         <div class="chart-card">
-          <div class="chart-title">Status Produksi Item</div>
+          <div class="chart-title">Status Produksi Item <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Proporsi seluruh item menurut status produksi. Angka di tengah donut adalah persentase item selesai dari total item.">i</button></div>
           <div class="chart-sub">Distribusi penyelesaian dari seluruh item SO</div>
           <div class="chart-skel" style="width:200px;height:200px;border-radius:50%;margin:0 auto;"></div>
           <canvas id="donutChart" width="200" height="200" style="margin:0 auto;"></canvas>
@@ -626,41 +771,72 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <% ENDIF. %>
     </div>
 
-    <!-- RECENT 10 SO -->
-    <div class="recent-card">
-      <div class="recent-header">
-        <h3>10 Sales Order Terbaru</h3>
+    <!-- OLD CARD (kiri) + RECENT CARD (kanan) — gaya inline + kelas/JS yang sudah ter-deploy -->
+    <div style="display:flex; gap:24px; margin-bottom:24px; align-items:stretch;">
+
+      <!-- KIRI: SO tertua yang belum selesai -->
+      <div style="flex:1; min-width:0;">
+        <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
+          <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
+            <h3 style="font-size:0.85rem; font-weight:700; color:#374151;">&#9203; SO Tertua Belum Selesai</h3>
+            <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">Backlog terlama yang masih ada item belum selesai &#8212; sejak <%= lv_bl_lbl %> (Plant 2000)</div>
+          </div>
+          <div>
+            <% IF lt_old_card IS INITIAL. %>
+            <div class="no-data" style="padding:28px;">Tidak ada SO yang belum selesai di Plant 2000.</div>
+            <% ELSE. %>
+            <% LOOP AT lt_old_card INTO ls_card.
+                 lv_card_cls = zcl_cs_util=>prog_bar_class( ls_card-rate ).
+                 IF ls_card-noprod = ls_card-items. lv_card_cls = 'prog-black'. ENDIF.
+            %>
+            <div style="padding:12px 18px; border-bottom:1px solid #f3f4f6; cursor:pointer;" onclick="window.location.href='monitoring.htm?so_num=<%= ls_card-vbeln %>&amp;search_btn=X'">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                <span style="font-weight:700; color:#1e3a8a; font-size:0.9rem;">SO #<%= ls_card-vbeln %></span>
+                <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Customer <%= ls_card-kunnr %> | Tipe <%= ls_card-auart %> | Item selesai <%= ls_card-done %>/<%= ls_card-items %> | Dalam proses <%= ls_card-inprog %> | Belum produksi <%= ls_card-noprod %> | Penyelesaian <%= ls_card-rate_i %>%">i</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+                <span class="badge"><%= ls_card-items %> Item</span>
+                <span style="font-size:0.78rem; color:#6b7280;">Dibuat: <%= ls_card-erdat_s %></span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <div class="prog-bg" style="flex:1; height:7px;"><div class="prog-fill <%= lv_card_cls %>" style="width:<%= ls_card-rate_i %>%;"></div></div>
+                <span style="font-size:0.75rem; font-weight:700; color:#374151; min-width:36px; text-align:right;"><%= ls_card-rate_i %>%</span>
+              </div>
+            </div>
+            <% ENDLOOP. %>
+            <% ENDIF. %>
+          </div>
+        </div>
       </div>
-      <table class="recent-table">
-        <thead>
-          <tr>
-            <th style="width:18%;">Nomor SO</th>
-            <th style="width:18%;">Kode Customer</th>
-            <th style="width:10%;">Tipe</th>
-            <th style="width:14%;">Tanggal Buat</th>
-            <th style="width:20%; text-align:right;">Net Value</th>
-            <th style="width:20%;">Mata Uang</th>
-          </tr>
-        </thead>
-        <tbody>
-          <%
-            LOOP AT lt_recent INTO ls_recent.
-              lv_recent_dd = zcl_cs_util=>fmt_date( ls_recent-erdat ).
-          %>
-          <tr onclick="window.location.href='monitoring.htm?so_num=<%= ls_recent-vbeln %>&amp;search_btn=X'" style="cursor:pointer;">
-            <td><strong style="color:#1e3a8a;">SO #<%= ls_recent-vbeln %></strong></td>
-            <td><%= ls_recent-kunnr %></td>
-            <td><span class="badge-type"><%= ls_recent-auart %></span></td>
-            <td><%= lv_recent_dd %></td>
-            <td style="text-align:right; font-weight:600;"><span class="cur-fmt"><%= ls_recent-netwr %></span></td>
-            <td><%= ls_recent-waerk %></td>
-          </tr>
-          <% ENDLOOP. %>
-          <% IF lt_recent IS INITIAL. %>
-          <tr><td colspan="6" class="no-data">Tidak ada data Sales Order dalam periode ini di Plant 2000.</td></tr>
-          <% ENDIF. %>
-        </tbody>
-      </table>
+
+      <!-- KANAN: SO terbaru -->
+      <div style="flex:1; min-width:0;">
+        <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
+          <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
+            <h3 style="font-size:0.85rem; font-weight:700; color:#374151;">&#128338; Sales Order Terbaru</h3>
+            <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">Berdasarkan tanggal buat terbaru &#8212; <%= lv_period_lbl %></div>
+          </div>
+          <div>
+            <% IF lt_recent_card IS INITIAL. %>
+            <div class="no-data" style="padding:28px;">Tidak ada data Sales Order dalam periode ini di Plant 2000.</div>
+            <% ELSE. %>
+            <% LOOP AT lt_recent_card INTO ls_card. %>
+            <div style="padding:12px 18px; border-bottom:1px solid #f3f4f6; cursor:pointer;" onclick="window.location.href='monitoring.htm?so_num=<%= ls_card-vbeln %>&amp;search_btn=X'">
+              <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+                <span style="font-weight:700; color:#1e3a8a; font-size:0.9rem;">SO #<%= ls_card-vbeln %></span>
+                <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Customer <%= ls_card-kunnr %> | Tipe <%= ls_card-auart %> | Item selesai <%= ls_card-done %>/<%= ls_card-items %> | Dalam proses <%= ls_card-inprog %> | Belum produksi <%= ls_card-noprod %> | Penyelesaian <%= ls_card-rate_i %>%">i</button>
+              </div>
+              <div style="display:flex; align-items:center; gap:10px;">
+                <span class="badge"><%= ls_card-items %> Item</span>
+                <span style="font-size:0.78rem; color:#6b7280;">Dibuat: <%= ls_card-erdat_s %></span>
+              </div>
+            </div>
+            <% ENDLOOP. %>
+            <% ENDIF. %>
+          </div>
+        </div>
+      </div>
+
     </div>
 
 
