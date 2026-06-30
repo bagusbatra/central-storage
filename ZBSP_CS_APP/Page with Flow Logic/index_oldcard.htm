@@ -1,0 +1,147 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Fragment — Kartu "SO Tertua Belum Selesai" (old-card)
+*& Dipanggil via AJAX dari index.htm (PERF #2: lazy-load agar query berat
+*& ini tidak memblokir render halaman utama). Mengembalikan HTML kartu saja
+*& (tanpa wrapper html/head/body), pola sama dengan monitoring_detail.htm.
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_plant        TYPE vbap-werks VALUE '2000',
+           lc_backlog_days TYPE i          VALUE 730.  " horizon scan backlog (hari)
+
+TYPES: BEGIN OF ty_bl_stat,
+         vbeln  TYPE vbak-vbeln,
+         total  TYPE i,
+         done   TYPE i,
+         inprog TYPE i,
+         noprod TYPE i,
+       END OF ty_bl_stat.
+
+DATA: lt_bl_hdr    TYPE TABLE OF vbak,
+      ls_bl_hdr    TYPE vbak,
+      lt_bl_vbap   TYPE TABLE OF vbap,
+      ls_bl_vbap   TYPE vbap,
+      lt_bl_afpo   TYPE TABLE OF afpo,
+      ls_bl_afpo   TYPE afpo,
+      lt_bl_stat   TYPE TABLE OF ty_bl_stat,
+      ls_bl_stat   TYPE ty_bl_stat,
+      ls_bl_stat_r TYPE ty_bl_stat,
+      lv_bl_from   TYPE d,
+      lv_bl_lbl    TYPE string,
+      lv_erdat_s   TYPE string,
+      lv_rate_i    TYPE i,
+      lv_color     TYPE string.
+
+lv_bl_from = sy-datum - lc_backlog_days.
+lv_bl_lbl  = zcl_cs_util=>fmt_date( lv_bl_from ).
+
+" 1. Header SO Plant 2000 dalam horizon backlog
+SELECT vbeln erdat kunnr auart FROM vbak
+  INTO CORRESPONDING FIELDS OF TABLE lt_bl_hdr
+  WHERE erdat >= lv_bl_from
+    AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
+SORT lt_bl_hdr BY vbeln.
+
+IF lt_bl_hdr IS NOT INITIAL.
+  SELECT vbeln posnr FROM vbap
+    INTO CORRESPONDING FIELDS OF TABLE lt_bl_vbap
+    FOR ALL ENTRIES IN lt_bl_hdr
+    WHERE vbeln = lt_bl_hdr-vbeln
+      AND werks = lc_plant.
+  SORT lt_bl_vbap BY vbeln posnr.
+
+  IF lt_bl_vbap IS NOT INITIAL.
+    SELECT kdauf kdpos psmng wemng FROM afpo
+      INTO CORRESPONDING FIELDS OF TABLE lt_bl_afpo
+      FOR ALL ENTRIES IN lt_bl_vbap
+      WHERE kdauf = lt_bl_vbap-vbeln
+        AND kdpos = lt_bl_vbap-posnr.
+    SORT lt_bl_afpo BY kdauf kdpos.
+  ENDIF.
+
+  " Status per SO via COLLECT (1 item = 1 baris total)
+  LOOP AT lt_bl_vbap INTO ls_bl_vbap.
+    CLEAR: ls_bl_afpo, ls_bl_stat.
+    ls_bl_stat-vbeln = ls_bl_vbap-vbeln.
+    ls_bl_stat-total = 1.
+    READ TABLE lt_bl_afpo INTO ls_bl_afpo
+      WITH KEY kdauf = ls_bl_vbap-vbeln kdpos = ls_bl_vbap-posnr BINARY SEARCH.
+    IF sy-subrc = 0 AND ls_bl_afpo-psmng > 0.
+      IF ls_bl_afpo-wemng >= ls_bl_afpo-psmng.
+        ls_bl_stat-done = 1.
+      ELSE.
+        ls_bl_stat-inprog = 1.
+      ENDIF.
+    ELSE.
+      ls_bl_stat-noprod = 1.
+    ENDIF.
+    COLLECT ls_bl_stat INTO lt_bl_stat.
+  ENDLOOP.
+  SORT lt_bl_stat BY vbeln.
+
+  " Sisakan hanya SO yang BELUM selesai (done < total)
+  LOOP AT lt_bl_hdr INTO ls_bl_hdr.
+    READ TABLE lt_bl_stat INTO ls_bl_stat_r
+      WITH KEY vbeln = ls_bl_hdr-vbeln BINARY SEARCH.
+    IF sy-subrc <> 0 OR ls_bl_stat_r-total = 0
+       OR ls_bl_stat_r-done >= ls_bl_stat_r-total.
+      DELETE lt_bl_hdr.
+    ENDIF.
+  ENDLOOP.
+
+  " Urut TERTUA dulu, ambil 5
+  SORT lt_bl_hdr BY erdat ASCENDING vbeln ASCENDING.
+  DELETE lt_bl_hdr FROM 6.
+ENDIF.
+%>
+<div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
+  <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
+    <h3 style="font-size:0.85rem; font-weight:700; color:#374151; margin:0;">&#9203; SO Tertua Belum Selesai</h3>
+    <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">Backlog terlama yang masih ada item belum selesai &#8212; sejak <%= lv_bl_lbl %> (Plant 2000)</div>
+  </div>
+  <div>
+    <% IF lt_bl_hdr IS INITIAL. %>
+    <div style="padding:28px; text-align:center; color:#9ca3af; font-size:0.9rem;">Tidak ada SO yang belum selesai di Plant 2000.</div>
+    <% ELSE. %>
+    <% LOOP AT lt_bl_hdr INTO ls_bl_hdr.
+         CLEAR ls_bl_stat_r.
+         READ TABLE lt_bl_stat INTO ls_bl_stat_r
+           WITH KEY vbeln = ls_bl_hdr-vbeln BINARY SEARCH.
+         lv_erdat_s = zcl_cs_util=>fmt_date( ls_bl_hdr-erdat ).
+         lv_rate_i = 0.
+         IF ls_bl_stat_r-total > 0.
+           lv_rate_i = ls_bl_stat_r-done * 100 / ls_bl_stat_r-total.
+         ENDIF.
+         IF     ls_bl_stat_r-noprod = ls_bl_stat_r-total. lv_color = '#9ca3af'.
+         ELSEIF lv_rate_i >= 100.                         lv_color = '#22c55e'.
+         ELSEIF lv_rate_i > 70.                           lv_color = '#3b82f6'.
+         ELSEIF lv_rate_i > 45.                           lv_color = '#eab308'.
+         ELSEIF lv_rate_i > 20.                           lv_color = '#f97316'.
+         ELSE.                                            lv_color = '#ef4444'.
+         ENDIF.
+    %>
+    <div style="padding:12px 18px; border-bottom:1px solid #f3f4f6; cursor:pointer;" onclick="window.location.href='monitoring.htm?so_num=<%= ls_bl_hdr-vbeln %>&amp;search_btn=X'">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+        <span style="font-weight:700; color:#1e3a8a; font-size:0.9rem;">SO #<%= ls_bl_hdr-vbeln %></span>
+        <button type="button" title="Lihat detail" style="width:22px; height:22px; border-radius:50%; border:1px solid #cbd5e1; background:#fff; color:#2563eb; font-style:italic; font-weight:700; font-size:0.8rem; line-height:1; padding:0; cursor:pointer; flex-shrink:0;" onclick="event.stopPropagation(); var d=document.getElementById('det-bl-<%= ls_bl_hdr-vbeln %>'); d.style.display=(d.style.display=='block'?'none':'block');">i</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+        <span style="background:#dbeafe; color:#1e40af; padding:3px 10px; border-radius:20px; font-size:0.75rem; font-weight:700;"><%= ls_bl_stat_r-total %> Item</span>
+        <span style="font-size:0.78rem; color:#6b7280;">Dibuat: <%= lv_erdat_s %></span>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px;">
+        <div style="flex:1; height:7px; background:#e5e7eb; border-radius:4px; overflow:hidden;"><div style="height:100%; width:<%= lv_rate_i %>%; background:<%= lv_color %>; border-radius:4px;"></div></div>
+        <span style="font-size:0.75rem; font-weight:700; color:#374151; min-width:36px; text-align:right;"><%= lv_rate_i %>%</span>
+      </div>
+      <div id="det-bl-<%= ls_bl_hdr-vbeln %>" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #e5e7eb; font-size:0.78rem; color:#4b5563;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Kode Customer</span><span style="font-weight:600; color:#374151;"><%= ls_bl_hdr-kunnr %></span></div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Tipe Dokumen</span><span style="font-weight:600; color:#374151;"><%= ls_bl_hdr-auart %></span></div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Item Selesai</span><span style="font-weight:600; color:#374151;"><%= ls_bl_stat_r-done %> / <%= ls_bl_stat_r-total %></span></div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Dalam Proses</span><span style="font-weight:600; color:#374151;"><%= ls_bl_stat_r-inprog %></span></div>
+        <div style="display:flex; justify-content:space-between;"><span>Belum Produksi</span><span style="font-weight:600; color:#374151;"><%= ls_bl_stat_r-noprod %></span></div>
+      </div>
+    </div>
+    <% ENDLOOP. %>
+    <% ENDIF. %>
+  </div>
+</div>

@@ -774,7 +774,7 @@ function handleGlobalKeydown(e) {
 /* ------------------------------------------------------------------
    Entry point — inisialisasi setelah seluruh DOM siap
    ------------------------------------------------------------------ */
-window.onload = function() {
+function initPage() {
   /* === Inisialisasi bersama (dipakai kedua halaman) === */
   lockAllForms();
   formatNumbers(document);
@@ -847,4 +847,14 @@ window.onload = function() {
       }
     });
   }
-};
+}
+
+/* PERF #6: pakai DOMContentLoaded (DOM siap) alih-alih window.onload (tunggu
+   semua subresource: CSS, gambar, file JS). Chart digambar & skeleton dilepas
+   lebih awal. Guard readyState: script ini di akhir <body>, jadi bila DOM sudah
+   selesai diparse saat eksekusi, panggil langsung; kalau belum, tunggu event. */
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initPage);
+} else {
+  initPage();
+}
