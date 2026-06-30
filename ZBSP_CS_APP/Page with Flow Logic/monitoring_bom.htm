@@ -95,7 +95,11 @@ DATA: lv_comp_seq    TYPE i,
       lv_cstat_cls   TYPE string,
       lv_bstart      TYPE string,
       lv_bfin        TYPE string,
-      lv_afin        TYPE string.
+      lv_afin        TYPE string,
+      lv_oprog       TYPE p DECIMALS 2,   " progres order produksi (GR/target) utk kolom Progres
+      lv_obcls       TYPE string,
+      lv_opcls       TYPE string,
+      lv_ohas        TYPE abap_bool.
 
 TYPES: BEGIN OF ty_mard_agg,
          matnr TYPE mara-matnr,
@@ -482,10 +486,10 @@ ENDIF.
             <table class="bom-table cois-table">
               <thead>
                 <tr>
-                  <th style="width: 22%;">Material Komponen</th>
-                  <th style="width: 16%;">Material</th>
+                  <th style="width: 26%;">Material Komponen</th>
                   <th style="width: 32%;">Nama Material</th>
-                  <th style="width: 30%;">Sloc - Nama Sloc</th>
+                  <th style="width: 24%;">Sloc - Nama Sloc</th>
+                  <th style="width: 18%; text-align: center;">Progres</th>
                 </tr>
               </thead>
               <tbody>
@@ -523,6 +527,16 @@ ENDIF.
                       IF lv_bfin   IS INITIAL. lv_bfin   = '-'. ENDIF.
                       IF lv_afin   IS INITIAL. lv_afin   = '-'. ENDIF.
 
+                      " Progres order produksi (GR/target) — kolom Progres tiap komponennya
+                      CLEAR: lv_oprog, lv_obcls, lv_opcls, lv_ohas.
+                      IF ls_afpo_ord-psmng > 0.
+                        lv_ohas  = abap_true.
+                        lv_oprog = ls_afpo_ord-wemng * 100 / ls_afpo_ord-psmng.
+                        IF lv_oprog > 100. lv_oprog = 100. ENDIF.
+                        lv_obcls = zcl_cs_util=>prog_bar_class( lv_oprog ).
+                        lv_opcls = zcl_cs_util=>prog_txt_class( lv_oprog ).
+                      ENDIF.
+
                       READ TABLE lt_resb TRANSPORTING NO FIELDS
                         WITH KEY aufnr = ls_afpo_ord-aufnr BINARY SEARCH.
                       IF sy-subrc = 0.
@@ -551,9 +565,17 @@ ENDIF.
                 %>
                 <tr class="clickable-comp-row" onclick="toggleCompRow('<%= lv_vbeln %>-c<%= lv_comp_seq %>')">
                   <td><code class="mat-code"><%= ls_resb-matnr %></code> <span style="font-size:0.7rem; color:#9ca3af;">(Klik detail)</span></td>
-                  <td><%= ls_item_row-matnr %></td>
                   <td><%= lv_makt_text %></td>
                   <td><%= lv_sloc_disp %></td>
+                  <td style="text-align: center;">
+                    <% IF lv_ohas = abap_true. %>
+                    <div class="prog-container">
+                      <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_obcls %>" style="width:<%= zcl_cs_util=>css_pct( lv_oprog ) %>%;"></div></div></div>
+                      <span class="prog-pct <%= lv_opcls %>"><%= lv_oprog %>%</span>
+                    </div>
+                    <% ELSE. %><span style="font-style:italic; color:#9ca3af; font-size:0.8rem;">No Prod</span>
+                    <% ENDIF. %>
+                  </td>
                 </tr>
                 <tr id="compdet-<%= lv_vbeln %>-c<%= lv_comp_seq %>" class="comp-detail-row" style="display:none;">
                   <td colspan="4">
