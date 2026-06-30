@@ -1,0 +1,339 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Page — Riwayat (Arsip SO Selesai), Plant 2000 Surabaya
+*& Menampilkan Sales Order yang SELURUH item produksinya sudah GR 100%.
+*& Default rentang: 90 hari terakhir. Sort: tanggal buat terbaru di atas.
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+
+TYPES: BEGIN OF ty_local_item,
+         vbeln TYPE vbap-vbeln,
+         posnr TYPE vbap-posnr,
+         psmng TYPE afpo-psmng,
+         wemng TYPE afpo-wemng,
+       END OF ty_local_item.
+
+TYPES: BEGIN OF ty_cust_name,
+         kunnr TYPE kna1-kunnr,
+         name1 TYPE kna1-name1,
+       END OF ty_cust_name.
+
+TYPES: BEGIN OF ty_so_stat,
+         vbeln TYPE vbap-vbeln,
+         total TYPE i,
+         done  TYPE i,
+       END OF ty_so_stat.
+
+DATA: lt_local_hdr  TYPE TABLE OF vbak,
+      lt_temp_vbap  TYPE TABLE OF vbap,
+      lt_afpo_pre   TYPE TABLE OF afpo,
+      lt_local_item TYPE TABLE OF ty_local_item,
+      lt_cust_names TYPE TABLE OF ty_cust_name,
+      lt_kna1_srch  TYPE TABLE OF ty_cust_name,
+      lt_so_stat    TYPE TABLE OF ty_so_stat,
+      ls_hdr_row    TYPE vbak,
+      ls_vbap_row   TYPE vbap,
+      ls_afpo_row   TYPE afpo,
+      ls_item_row   TYPE ty_local_item,
+      ls_cust_name  TYPE ty_cust_name,
+      ls_kna1_srch  TYPE ty_cust_name,
+      ls_so_stat    TYPE ty_so_stat,
+      ls_so_stat_r  TYPE ty_so_stat.
+
+DATA: lv_layout_user   TYPE string,
+      lv_ui_vbeln      TYPE string,
+      lv_ui_kunnr      TYPE string,
+      lv_ui_name       TYPE string,
+      lv_ui_edf        TYPE string,
+      lv_ui_edt        TYPE string,
+      lv_erdat_from    TYPE d,
+      lv_erdat_to      TYPE d,
+      lv_search_so     TYPE vbak-vbeln,
+      lv_search_kun    TYPE vbak-kunnr,
+      lv_name_pattern  TYPE string,
+      lv_name_no_match TYPE abap_bool,
+      lv_has_filter    TYPE abap_bool,
+      lv_stat_pct      TYPE p DECIMALS 2,
+      lv_local_cnt     TYPE i,
+      lv_dd            TYPE string,
+      lv_cust_name_dsp TYPE kna1-name1,
+      lv_disp_from     TYPE string,
+      lv_disp_to       TYPE string,
+      lv_lbl_from      TYPE string,
+      lv_lbl_to        TYPE string.
+
+DATA: lr_vbeln TYPE RANGE OF vbak-vbeln,
+      ls_vbeln LIKE LINE OF lr_vbeln,
+      lr_kunnr TYPE RANGE OF vbak-kunnr,
+      ls_kunnr LIKE LINE OF lr_kunnr.
+
+lv_layout_user = sy-uname.
+lv_ui_vbeln    = request->get_form_field( 'so_num' ).
+lv_ui_kunnr    = request->get_form_field( 'cust_num' ).
+lv_ui_name     = request->get_form_field( 'cust_name' ).
+lv_ui_edf      = request->get_form_field( 'date_from' ).
+lv_ui_edt      = request->get_form_field( 'date_to' ).
+
+IF lv_ui_vbeln IS NOT INITIAL OR lv_ui_kunnr IS NOT INITIAL
+   OR lv_ui_name IS NOT INITIAL OR lv_ui_edf IS NOT INITIAL
+   OR lv_ui_edt IS NOT INITIAL.
+  lv_has_filter = abap_true.
+ENDIF.
+
+" === Rentang tanggal: default 90 hari terakhir (9.1) ===
+IF lv_ui_edf IS NOT INITIAL AND strlen( lv_ui_edf ) = 10.
+  lv_erdat_from = lv_ui_edf(4) && lv_ui_edf+5(2) && lv_ui_edf+8(2).
+ELSE.
+  lv_erdat_from = sy-datum - 90.
+ENDIF.
+IF lv_ui_edt IS NOT INITIAL AND strlen( lv_ui_edt ) = 10.
+  lv_erdat_to = lv_ui_edt(4) && lv_ui_edt+5(2) && lv_ui_edt+8(2).
+ELSE.
+  lv_erdat_to = sy-datum.
+ENDIF.
+
+" === Filter nomor SO (exact + partial) ===
+IF lv_ui_vbeln IS NOT INITIAL.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING input = lv_ui_vbeln IMPORTING output = lv_search_so.
+  ls_vbeln-sign = 'I'. ls_vbeln-option = 'EQ'. ls_vbeln-low = lv_search_so.
+  APPEND ls_vbeln TO lr_vbeln.
+  ls_vbeln-option = 'CP'. ls_vbeln-low = '*' && lv_ui_vbeln && '*'.
+  APPEND ls_vbeln TO lr_vbeln.
+ENDIF.
+
+" === Filter kode customer (exact + partial); kode diprioritaskan atas nama ===
+IF lv_ui_kunnr IS NOT INITIAL.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING input = lv_ui_kunnr IMPORTING output = lv_search_kun.
+  ls_kunnr-sign = 'I'. ls_kunnr-option = 'EQ'. ls_kunnr-low = lv_search_kun.
+  APPEND ls_kunnr TO lr_kunnr.
+  ls_kunnr-option = 'CP'. ls_kunnr-low = '*' && lv_ui_kunnr && '*'.
+  APPEND ls_kunnr TO lr_kunnr.
+ENDIF.
+
+" === Filter nama customer → cari KNA1 (MCOD1 upper), masukkan kunnr ke range ===
+IF lv_ui_name IS NOT INITIAL AND lv_ui_kunnr IS INITIAL.
+  TRANSLATE lv_ui_name TO UPPER CASE.
+  lv_name_pattern = '%' && lv_ui_name && '%'.
+  SELECT kunnr name1 FROM kna1 INTO CORRESPONDING FIELDS OF TABLE lt_kna1_srch
+    WHERE mcod1 LIKE lv_name_pattern.
+  IF lt_kna1_srch IS NOT INITIAL.
+    LOOP AT lt_kna1_srch INTO ls_kna1_srch.
+      ls_kunnr-sign = 'I'. ls_kunnr-option = 'EQ'. ls_kunnr-low = ls_kna1_srch-kunnr.
+      APPEND ls_kunnr TO lr_kunnr.
+    ENDLOOP.
+  ELSE.
+    lv_name_no_match = abap_true.
+  ENDIF.
+ENDIF.
+
+IF lv_name_no_match = abap_false.
+  " 1. Header SO — termasuk netwr/waerk untuk Nilai SO (9.5)
+  SELECT vbeln erdat auart kunnr netwr waerk FROM vbak
+    INTO CORRESPONDING FIELDS OF TABLE lt_local_hdr
+    WHERE erdat BETWEEN lv_erdat_from AND lv_erdat_to
+      AND vbeln IN lr_vbeln
+      AND kunnr IN lr_kunnr
+      AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
+
+  IF lt_local_hdr IS NOT INITIAL.
+    " 2. Item VBAP Plant 2000
+    SELECT vbeln posnr FROM vbap
+      INTO CORRESPONDING FIELDS OF TABLE lt_temp_vbap
+      FOR ALL ENTRIES IN lt_local_hdr
+      WHERE vbeln = lt_local_hdr-vbeln
+        AND werks = lc_plant.
+
+    " 3. AFPO untuk klasifikasi GR
+    IF lt_temp_vbap IS NOT INITIAL.
+      SELECT kdauf kdpos psmng wemng FROM afpo
+        INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
+        FOR ALL ENTRIES IN lt_temp_vbap
+        WHERE kdauf = lt_temp_vbap-vbeln
+          AND kdpos = lt_temp_vbap-posnr.
+      SORT lt_afpo_pre BY kdauf kdpos.
+    ENDIF.
+
+    " 4. Gabungkan VBAP + AFPO
+    LOOP AT lt_temp_vbap INTO ls_vbap_row.
+      CLEAR: ls_item_row, ls_afpo_row.
+      ls_item_row-vbeln = ls_vbap_row-vbeln.
+      ls_item_row-posnr = ls_vbap_row-posnr.
+      READ TABLE lt_afpo_pre INTO ls_afpo_row
+        WITH KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_item_row-psmng = ls_afpo_row-psmng.
+        ls_item_row-wemng = ls_afpo_row-wemng.
+      ENDIF.
+      APPEND ls_item_row TO lt_local_item.
+    ENDLOOP.
+
+    " 5. Statistik per SO: total item + jumlah item selesai (GR 100%)
+    LOOP AT lt_local_item INTO ls_item_row.
+      CLEAR ls_so_stat.
+      ls_so_stat-vbeln = ls_item_row-vbeln.
+      ls_so_stat-total = 1.
+      IF ls_item_row-psmng > 0.
+        lv_stat_pct = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
+        IF lv_stat_pct >= 100.
+          ls_so_stat-done = 1.
+        ENDIF.
+      ENDIF.
+      COLLECT ls_so_stat INTO lt_so_stat.
+    ENDLOOP.
+    SORT lt_so_stat BY vbeln.
+
+    " 6. FILTER INTI: simpan hanya SO yang SEMUA item GR 100% (done = total, total > 0)
+    LOOP AT lt_local_hdr INTO ls_hdr_row.
+      READ TABLE lt_so_stat INTO ls_so_stat_r
+        WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
+      IF sy-subrc <> 0 OR ls_so_stat_r-total = 0
+         OR ls_so_stat_r-done <> ls_so_stat_r-total.
+        DELETE lt_local_hdr.
+      ENDIF.
+    ENDLOOP.
+
+    " 7. Nama customer untuk SO yang lolos filter
+    IF lt_local_hdr IS NOT INITIAL.
+      SELECT kunnr name1 FROM kna1
+        INTO CORRESPONDING FIELDS OF TABLE lt_cust_names
+        FOR ALL ENTRIES IN lt_local_hdr
+        WHERE kunnr = lt_local_hdr-kunnr.
+      SORT lt_cust_names BY kunnr.
+    ENDIF.
+
+    " 8. Urut tanggal buat terbaru di atas (9.2)
+    SORT lt_local_hdr BY erdat DESCENDING vbeln DESCENDING.
+  ENDIF.
+ENDIF.
+
+lv_local_cnt = lines( lt_local_hdr ).
+
+" Nilai input date (YYYY-MM-DD) + label tampil (DD/MM/YYYY)
+lv_disp_from = lv_erdat_from(4) && '-' && lv_erdat_from+4(2) && '-' && lv_erdat_from+6(2).
+lv_disp_to   = lv_erdat_to(4)   && '-' && lv_erdat_to+4(2)   && '-' && lv_erdat_to+6(2).
+lv_lbl_from  = zcl_cs_util=>fmt_date( lv_erdat_from ).
+lv_lbl_to    = zcl_cs_util=>fmt_date( lv_erdat_to ).
+
+DATA: lv_ts_date TYPE string,
+      lv_ts_time TYPE string.
+lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
+lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
+%>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Riwayat - Central Storage KMI 2 Surabaya</title>
+  <link rel="stylesheet" href="css/style.css?r=3">
+</head>
+<body>
+
+  <div class="header-bar">
+    <div class="header-title">
+      <h1>Central Storage Production Dashboard</h1>
+      <p>Riwayat &amp; Arsip Sales Order Selesai Produksi &#8212; Plant 2000 Surabaya</p>
+    </div>
+    <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_layout_user %></span>
+      <div class="user-dropdown" id="user-dropdown">
+        <div class="dropdown-userinfo"><%= lv_layout_user %></div>
+        <div class="dropdown-divider"></div>
+        <a href="javascript:void(0)" onclick="userLogout()">&#10007; Logout</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="navbar">
+    <a href="index.htm" class="nav-btn"><span class="nav-icon">&#9782;</span>Dashboard</a>
+    <a href="monitoring.htm" class="nav-btn"><span class="nav-icon">&#9741;</span>Monitoring</a>
+    <a href="riwayat.htm" class="nav-btn active"><span class="nav-icon">&#128220;</span>Riwayat</a>
+  </div>
+
+  <div class="filter-card">
+    <!-- GET → hasil bisa di-bookmark & reload tanpa dialog kirim ulang -->
+    <form method="get" action="">
+      <div class="filter-form">
+        <div class="form-group" style="width:16%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_vbeln %>" placeholder="10000021 atau sebagian"></div>
+        <div class="form-group" style="width:13%;"><label>Kode Customer</label><input type="text" id="cust_num" name="cust_num" value="<%= lv_ui_kunnr %>" placeholder="Kode SAP"></div>
+        <div class="form-group" style="width:22%;"><label>Nama Customer</label><input type="text" id="cust_name" name="cust_name" value="<%= lv_ui_name %>" placeholder="Cari nama customer..."></div>
+        <div class="form-group" style="width:16%;"><label>Dari Tanggal</label><input type="date" id="date_from" name="date_from" value="<%= lv_disp_from %>"></div>
+        <div class="form-group" style="width:16%;"><label>Sampai Tanggal</label><input type="date" id="date_to" name="date_to" value="<%= lv_disp_to %>"></div>
+        <div class="btn-submit"><button type="submit" id="search_btn" name="search_btn" value="X">CARI DATA</button></div>
+      </div>
+    </form>
+  </div>
+
+  <div class="dashboard-layout">
+    <div class="sidebar-panel">
+      <div class="list-container">
+        <div class="list-header">Arsip SO Selesai (<%= lv_local_cnt %> Dokumen) &#8212; <%= lv_lbl_from %> s/d <%= lv_lbl_to %></div>
+        <div id="so-list-viewport" style="max-height: 520px; overflow-y: auto;">
+
+          <% IF lv_local_cnt = 0. %>
+          <div class="empty-state">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3h18v4H3z"/><path d="M5 7v13h14V7"/><path d="M9 11h6"/>
+            </svg>
+            <h3>Tidak ada SO selesai</h3>
+            <p>Belum ada Sales Order yang seluruh item produksinya selesai (GR 100%) pada rentang dan filter ini. Coba perluas rentang tanggal atau ubah filter.</p>
+            <% IF lv_has_filter = abap_true. %>
+            <a href="riwayat.htm" class="btn-reset">Reset Filter</a>
+            <% ENDIF. %>
+          </div>
+          <% ENDIF. %>
+
+          <% IF lv_local_cnt > 0. %>
+            <% LOOP AT lt_local_hdr INTO ls_hdr_row. %>
+            <%
+              lv_dd = zcl_cs_util=>fmt_date( ls_hdr_row-erdat ).
+              CLEAR lv_cust_name_dsp.
+              READ TABLE lt_cust_names INTO ls_cust_name
+                WITH KEY kunnr = ls_hdr_row-kunnr BINARY SEARCH.
+              IF sy-subrc = 0. lv_cust_name_dsp = ls_cust_name-name1. ENDIF.
+              CLEAR ls_so_stat_r.
+              READ TABLE lt_so_stat INTO ls_so_stat_r
+                WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
+            %>
+            <div class="so-item-row so-border-done" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card" onclick="viewDetails('<%= ls_hdr_row-vbeln %>')">
+              <div class="so-meta">
+                <span class="so-id">SO #<%= ls_hdr_row-vbeln %></span>
+                <span class="so-badge"><span class="badge"><%= ls_so_stat_r-total %> Item</span></span>
+              </div>
+              <div class="so-cust-name"><%= lv_cust_name_dsp %></div>
+              <span class="so-status-label so-sl-done">Selesai</span>
+              <div class="so-date">Tgl: <%= lv_dd %> | Tipe: <%= ls_hdr_row-auart %></div>
+              <div class="so-date">Nilai: <span class="cur-fmt"><%= ls_hdr_row-netwr %></span> <%= ls_hdr_row-waerk %></div>
+              <div class="so-prog-row">
+                <div class="so-prog-bar"><div class="so-prog-fill prog-green" style="width:100%;"></div></div>
+                <span class="so-prog-pct txt-green">100%</span>
+              </div>
+              <div class="so-icon-row">
+                <span class="so-ic-done">&#10003; <%= ls_so_stat_r-done %> selesai</span>
+              </div>
+            </div>
+            <% ENDLOOP. %>
+          <% ENDIF. %>
+        </div>
+        <div class="pagination-ctrl">
+          <button type="button" id="btn-prev" onclick="changePage(-1)">&laquo; Prev</button>
+          <span id="page-indicator">1 / 1</span>
+          <button type="button" id="btn-next" onclick="changePage(1)">Next &raquo;</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="main-panel" id="main-panel-container">
+      <div class="placeholder-ctx" id="placeholder-msg">
+        <h3>Belum Ada Dokumen Terpilih</h3>
+        <p>Pilih nomor Sales Order selesai di sidebar untuk melihat rincian produksi, item, dan BOM-nya.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/js.js?r=2"></script>
+  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %> &bull; Plant: <%= lc_plant %></div>
+</body>
+</html>
