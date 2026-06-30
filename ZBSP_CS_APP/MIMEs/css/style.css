@@ -328,6 +328,9 @@ canvas { display: block; max-width: 100%; }
   animation: skel-wave 1.4s linear infinite;
 }
 
+/* Placeholder tab Item & BOM sebelum dimuat lazy (monitoring_bom.htm) */
+.bom-lazy-hint { padding: 28px; text-align: center; color: #9ca3af; font-size: 0.9rem; }
+
 /* ===== RESPONSIVE — tablet & mobile ===== */
 @media (max-width: 900px) {
   .chart-grid { display: block; }

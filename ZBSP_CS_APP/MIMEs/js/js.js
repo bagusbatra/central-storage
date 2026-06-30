@@ -20,7 +20,8 @@ var currentPage        = 1;
 var soCards            = [];
 var currentActiveVBELN = null;
 var currentActiveBOMId = null;
-var soDetailCache      = {}; /* cache HTML detail per vbeln */
+var soDetailCache      = {}; /* cache HTML fragmen detail ringan per vbeln */
+var soBomCache         = {}; /* cache HTML tab Item & BOM (berat) per vbeln */
 
 /* ------------------------------------------------------------------
    Helper: kotak dengan sudut bulat semua sisi (canvas 2D)
@@ -606,6 +607,57 @@ function switchTab(tabId, btn) {
   var pane = document.getElementById(tabId);
   if (pane) pane.classList.add('active');
   btn.classList.add('active');
+
+  /* Tab Item & BOM dimuat lazy (endpoint berat terpisah) saat pertama dibuka. */
+  if (tabId === 'tab-items' && pane && pane.getAttribute('data-loaded') === '0') {
+    loadBOM(pane);
+  }
+}
+
+/* ------------------------------------------------------------------
+   loadBOM — muat isi tab Item & BOM via AJAX (monitoring_bom.htm).
+   Endpoint ringan (monitoring_detail.htm) hanya mengirim Ringkasan/Info +
+   shell tab ini, sehingga detail tampil instan. Rantai BOM berat baru
+   diambil di sini, sekali per vbeln (di-cache).
+   ------------------------------------------------------------------ */
+function loadBOM(pane) {
+  var vbeln = pane.getAttribute('data-vbeln');
+  if (!vbeln) return;
+
+  /* Sajikan dari cache jika sudah pernah dimuat */
+  if (soBomCache[vbeln]) {
+    pane.innerHTML = soBomCache[vbeln];
+    pane.setAttribute('data-loaded', '1');
+    formatNumbers(pane);
+    enhanceA11y(pane);
+    return;
+  }
+
+  pane.innerHTML =
+    '<div class="skel-table">' +
+    '  <div class="skel-thead"></div>' +
+    '  <div class="skel-row"></div>' +
+    '  <div class="skel-row" style="width:80%"></div>' +
+    '  <div class="skel-row" style="width:60%"></div>' +
+    '</div>';
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', 'monitoring_bom.htm?vbeln=' + encodeURIComponent(vbeln), true);
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      soBomCache[vbeln] = xhr.responseText;
+      pane.innerHTML = xhr.responseText;
+      pane.setAttribute('data-loaded', '1');
+      formatNumbers(pane);
+      enhanceA11y(pane);
+    } else {
+      pane.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Gagal memuat Item &amp; BOM (HTTP ' + xhr.status + ').</p></div>';
+    }
+  };
+  xhr.onerror = function() {
+    pane.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Error koneksi ke server.</p></div>';
+  };
+  xhr.send();
 }
 
 /* ------------------------------------------------------------------

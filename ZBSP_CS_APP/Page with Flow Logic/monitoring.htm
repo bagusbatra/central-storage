@@ -29,16 +29,28 @@ TYPES: BEGIN OF ty_so_stat,
          noprod TYPE i,
        END OF ty_so_stat.
 
+" AFPO diagregasi per item SO (1 item bisa punya >1 order produksi). Tanpa
+" agregasi, READ TABLE 1 baris bersifat non-deterministik antar query → status
+" sidebar bisa bertentangan dengan Ringkasan detail. Lihat update-monitoring.md.
+TYPES: BEGIN OF ty_afpo_agg,
+         kdauf TYPE afpo-kdauf,
+         kdpos TYPE afpo-kdpos,
+         psmng TYPE afpo-psmng,
+         wemng TYPE afpo-wemng,
+       END OF ty_afpo_agg.
+
 DATA: lt_local_hdr   TYPE TABLE OF vbak,
       lt_local_item  TYPE TABLE OF ty_local_item,
       lt_temp_vbap   TYPE TABLE OF vbap,
       lt_afpo_pre    TYPE TABLE OF afpo,
+      lt_afpo_agg    TYPE TABLE OF ty_afpo_agg,
       lt_cust_names  TYPE TABLE OF ty_cust_name,
       lt_kna1_srch   TYPE TABLE OF ty_cust_name,
       lt_so_stat     TYPE TABLE OF ty_so_stat,
       ls_hdr_row     TYPE vbak,
       ls_item_row    TYPE ty_local_item,
       ls_afpo_row    TYPE afpo,
+      ls_afpo_agg    TYPE ty_afpo_agg,
       ls_vbap_row    TYPE vbap,
       ls_cust_name   TYPE ty_cust_name,
       ls_kna1_srch   TYPE ty_cust_name,
@@ -53,7 +65,6 @@ DATA: lv_dd            TYPE string,
       lv_name_no_match TYPE abap_bool,
       lv_cust_name_dsp TYPE kna1-name1,
       lv_layout_user   TYPE string,
-      lv_stat_pct      TYPE p DECIMALS 2,
       lv_done_pct      TYPE zcl_cs_util=>ty_pct,
       lv_border_cls    TYPE string,
       lv_stat_cls      TYPE string,
@@ -176,14 +187,26 @@ lv_is_srch = abap_true.
         WHERE vbeln = lt_local_hdr-vbeln
           AND werks = lc_plant.
 
-      " 4. Pre-fetch AFPO — kolom spesifik
+      " 4. Pre-fetch AFPO — kolom spesifik, lalu AGREGASI per item SO.
+      "    Satu item (kdauf/kdpos) bisa punya >1 order produksi → psmng & wemng
+      "    DIJUMLAHKAN via COLLECT agar klasifikasi memakai TOTAL (bukan 1 order).
+      "    Kunci agregat unik → READ BINARY SEARCH deterministik & konsisten
+      "    dengan Ringkasan detail dan Riwayat.
       IF lt_temp_vbap IS NOT INITIAL.
         SELECT kdauf kdpos psmng wemng FROM afpo
           INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
           FOR ALL ENTRIES IN lt_temp_vbap
           WHERE kdauf = lt_temp_vbap-vbeln
             AND kdpos = lt_temp_vbap-posnr.
-        SORT lt_afpo_pre BY kdauf kdpos.
+        LOOP AT lt_afpo_pre INTO ls_afpo_row.
+          CLEAR ls_afpo_agg.
+          ls_afpo_agg-kdauf = ls_afpo_row-kdauf.
+          ls_afpo_agg-kdpos = ls_afpo_row-kdpos.
+          ls_afpo_agg-psmng = ls_afpo_row-psmng.
+          ls_afpo_agg-wemng = ls_afpo_row-wemng.
+          COLLECT ls_afpo_agg INTO lt_afpo_agg.
+        ENDLOOP.
+        SORT lt_afpo_agg BY kdauf kdpos.
       ENDIF.
 
       " 5. Gabungkan VBAP + AFPO ke struktur lokal
@@ -195,12 +218,12 @@ lv_is_srch = abap_true.
         ls_item_row-arktx  = ls_vbap_row-arktx.
         ls_item_row-kwmeng = ls_vbap_row-kwmeng.
         ls_item_row-vrkme  = ls_vbap_row-vrkme.
-        READ TABLE lt_afpo_pre INTO ls_afpo_row
+        READ TABLE lt_afpo_agg INTO ls_afpo_agg
           WITH KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr
           BINARY SEARCH.
         IF sy-subrc = 0.
-          ls_item_row-psmng = ls_afpo_row-psmng.
-          ls_item_row-wemng = ls_afpo_row-wemng.
+          ls_item_row-psmng = ls_afpo_agg-psmng.
+          ls_item_row-wemng = ls_afpo_agg-wemng.
         ELSE.
           ls_item_row-psmng = 0.
           ls_item_row-wemng = 0.
@@ -215,16 +238,12 @@ lv_is_srch = abap_true.
         CLEAR ls_so_stat.
         ls_so_stat-vbeln = ls_item_row-vbeln.
         ls_so_stat-total = 1.
-        IF ls_item_row-psmng > 0.
-          lv_stat_pct = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
-          IF lv_stat_pct >= 100.
-            ls_so_stat-done = 1.
-          ELSE.
-            ls_so_stat-inprog = 1.
-          ENDIF.
-        ELSE.
-          ls_so_stat-noprod = 1.
-        ENDIF.
+        CASE zcl_cs_util=>item_status( iv_psmng = ls_item_row-psmng
+                                       iv_wemng = ls_item_row-wemng ).
+          WHEN zcl_cs_util=>gc_st_done.   ls_so_stat-done   = 1.
+          WHEN zcl_cs_util=>gc_st_inprog. ls_so_stat-inprog = 1.
+          WHEN OTHERS.                    ls_so_stat-noprod = 1.
+        ENDCASE.
         COLLECT ls_so_stat INTO lt_so_stat.
       ENDLOOP.
       SORT lt_so_stat BY vbeln.
@@ -246,7 +265,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Central Storage Production Dashboard - KMI 2 Surabaya</title>
-  <link rel="stylesheet" href="css/style.css?r=3">
+  <link rel="stylesheet" href="css/style.css?r=4">
 </head>
 <body>
 
@@ -422,7 +441,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     </div>
   </div>
 
-  <script src="js/js.js?r=3"></script>
+  <script src="js/js.js?r=4"></script>
   <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %> &bull; Plant: <%= lc_plant %></div>
 </body>
 </html>

@@ -21,6 +21,20 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " Persentase progres 0..100(+); presisi 2 desimal cukup untuk ambang.
     TYPES ty_pct TYPE p LENGTH 8 DECIMALS 2.
 
+    " Kode status item produksi — satu sumber kebenaran untuk klasifikasi.
+    CONSTANTS: gc_st_done   TYPE i VALUE 1,   " Selesai (GR >= target)
+               gc_st_inprog TYPE i VALUE 2,   " Proses  (ada target, GR < target)
+               gc_st_noprod TYPE i VALUE 3.   " Belum Produksi (tanpa order / target 0)
+
+    "! Klasifikasi status item dari TOTAL target & TOTAL GR (sudah diagregasi
+    "! per item SO — satu item bisa punya >1 order produksi). Pastikan
+    "! iv_psmng/iv_wemng adalah JUMLAH seluruh order produksi item tsb.
+    "! psmng>0 & GR>=target → done | psmng>0 & GR<target → inprog | else noprod.
+    CLASS-METHODS item_status
+      IMPORTING iv_psmng       TYPE afpo-psmng
+                iv_wemng       TYPE afpo-wemng
+      RETURNING VALUE(rv_code) TYPE i.
+
     "! Kelas warna BAR progres dari persentase.
     "! >=100 prog-green | >70 prog-blue | >45 prog-yellow | >20 prog-orange | else prog-red
     CLASS-METHODS prog_bar_class
@@ -41,6 +55,18 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
 ENDCLASS.
 
 CLASS zcl_cs_util IMPLEMENTATION.
+
+  METHOD item_status.
+    DATA lv_pct TYPE ty_pct.
+    IF iv_psmng > 0.
+      lv_pct = iv_wemng * 100 / iv_psmng.
+      IF lv_pct >= 100. rv_code = gc_st_done.
+      ELSE.             rv_code = gc_st_inprog.
+      ENDIF.
+    ELSE.
+      rv_code = gc_st_noprod.
+    ENDIF.
+  ENDMETHOD.
 
   METHOD prog_bar_class.
     IF     iv_pct >= 100. rv_class = 'prog-green'.
