@@ -1,11 +1,13 @@
 # ERD & Relasi Data — `monitoring_bom.htm` (Tab Item & BOM)
 
-> Dokumen ini melacak **secara rinci** seluruh relasi tabel SAP yang dipakai oleh endpoint
-> `monitoring_bom.htm` — fragmen AJAX berat yang merender isi tab **Item & BOM** pada panel
-> detail Monitoring. Dibuat **30 Juni 2026**, mengikuti kode terkini.
+> Melacak **secara rinci** seluruh relasi tabel SAP yang dipakai endpoint
+> `monitoring_bom.htm` — fragmen AJAX berat yang merender isi tab **Item & BOM** pada
+> panel detail Monitoring. Diperbarui **30 Juni 2026**.
 >
-> Endpoint ini dipanggil lazy oleh `js.js loadBOM()` saat pengguna pertama kali membuka tab
-> Item & BOM (lihat `update-monitoring.md`). Input tunggal: **`vbeln`** (Nomor Sales Order).
+> **Perubahan besar (30 Jun 2026):** Daftar Komponen sekarang bergaya **COOIS** — komponen
+> dibaca dari **RESB** (komponen/reservasi order produksi) + **T001L** (nama Sloc), bukan lagi
+> dari BOM master. BOM master (MAST/STPO) dipakai sebagai **fallback** untuk item yang belum
+> punya order produksi. Input tunggal: **`vbeln`** (Nomor Sales Order).
 
 ---
 
@@ -15,18 +17,24 @@
 vbeln (input)
    │
    ▼
-VBAP ──(matnr)──────────────► MAST ──(stlnr)──► STPO ──┬─(idnrk)─► MAKT  (nama komponen)
- │  (vbeln+werks=2000)         (matnr+werks)    (stlnr) ├─(idnrk)─► MARD  (stok, Σ per material)
- │                                                      └─(idnrk)─► EKPO ─(ebeln+ebelp)─► EKET (open PO + ETA)
+VBAP ─(vbeln=kdauf, posnr=kdpos)─► AFPO ──┬─(aufnr)─► AFKO  (GSTRP/GLTRP/GETRI)
+ │   (vbeln+werks=2000)  (agregat per item)├─(aufnr)─► AUFK ─(objnr)─► JEST (status sistem)
+ │                                         └─(aufnr)─► RESB ─(werks+lgort)─► T001L (nama Sloc)
+ │                                              (komponen order, gaya COOIS)
  │
- └─(vbeln=kdauf, posnr=kdpos)─► AFPO ──┬─(aufnr)─► AFKO            (target finish GLTRP)
-        (agregat per item)             └─(aufnr)─► AUFK ─(objnr)─► JEST (status sistem order)
+ └─ (FALLBACK item tanpa order) ─► MAST ─(stlnr)─► STPO ─┬─(idnrk)─► MAKT  (nama)
+                                   (matnr+werks)         ├─(idnrk)─► MARD  (stok, Σ)
+                                                         └─(idnrk)─► EKPO ─► EKET (open PO)
+
+MAKT dibaca untuk gabungan komponen (RESB ∪ STPO) sekaligus.
 ```
 
-Ada **dua cabang** yang berangkat dari hasil VBAP:
+Dua jalur penghasil **Daftar Komponen**:
 
-- **Cabang Produksi** (kiri-bawah): VBAP → AFPO → AFKO/AUFK→JEST. Menghasilkan **progres item** (Target/Hasil GR), **status order**, dan **tanggal target**.
-- **Cabang BOM/Material** (kanan-atas): VBAP → MAST → STPO → MAKT/MARD/EKPO→EKET. Menghasilkan **daftar komponen BOM** + **stok** + **open PO** untuk tooltip material.
+- **Jalur utama — RESB (gaya COOIS):** untuk item yang **punya order produksi** (`AFPO-AUFNR` ada). Menampilkan komponen aktual yang direservasi order + Storage Location, dan expand per komponen (status sistem, kuantitas, basic start/finish, actual finish).
+- **Jalur fallback — MAST/STPO (BOM master):** untuk item **tanpa order produksi**. Menampilkan komponen rencana statis + tooltip stok/open-PO (MARD/EKPO/EKET).
+
+Cabang **Progres item** (Target/Hasil GR, tag status, target finish) tetap dari VBAP→AFPO→AFKO/JEST — tidak berubah.
 
 ---
 
@@ -38,7 +46,11 @@ erDiagram
     AFPO ||--o| AFKO : "aufnr"
     AFPO ||--o| AUFK : "aufnr"
     AUFK ||--o{ JEST : "objnr"
-    VBAP ||--o{ MAST : "matnr (+werks)"
+    AFPO ||--o{ RESB : "aufnr (komponen order)"
+    RESB ||--o| T001L : "werks+lgort (nama Sloc)"
+    RESB ||--o| MAKT : "matnr (nama komponen)"
+
+    VBAP ||--o{ MAST : "matnr (+werks) [FALLBACK]"
     MAST ||--o{ STPO : "stlnr"
     STPO ||--o| MAKT : "idnrk=matnr (+spras)"
     STPO ||--o{ MARD : "idnrk=matnr (+werks)"
@@ -46,279 +58,284 @@ erDiagram
     EKPO ||--o{ EKET : "ebeln+ebelp"
 
     VBAP {
-        char  vbeln  "Nomor SO (= input)"
-        char  posnr  "Posisi item SO"
-        char  matnr  "Material jadi (header BOM)"
-        char  arktx  "Deskripsi item"
-        quan  kwmeng "Qty SO (satuan jual)"
-        unit  vrkme  "UoM jual"
-        char  werks  "Plant (filter = 2000)"
+        char vbeln  "Nomor SO (= input)"
+        char posnr  "Posisi item SO"
+        char matnr  "Material jadi (= Material induk kolom COOIS)"
+        char arktx  "Deskripsi item"
+        quan kwmeng "Qty SO (satuan jual)"
+        unit vrkme  "UoM jual"
+        char werks  "Plant (filter = 2000)"
     }
     AFPO {
-        char  kdauf  "Nomor SO (link)"
-        char  kdpos  "Posisi item SO (link)"
-        char  aufnr  "Nomor order produksi"
-        quan  psmng  "Target produksi (Σ per item)"
-        quan  wemng  "Hasil GR (Σ per item)"
-        unit  meins  "UoM dasar (Target/Hasil GR)"
+        char kdauf "Nomor SO (link)"
+        char kdpos "Posisi item SO (link)"
+        char aufnr "Nomor order produksi"
+        quan psmng "Target produksi (Σ per item)"
+        quan wemng "Hasil GR (Σ per item)"
+        unit meins "UoM dasar (Target/Hasil GR)"
     }
     AFKO {
-        char  aufnr  "Nomor order produksi"
-        dats  gltrp  "Tanggal target finish"
+        char aufnr "Nomor order produksi"
+        dats gstrp "Basic Start Date"
+        dats gltrp "Basic Finish Date (= target finish)"
+        dats getri "Actual Finish Date"
     }
     AUFK {
-        char  aufnr  "Nomor order produksi"
-        char  objnr  "Object number (link ke status)"
+        char aufnr "Nomor order produksi"
+        char objnr "Object number"
     }
     JEST {
-        char  objnr  "Object number"
-        char  stat   "Kode status sistem (I00xx)"
-        char  inact  "Aktif? (filter = ' ')"
+        char objnr "Object number"
+        char stat  "Kode status sistem (I00xx)"
+        char inact "Aktif? (filter = ' ')"
+    }
+    RESB {
+        char aufnr "Nomor order produksi (link)"
+        char matnr "Material Komponen"
+        char werks "Plant komponen"
+        char lgort "Storage location (Sloc)"
+        quan bdmng "Kuantitas kebutuhan"
+        unit meins "UoM komponen"
+        char xloek "Deletion flag (filter = ' ')"
+    }
+    T001L {
+        char werks "Plant"
+        char lgort "Storage location"
+        char lgobe "Nama storage location"
     }
     MAST {
-        char  matnr  "Material jadi"
-        char  werks  "Plant (filter = 2000)"
-        char  stlnr  "Nomor BOM (link ke STPO)"
+        char matnr "Material jadi"
+        char werks "Plant (filter = 2000)"
+        char stlnr "Nomor BOM"
     }
     STPO {
-        char  stlnr  "Nomor BOM"
-        char  idnrk  "Material komponen"
-        quan  menge  "Kuantitas komponen per BOM"
-        unit  meins  "UoM komponen"
+        char stlnr "Nomor BOM"
+        char idnrk "Material komponen"
+        quan menge "Kuantitas komponen"
+        unit meins "UoM komponen"
     }
     MAKT {
-        char  matnr  "Material komponen (=idnrk)"
-        char  maktx  "Nama/deskripsi material"
-        lang  spras  "Bahasa (filter = sy-langu)"
+        char matnr "Material komponen"
+        char maktx "Nama/deskripsi material"
+        lang spras "Bahasa (filter = sy-langu)"
     }
     MARD {
-        char  matnr  "Material komponen (=idnrk)"
-        char  werks  "Plant (filter = 2000)"
-        quan  labst  "Stok unrestricted (filter >0, Σ per material)"
+        char matnr "Material komponen"
+        char werks "Plant (filter = 2000)"
+        quan labst "Stok unrestricted (>0, Σ per material)"
     }
     EKPO {
-        char  ebeln  "Nomor PO"
-        char  ebelp  "Item PO"
-        char  matnr  "Material komponen (=idnrk)"
-        char  loekz  "Deletion flag (filter = ' ')"
-        char  elikz  "Delivery completed (filter = ' ')"
+        char ebeln "Nomor PO"
+        char ebelp "Item PO"
+        char matnr "Material komponen"
+        char loekz "Deletion flag (filter = ' ')"
+        char elikz "Delivery completed (filter = ' ')"
     }
     EKET {
-        char  ebeln  "Nomor PO"
-        char  ebelp  "Item PO"
-        dats  eindt  "Tanggal kirim (ETA paling awal)"
-        quan  menge  "Qty dijadwalkan"
-        quan  wemng  "Qty sudah diterima"
+        char ebeln "Nomor PO"
+        char ebelp "Item PO"
+        dats eindt "Tanggal kirim (ETA paling awal)"
+        quan menge "Qty dijadwalkan"
+        quan wemng "Qty diterima"
     }
 ```
 
-> Notasi kardinalitas Mermaid: `||--o{` = satu-ke-banyak (0..n), `||--o|` = satu-ke-nol/satu.
+> `||--o{` = satu-ke-banyak (0..n); `||--o|` = satu-ke-nol/satu.
 
 ---
 
-## 2. Rincian Per Relasi
-
-Urutan di bawah mengikuti urutan eksekusi `SELECT` di kode.
+## 2. Rincian Per Relasi (urutan eksekusi `SELECT`)
 
 ### 2.1 VBAP — Item Sales Order (driver utama)
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Peran** | Titik awal. Mengambil seluruh item SO di Plant 2000 untuk `vbeln` yang diklik. |
 | **Filter** | `WHERE vbeln = lv_vbeln AND werks = '2000'` |
-| **Field dipakai** | `vbeln, posnr, matnr, arktx, kwmeng, vrkme` |
-| **Output UI** | Kolom **Item** (`posnr`), **Material #** (`matnr`), **Deskripsi Komponen** (`arktx`), **Qty SO** (`kwmeng vrkme`). |
-| **Catatan** | `matnr` = material jadi → menjadi kunci ke MAST (cabang BOM). `vbeln`+`posnr` → kunci ke AFPO (cabang produksi). Jika kosong → "Tidak ada item produksi untuk Sales Order ini." |
+| **Field** | `vbeln, posnr, matnr, arktx, kwmeng, vrkme` |
+| **Output UI** | Tabel item: **Item** (`posnr`), **Material #** (`matnr`), **Deskripsi** (`arktx`), **Qty SO** (`kwmeng vrkme`). `matnr` juga menjadi **kolom "Material" (induk)** pada tabel komponen COOIS. |
 
 ### 2.2 VBAP → AFPO — Order Produksi per Item
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Relasi** | `AFPO-KDAUF = VBAP-VBELN` **dan** `AFPO-KDPOS = VBAP-POSNR`. (KDAUF/KDPOS = referensi sales order pada order produksi.) |
-| **Kardinalitas** | **1 item SO : 0..n order produksi.** Satu item bisa punya banyak `aufnr` (produksi terpisah/parsial/rework). **Inilah alasan agregasi.** |
-| **Filter** | `FOR ALL ENTRIES IN lt_temp_vbap WHERE kdauf = …-vbeln AND kdpos = …-posnr` (di-guard `IF lt_temp_vbap IS NOT INITIAL`). |
-| **Field dipakai** | `kdauf, kdpos, psmng, wemng, meins, aufnr` |
-| **Agregasi** | `psmng` (Target) & `wemng` (Hasil GR) **DIJUMLAH per item** menjelajah baris AFPO yang berkunci sama. `meins` (UoM dasar) diambil dari baris pertama (sama untuk semua order satu material). |
-| **AUFNR wakil** | Untuk tag status order: dipilih order **paling belum selesai** = rasio `wemng/psmng` **terendah** (`psmng=0` dianggap rasio 0). Disimpan ke `ls_item_row-aufnr`. |
-| **Output UI** | Kolom **Target** (`psmng meins`), **Hasil GR** (`wemng meins`), bar **Progres** (`wemng/psmng*100`, cap 100). Item tanpa AFPO → "No Prod". |
-| **Mengapa agregasi penting** | Tanpa menjumlah, pembacaan 1 baris (`READ … BINARY SEARCH`) bersifat non-deterministik → status bisa bertentangan antar tampilan. Lihat `update-monitoring.md` Masalah #1. |
+| **Relasi** | `AFPO-KDAUF = VBAP-VBELN` **dan** `AFPO-KDPOS = VBAP-POSNR`. |
+| **Kardinalitas** | **1 item : 0..n order produksi.** |
+| **Field** | `kdauf, kdpos, psmng, wemng, meins, aufnr` |
+| **Agregasi** | `psmng` & `wemng` **dijumlah per item**; `meins` diambil dari baris pertama. |
+| **AUFNR wakil** | Order rasio `wemng/psmng` **terendah** (paling belum selesai) → status & target item. |
+| **Peran tambahan** | Daftar `aufnr` item → driver untuk AFKO, AUFK/JEST, dan **RESB**. `AUFNR` tidak kosong = item **punya order** → pakai jalur RESB; kosong → fallback MAST/STPO. |
+| **Output UI** | **Target** (`Σpsmng meins`), **Hasil GR** (`Σwemng meins`), bar **Progres**. |
 
-### 2.3 AFPO → AFKO — Tanggal Target Finish
-
-| Aspek | Keterangan |
-|-------|------------|
-| **Relasi** | `AFKO-AUFNR = AFPO-AUFNR` (kepala order produksi). |
-| **Kardinalitas** | 1 order : 1 AFKO. |
-| **Filter** | `FOR ALL ENTRIES IN lt_afpo_pre WHERE aufnr = …-aufnr` (guard `IF lt_afpo_pre IS NOT INITIAL`). |
-| **Field dipakai** | `aufnr, gltrp` (basic finish date / tanggal target selesai). |
-| **Output UI** | Baris **"Target: DD/MM/YYYY"** di bawah tag status (hanya untuk `aufnr` wakil). |
-| **Catatan penting** | **`AFKO-GSTRS` adalah TANGGAL, bukan teks status.** Status sistem TIDAK diambil dari AFKO, melainkan dari JEST (lihat 2.5). |
-
-### 2.4 AFPO → AUFK — Jembatan ke Status Sistem
+### 2.3 AFPO → AFKO — Tanggal Order
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Relasi** | `AUFK-AUFNR = AFPO-AUFNR`. |
-| **Field dipakai** | `aufnr, objnr` (Object number — kunci universal status objek SAP). |
-| **Peran** | AUFK menyediakan `objnr` yang dibutuhkan untuk membaca status manajemen di JEST. Murni tabel jembatan. |
-| **Filter** | `FOR ALL ENTRIES IN lt_afpo_pre WHERE aufnr = …-aufnr`. |
+| **Relasi** | `AFKO-AUFNR = AFPO-AUFNR`. |
+| **Field** | `aufnr, gstrp` (Basic Start), `gltrp` (Basic Finish / target), `getri` (Actual Finish). |
+| **Output UI** | `gltrp` → "Target:" di tag status item. `gstrp/gltrp/getri` → **expand komponen** (Basic Start/Finish, Actual Finish). |
+| **Catatan** | `AFKO-GSTRS`/`GETRI` dll adalah **tanggal**; status sistem TIDAK dari AFKO melainkan JEST. Tanggal kosong (`00000000`) → ditampilkan "-". |
 
-### 2.5 AUFK → JEST — Status Sistem Order Produksi
-
-| Aspek | Keterangan |
-|-------|------------|
-| **Relasi** | `JEST-OBJNR = AUFK-OBJNR`. |
-| **Kardinalitas** | 1 order : **n** baris status (tiap status sistem = 1 baris). |
-| **Filter** | `FOR ALL ENTRIES IN lt_aufk_pre WHERE objnr = …-objnr AND inact = ' '` → hanya status **aktif** (belum dibatalkan). |
-| **Field dipakai** | `objnr, stat` (kode status internal, format `I00xx`). |
-| **Pemetaan kode** | Diringkas ke `code` 1–4 (prioritas tertinggi menang): |
-
-| `JEST-STAT` | Arti | `code` | Label UI | Kelas CSS |
-|-------------|------|:------:|----------|-----------|
-| (default, mis. I0001 CRTD) | Dibuat | 1 | Dibuat | `ord-crt` |
-| `I0002` (REL) | Direlease/diproses | 2 | Diproses | `ord-rel` |
-| `I0009` (CNF) | Dikonfirmasi | 3 | Dikonfirmasi | `ord-cnf` |
-| `I0045` (TECO) | Selesai teknis | 4 | Selesai Teknis | `ord-teco` |
+### 2.4 AFPO → AUFK — Jembatan ke Status
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Logika** | Loop JEST per order: `I0002→code≥2`, `I0009→code≥3`, `I0045→code=4`; default 1. Disimpan di `lt_ord_st` per `aufnr`. |
-| **Output UI** | Tag status berwarna di kolom Progres (untuk `aufnr` wakil saja). |
-| **⚠️ Verifikasi** | Kode status internal bergantung customizing. Cek kembali bila label tidak sesuai (lihat catatan `central-storage-known-issues`). |
+| **Relasi** | `AUFK-AUFNR = AFPO-AUFNR`. **Field**: `aufnr, objnr`. Murni jembatan ke JEST. |
 
-### 2.6 VBAP → MAST — Header BOM Material Jadi
+### 2.5 AUFK → JEST — Status Sistem Order
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Relasi** | `MAST-MATNR = VBAP-MATNR` (material jadi). |
-| **Filter** | `FOR ALL ENTRIES IN lt_local_item WHERE matnr = …-matnr AND werks = '2000'` (guard `IF lt_local_item IS NOT INITIAL`). |
-| **Field dipakai** | `matnr, stlnr` (nomor BOM). |
-| **Kardinalitas** | 1 material : 0..n BOM (`stlnr`) di plant. |
-| **Output UI** | Tidak langsung; `stlnr` → kunci ke STPO. Bila tak ada → "BOM belum terpasang di Plant 2000." |
+| **Relasi** | `JEST-OBJNR = AUFK-OBJNR`, **filter** `inact = ' '` (status aktif). |
+| **Field** | `objnr, stat`. |
+| **Pemetaan** | `I0002→Diproses(REL)` `I0009→Dikonfirmasi(CNF)` `I0045→Selesai Teknis(TECO)`, default `Dibuat(CRTD)`; prioritas tertinggi menang (`code` 1–4). |
+| **Output UI** | Tag status di kolom Progres (order wakil) **dan** field **System Status** pada expand komponen (per order komponen). |
 
-### 2.7 MAST → STPO — Komponen BOM
-
-| Aspek | Keterangan |
-|-------|------------|
-| **Relasi** | `STPO-STLNR = MAST-STLNR`. |
-| **Filter** | `FOR ALL ENTRIES IN lt_mast_pre WHERE stlnr = …-stlnr`. |
-| **Field dipakai** | `stlnr, idnrk` (material komponen), `menge` (kuantitas), `meins` (UoM komponen). |
-| **Kardinalitas** | 1 BOM : n komponen. |
-| **Output UI** | Tabel **Daftar Komponen BOM** (baris ekspandabel per item): kolom Material Komponen (`idnrk`), Nama (dari MAKT), Kuantitas (`menge meins`). |
-| **⚠️ Guard A1** | Seluruh blok MAKT/MARD/EKPO dibungkus `IF lt_stpo_pre IS NOT INITIAL` — bila STPO kosong, FAE tanpa guard akan menarik SELURUH tabel. |
-| **Driver unik (C4)** | `idnrk` di-dedup ke `lt_comp` (SORT + DELETE ADJACENT DUPLICATES) sebagai driver FAE untuk MAKT/MARD/EKPO agar tidak ada baris duplikat. |
-
-### 2.8 STPO → MAKT — Nama/Deskripsi Komponen
+### 2.6 AFPO → RESB — Komponen Order Produksi (SUMBER UTAMA, gaya COOIS)
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Relasi** | `MAKT-MATNR = STPO-IDNRK`. |
-| **Filter** | `FOR ALL ENTRIES IN lt_comp WHERE matnr = …-idnrk AND spras = sy-langu`. |
-| **Field dipakai** | `matnr, maktx` (teks material pada bahasa login). |
-| **Output UI** | Kolom **Nama Material** di tabel BOM + `data-name` pada tooltip material. |
+| **Relasi** | `RESB-AUFNR = AFPO-AUFNR` — komponen/reservasi milik order produksi. |
+| **Kardinalitas** | 1 order : n komponen. Satu item bisa punya >1 order → komponen ditampilkan per order. |
+| **Filter** | `FOR ALL ENTRIES IN lt_afpo_pre WHERE aufnr = …-aufnr AND xloek = ' '` (item tidak dihapus). Baris `matnr` kosong dibuang (`DELETE … WHERE matnr IS INITIAL`). |
+| **Field** | `aufnr, matnr` (komponen), `werks, lgort` (Sloc), `bdmng` (kuantitas kebutuhan), `meins`. |
+| **Output UI (baris)** | Kolom: **Material Komponen** (`matnr`), **Material** (induk = `VBAP-MATNR`), **Nama Material** (MAKT), **Sloc - Nama Sloc** (`lgort` + T001L). |
+| **Output UI (expand)** | **System Status** (JEST order), **Kuantitas** (`bdmng meins`), **Basic Start** (`AFKO-GSTRP`), **Basic Finish** (`AFKO-GLTRP`), **Actual Finish** (`AFKO-GETRI`). |
+| **Catatan** | Hanya diisi untuk item yang punya order (`AUFNR` ada). Bila order tidak punya komponen RESB → "Tidak ada komponen order produksi". |
 
-### 2.9 STPO → MARD — Stok Komponen (agregat per material)
-
-| Aspek | Keterangan |
-|-------|------------|
-| **Relasi** | `MARD-MATNR = STPO-IDNRK`. |
-| **Filter** | `FOR ALL ENTRIES IN lt_comp WHERE matnr = …-idnrk AND werks = '2000' AND labst > 0`. |
-| **Field dipakai** | `matnr, labst` (stok unrestricted). |
-| **Agregasi** | MARD bergranularitas **storage location (LGORT)** → banyak baris per material. `labst` **DIJUMLAH per material** via `COLLECT` ke `lt_mard_agg`. |
-| **Output UI** | `data-stock` pada tooltip material → indikator "✓ Cukup / ⚠ Kurang Stok" (dibanding `menge` BOM, di JS). |
-
-### 2.10 STPO → EKPO — Open Purchase Order
+### 2.7 RESB → T001L — Nama Storage Location
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Relasi** | `EKPO-MATNR = STPO-IDNRK`. |
-| **Filter** | `FOR ALL ENTRIES IN lt_comp WHERE matnr = …-idnrk AND werks = '2000' AND loekz = ' ' AND elikz = ' '` → item PO **aktif** (tidak dihapus & belum lengkap penerimaannya). |
-| **Field dipakai** | `ebeln, ebelp, matnr`. |
-| **Kardinalitas** | 1 material : n item PO. |
-| **Peran** | Menyediakan `ebeln`+`ebelp` sebagai kunci ke jadwal pengiriman (EKET). |
+| **Relasi** | `T001L-WERKS = RESB-WERKS` **dan** `T001L-LGORT = RESB-LGORT`. |
+| **Filter** | `FOR ALL ENTRIES IN lt_resb WHERE werks = …-werks AND lgort = …-lgort` (guard `IF lt_resb IS NOT INITIAL`). |
+| **Field** | `werks, lgort, lgobe` (deskripsi Sloc). |
+| **Output UI** | Kolom "Sloc - Nama Sloc" = `lgort && ' - ' && lgobe`. `lgort` kosong → "-"; tanpa nama → hanya kode. |
 
-### 2.11 EKPO → EKET — Jadwal Pengiriman & Qty Terbuka
+### 2.8 VBAP → MAST — Header BOM Master (FALLBACK)
 
 | Aspek | Keterangan |
 |-------|------------|
-| **Relasi** | `EKET-EBELN = EKPO-EBELN` **dan** `EKET-EBELP = EKPO-EBELP`. |
-| **Filter** | `FOR ALL ENTRIES IN lt_ekpo_pre WHERE ebeln = …-ebeln AND ebelp = …-ebelp` (guard `IF lt_ekpo_pre IS NOT INITIAL`). |
-| **Field dipakai** | `ebeln, ebelp, eindt, menge, wemng`. |
-| **Perhitungan** | Per baris EKET: **sisa = `menge − wemng`**; lewati bila ≤ 0. Lalu di-agregasi **per material** (via `lt_ekpo_pre` untuk mendapat `matnr`): `qty` dijumlah, `eta` = `EINDT` **paling awal**. Hasil di `lt_open_agg`. |
-| **Output UI** | `data-po` (total qty terbuka) + `data-eta` (DD/MM) pada tooltip material → baris "Open PO masuk … ETA …". |
+| **Relasi** | `MAST-MATNR = VBAP-MATNR`, **filter** `werks = '2000'`. **Field**: `matnr, stlnr`. |
+| **Peran** | Hanya untuk item **tanpa order**. `stlnr` → STPO. |
+
+### 2.9 MAST → STPO — Komponen BOM Master (FALLBACK)
+
+| Aspek | Keterangan |
+|-------|------------|
+| **Relasi** | `STPO-STLNR = MAST-STLNR`. **Field**: `stlnr, idnrk, menge, meins`. |
+| **Output UI** | Tabel fallback 3 kolom: Material Komponen (`idnrk`), Nama (MAKT), Kuantitas (`menge meins`) + tooltip stok/PO. |
+| **Driver** | `idnrk` di-dedup ke `lt_comp` → driver MARD/EKPO/EKET. |
+
+### 2.10 MAKT — Nama Material (RESB ∪ STPO)
+
+| Aspek | Keterangan |
+|-------|------------|
+| **Relasi** | `MAKT-MATNR = (RESB-MATNR ∪ STPO-IDNRK)`, **filter** `spras = sy-langu`. |
+| **Driver** | `lt_makt_drv` = gabungan unik komponen RESB + komponen STPO → satu SELECT MAKT untuk kedua jalur. |
+| **Output UI** | Kolom **Nama Material** di kedua tabel. |
+
+### 2.11 STPO → MARD — Stok Komponen (FALLBACK, agregat)
+
+| Aspek | Keterangan |
+|-------|------------|
+| **Relasi** | `MARD-MATNR = STPO-IDNRK`, **filter** `werks = '2000' AND labst > 0`. |
+| **Agregasi** | `labst` **dijumlah per material** (Σ lintas storage location) via `COLLECT`. |
+| **Output UI** | `data-stock` tooltip material (jalur fallback). |
+
+### 2.12 STPO → EKPO → EKET — Open PO + ETA (FALLBACK)
+
+| Aspek | Keterangan |
+|-------|------------|
+| **EKPO** | `EKPO-MATNR = STPO-IDNRK`, filter `werks=2000, loekz=' ', elikz=' '`. Field `ebeln, ebelp, matnr`. |
+| **EKET** | `EKET-EBELN+EBELP = EKPO-EBELN+EBELP`. Sisa = `menge − wemng` (>0); agregat per material: `Σ qty`, `eta` = `EINDT` paling awal. |
+| **Output UI** | `data-po` + `data-eta` tooltip material (jalur fallback). |
 
 ---
 
 ## 3. Tabel Kunci Join (ringkas)
 
-| Dari | Ke | Kunci Join | Filter Tambahan | Kardinalitas |
-|------|----|-----------|-----------------|:------------:|
-| (input) | VBAP | `vbeln` | `werks = 2000` | 1 : n item |
-| VBAP | AFPO | `vbeln=kdauf`, `posnr=kdpos` | — | 1 : 0..n order |
-| AFPO | AFKO | `aufnr` | — | 1 : 1 |
-| AFPO | AUFK | `aufnr` | — | 1 : 1 |
-| AUFK | JEST | `objnr` | `inact = ' '` | 1 : n status |
-| VBAP | MAST | `matnr` | `werks = 2000` | 1 : 0..n BOM |
-| MAST | STPO | `stlnr` | — | 1 : n komponen |
-| STPO | MAKT | `idnrk=matnr` | `spras = sy-langu` | 1 : 1 |
-| STPO | MARD | `idnrk=matnr` | `werks = 2000`, `labst > 0` | 1 : n lgort → Σ |
-| STPO | EKPO | `idnrk=matnr` | `werks = 2000`, `loekz=' '`, `elikz=' '` | 1 : n PO item |
-| EKPO | EKET | `ebeln`+`ebelp` | sisa `menge−wemng > 0` | 1 : n schedule → Σ |
+| Dari | Ke | Kunci Join | Filter Tambahan | Kardinalitas | Jalur |
+|------|----|-----------|-----------------|:------------:|:-----:|
+| (input) | VBAP | `vbeln` | `werks=2000` | 1 : n item | inti |
+| VBAP | AFPO | `vbeln=kdauf`, `posnr=kdpos` | — | 1 : 0..n | inti |
+| AFPO | AFKO | `aufnr` | — | 1 : 1 | inti |
+| AFPO | AUFK | `aufnr` | — | 1 : 1 | inti |
+| AUFK | JEST | `objnr` | `inact=' '` | 1 : n | inti |
+| AFPO | RESB | `aufnr` | `xloek=' '`, `matnr<>kosong` | 1 : n komponen | **COOIS** |
+| RESB | T001L | `werks`+`lgort` | — | 1 : 1 | **COOIS** |
+| (RESB∪STPO) | MAKT | `matnr` / `idnrk` | `spras=sy-langu` | 1 : 1 | inti |
+| VBAP | MAST | `matnr` | `werks=2000` | 1 : 0..n | fallback |
+| MAST | STPO | `stlnr` | — | 1 : n | fallback |
+| STPO | MARD | `idnrk=matnr` | `werks=2000`, `labst>0` | 1 : n → Σ | fallback |
+| STPO | EKPO | `idnrk=matnr` | `werks=2000`, `loekz/elikz=' '` | 1 : n | fallback |
+| EKPO | EKET | `ebeln`+`ebelp` | sisa `menge−wemng>0` | 1 : n → Σ | fallback |
 
 ---
 
-## 4. Agregasi & Aturan Turunan
+## 4. Pemetaan Field → Tampilan
 
-1. **AFPO per item** (`kdauf`+`kdpos`): `Σ psmng`, `Σ wemng`. Status item via `ZCL_CS_UTIL=>item_status`: `psmng>0 & GR≥target`→Selesai; `psmng>0 & GR<target`→Proses; lainnya→Belum Produksi.
-2. **AUFNR wakil**: order dengan rasio `wemng/psmng` terendah (paling belum selesai) → status & target yang ditampilkan.
-3. **MARD per material**: `Σ labst` lintas storage location.
-4. **EKET per material**: `Σ (menge − wemng)` untuk yang sisa > 0; `eta` = `eindt` paling awal.
-5. **JEST**: prioritas status tertinggi yang aktif menang (TECO > CNF > REL > CRTD).
+### 4.1 Tabel Item (atas) — tidak berubah
 
----
+| Kolom | Sumber |
+|-------|--------|
+| Item / Material # / Deskripsi | `VBAP-POSNR / MATNR / ARKTX` |
+| Qty SO | `VBAP-KWMENG` + `VBAP-VRKME` |
+| Target | `Σ AFPO-PSMNG` + `AFPO-MEINS` |
+| Hasil GR | `Σ AFPO-WEMNG` + `AFPO-MEINS` |
+| Progres + tag status + Target finish | `Σwemng/Σpsmng`; `JEST` (order wakil); `AFKO-GLTRP` |
 
-## 5. Guard & Edge Case (penting saat tracking)
+### 4.2 Daftar Komponen Order (RESB / COOIS) — baris utama
 
-| Kondisi | Penanganan di kode |
-|---------|--------------------|
-| `vbeln` kosong/invalid | Render "Parameter Tidak Valid", tanpa query. |
-| VBAP kosong | Tabel menampilkan "Tidak ada item produksi untuk Sales Order ini." |
-| AFPO kosong (item tanpa order) | Item tampil "No Prod"; AFKO/AUFK/JEST tidak dijalankan (`IF lt_afpo_pre IS NOT INITIAL`). |
-| STPO kosong (material punya MAST tanpa komponen) | MAKT/MARD/EKPO **di-skip** (`IF lt_stpo_pre IS NOT INITIAL`) — **wajib**, mencegah FAE menarik seluruh tabel (bug A1). |
-| EKPO kosong | EKET tidak dijalankan (`IF lt_ekpo_pre IS NOT INITIAL`). |
-| Komponen tanpa MAKT/MARD/EKPO | Nama kosong / stok 0 / "Tidak ada" open PO — semua di-`READ … BINARY SEARCH` dengan cek `sy-subrc`. |
-| BOM tidak ada untuk item | Baris ekspandabel menampilkan "BOM belum terpasang di Plant 2000." |
+| Kolom | Sumber | Catatan |
+|-------|--------|---------|
+| **Material Komponen** | `RESB-MATNR` | — |
+| **Material** | `VBAP-MATNR` (induk) | Material jadi yang diproduksi order. |
+| **Nama Material** | `MAKT-MAKTX` (by RESB-MATNR) | — |
+| **Sloc - Nama Sloc** | `RESB-LGORT` + `T001L-LGOBE` | "kode - nama"; kosong → "-". |
 
----
+### 4.3 Expand komponen (klik baris)
 
-## 6. Pemetaan Field → Kolom Tampilan
+| Field | Sumber | Catatan |
+|-------|--------|---------|
+| **System Status** | `JEST` (order RESB-AUFNR) | Label Dibuat/Diproses/Dikonfirmasi/Selesai Teknis. |
+| **Kuantitas** | `RESB-BDMNG` + `RESB-MEINS` | Kuantitas kebutuhan komponen. |
+| **Basic Start Date** | `AFKO-GSTRP` | "-" bila kosong. |
+| **Basic Finish Date** | `AFKO-GLTRP` | "-" bila kosong. |
+| **Actual Finish Date** | `AFKO-GETRI` | "-" bila order belum selesai. |
 
-| Kolom / Elemen UI | Sumber Field | Catatan |
-|-------------------|--------------|---------|
-| Item | `VBAP-POSNR` | — |
-| Material # | `VBAP-MATNR` | Material jadi (header BOM). |
-| Deskripsi Komponen | `VBAP-ARKTX` | — |
-| **Qty SO** | `VBAP-KWMENG` + `VBAP-VRKME` | UoM jual. |
-| **Target** | `Σ AFPO-PSMNG` + `AFPO-MEINS` | UoM dasar. |
-| **Hasil GR** | `Σ AFPO-WEMNG` + `AFPO-MEINS` | UoM dasar. |
-| Progres (bar + %) | `Σ wemng / Σ psmng × 100` | Cap 100; warna dari `ZCL_CS_UTIL=>prog_bar_class`. |
-| Tag status order | `JEST-STAT` (via AUFK/objnr) | Order wakil. |
-| Target finish | `AFKO-GLTRP` | Order wakil; format `fmt_date`. |
-| BOM: Material Komponen | `STPO-IDNRK` | `data-matnr` tooltip. |
-| BOM: Nama Material | `MAKT-MAKTX` | `data-name` tooltip. |
-| BOM: Kuantitas | `STPO-MENGE` + `STPO-MEINS` | — |
-| Tooltip: Stok | `Σ MARD-LABST` | `data-stock`. |
-| Tooltip: Open PO | `Σ (EKET-MENGE − EKET-WEMNG)` | `data-po`. |
-| Tooltip: ETA | `min(EKET-EINDT)` | `data-eta`, format DD/MM. |
+### 4.4 Tabel Komponen BOM Master (fallback) — item tanpa order
+
+| Kolom | Sumber |
+|-------|--------|
+| Material Komponen | `STPO-IDNRK` (+ tooltip stok/PO) |
+| Nama Material | `MAKT-MAKTX` |
+| Kuantitas | `STPO-MENGE` + `STPO-MEINS` |
+| Tooltip: Stok / Open PO / ETA | `ΣMARD-LABST` / `Σ(EKET-MENGE−WEMNG)` / `min(EKET-EINDT)` |
 
 ---
 
-## 7. Catatan Performa
+## 5. Guard & Edge Case
 
-- Total query endpoint ini: **VBAP, AFPO, AFKO, AUFK, JEST, MAST, STPO, MAKT, MARD, EKPO, EKET** (±11). Karena berat, **sengaja dipisah** dari `monitoring_detail.htm` dan dimuat lazy hanya saat tab Item & BOM dibuka (cache `soBomCache` per `vbeln`).
-- Seluruh FAE memakai **driver unik** (`lt_comp` untuk idnrk) dan **guard non-initial** agar tidak full-scan.
-- Tabel internal disusun `SORT … BINARY SEARCH` untuk join in-memory O(log n).
+| Kondisi | Penanganan |
+|---------|------------|
+| `vbeln` kosong | "Parameter Tidak Valid", tanpa query. |
+| VBAP kosong | "Tidak ada item produksi untuk Sales Order ini." |
+| Item punya order (`AUFNR` ada) | Jalur **RESB**. Bila order tanpa komponen → "Tidak ada komponen order produksi (RESB)". |
+| Item tanpa order | Jalur **fallback** MAST/STPO. Bila BOM tidak ada → "BOM belum terpasang di Plant 2000." |
+| AFPO kosong total | AFKO/AUFK/JEST/RESB di-skip (`IF lt_afpo_pre IS NOT INITIAL`); semua item → fallback. |
+| RESB `lgort` kosong | Kolom Sloc → "-". |
+| AFKO tanggal `00000000` | Field expand → "-". |
+| STPO kosong | MARD/EKPO/EKET di-skip (`IF lt_stpo_pre IS NOT INITIAL`). |
+| `id` baris komponen | `compdet-<vbeln>-c<seq>`; `seq` counter global → unik per response. Di-toggle JS `toggleCompRow`. |
 
 ---
 
-*Lihat juga: `erd.md` (ERD umum aplikasi), `update-monitoring.md` (strategi & alasan pemisahan endpoint), `central-storage-known-issues` (status verifikasi kode status JEST).*
+## 6. Catatan Performa
+
+- Query: **VBAP, AFPO, AFKO, AUFK, JEST, RESB, T001L, MAST, STPO, MAKT, MARD, EKPO, EKET** (±13). Endpoint sengaja **lazy-load** (dipanggil saat tab Item & BOM dibuka) + cache `soBomCache` per `vbeln`.
+- RESB di-FAE atas daftar `aufnr` (auto-dedup). T001L & MAKT pakai driver unik. MARD/EKPO/EKET hanya untuk fallback (driver STPO).
+- Tabel internal `SORT … BINARY SEARCH` (join in-memory O(log n)); render komponen via control-break atas `lt_afpo_pre` (per order) lalu `lt_resb` (per komponen).
+
+---
+
+*Lihat juga: `erd.md` (ERD umum), `update-monitoring.md` (strategi & pemisahan endpoint), `central-storage-known-issues` (verifikasi kode status JEST & deployment).*

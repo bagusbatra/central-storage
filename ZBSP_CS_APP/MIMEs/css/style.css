@@ -331,6 +331,19 @@ canvas { display: block; max-width: 100%; }
 /* Placeholder tab Item & BOM sebelum dimuat lazy (monitoring_bom.htm) */
 .bom-lazy-hint { padding: 28px; text-align: center; color: #9ca3af; font-size: 0.9rem; }
 
+/* ===== Daftar Komponen Order Produksi gaya COOIS (RESB) ===== */
+.cois-table .mat-code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 0.82rem; color: #0f172a; }
+.clickable-comp-row { cursor: pointer; }
+.clickable-comp-row:hover { background: #eef2ff; }
+.comp-detail-row > td { padding: 0 12px 8px 12px; background: #f8fafc; }
+.comp-detail {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px; padding: 12px 14px; border: 1px dashed #cbd5e1; border-radius: 6px;
+}
+.cd-cell { display: flex; flex-direction: column; gap: 3px; }
+.cd-lbl { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+.cd-val { font-size: 0.86rem; font-weight: 600; color: #1e293b; }
+
 /* ===== RESPONSIVE — tablet & mobile ===== */
 @media (max-width: 900px) {
   .chart-grid { display: block; }

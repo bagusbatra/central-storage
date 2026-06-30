@@ -6,12 +6,17 @@
 *& Returns HTML fragment isi tab "Item & BOM" saja (tanpa wrapper pane).
 *&
 *& Dimuat LAZY oleh js.js loadBOM() saat pengguna pertama kali mengklik tab
-*& Item & BOM, sehingga rantai berat (AFKO/AUFK/JEST + MAST→STPO→MAKT→MARD→
-*& EKPO→EKET) tidak menghambat tampil awal detail. Lihat update-monitoring.md.
+*& Item & BOM, sehingga rantai berat tidak menghambat tampil awal detail.
 *&
 *& Progres per item memakai AFPO yang DIAGREGASI per item (1 item bisa punya
 *& >1 order produksi). Tag status order memakai order WAKIL = order paling
-*& belum selesai (rasio GR/target terendah) agar pekerjaan tersisa terlihat.
+*& belum selesai (rasio GR/target terendah).
+*&
+*& Daftar Komponen (gaya COOIS): untuk item yang PUNYA order produksi, komponen
+*& dibaca dari RESB (komponen/reservasi order) + T001L (nama Sloc), dengan detail
+*& expand per komponen (status sistem, kuantitas, basic start/finish, actual
+*& finish dari AFKO). Untuk item TANPA order → fallback BOM master (MAST/STPO)
+*& dengan tooltip stok/PO (MARD/EKPO/EKET). Lihat erd_bom.md & update-monitoring.md.
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
 
@@ -28,14 +33,42 @@ TYPES: BEGIN OF ty_local_item,
          aufnr   TYPE afpo-aufnr,
        END OF ty_local_item.
 
+" Komponen order produksi (RESB) — sumber utama Daftar Komponen gaya COOIS
+TYPES: BEGIN OF ty_resb,
+         aufnr TYPE resb-aufnr,
+         matnr TYPE resb-matnr,
+         werks TYPE resb-werks,
+         lgort TYPE resb-lgort,
+         bdmng TYPE resb-bdmng,
+         meins TYPE resb-meins,
+       END OF ty_resb.
+" Nama storage location (T001L)
+TYPES: BEGIN OF ty_sloc,
+         werks TYPE t001l-werks,
+         lgort TYPE t001l-lgort,
+         lgobe TYPE t001l-lgobe,
+       END OF ty_sloc.
+" Driver unik material untuk MAKT (gabungan komponen RESB + STPO)
+TYPES: BEGIN OF ty_mat,
+         matnr TYPE mara-matnr,
+       END OF ty_mat.
+
 DATA: lt_local_item TYPE TABLE OF ty_local_item,
       lt_temp_vbap  TYPE TABLE OF vbap,
       lt_afpo_pre   TYPE TABLE OF afpo,
       lt_afko_pre   TYPE TABLE OF afko,
       ls_item_row   TYPE ty_local_item,
       ls_afpo_row   TYPE afpo,
+      ls_afpo_ord   TYPE afpo,
       ls_afko_row   TYPE afko,
       ls_vbap_row   TYPE vbap.
+
+DATA: lt_resb       TYPE TABLE OF ty_resb,
+      ls_resb       TYPE ty_resb,
+      lt_sloc       TYPE TABLE OF ty_sloc,
+      ls_sloc       TYPE ty_sloc,
+      lt_makt_drv   TYPE TABLE OF ty_mat,
+      ls_makt_drv   TYPE ty_mat.
 
 DATA: lv_req_vb      TYPE string,
       lv_vbeln       TYPE vbak-vbeln,
@@ -51,6 +84,18 @@ DATA: lv_req_vb      TYPE string,
       lv_afpo_idx    TYPE i,
       lv_ratio       TYPE p DECIMALS 4,
       lv_best_ratio  TYPE p DECIMALS 4.
+
+" Variabel render komponen RESB
+DATA: lv_comp_seq    TYPE i,
+      lv_has_comp    TYPE abap_bool,
+      lv_ord_idx     TYPE i,
+      lv_resb_idx    TYPE i,
+      lv_sloc_disp   TYPE string,
+      lv_cstat_lbl   TYPE string,
+      lv_cstat_cls   TYPE string,
+      lv_bstart      TYPE string,
+      lv_bfin        TYPE string,
+      lv_afin        TYPE string.
 
 TYPES: BEGIN OF ty_mard_agg,
          matnr TYPE mara-matnr,
@@ -139,8 +184,8 @@ IF lv_req_vb IS NOT INITIAL.
     WHERE vbeln = lv_vbeln
       AND werks = lc_plant.
 
-  " 2. AFPO — termasuk AUFNR untuk join ke AFKO/status. Disimpan mentah (per
-  "    order) agar bisa: (a) dijumlah per item, (b) memilih order wakil.
+  " 2. AFPO — termasuk AUFNR. Disimpan mentah (per order) untuk: (a) dijumlah
+  "    per item, (b) memilih order wakil, (c) driver RESB & AFKO/AUFK/JEST.
   IF lt_temp_vbap IS NOT INITIAL.
     SELECT kdauf kdpos psmng wemng meins aufnr FROM afpo
       INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
@@ -150,17 +195,16 @@ IF lv_req_vb IS NOT INITIAL.
     SORT lt_afpo_pre BY kdauf kdpos.
   ENDIF.
 
-  " 3. AFKO — tanggal target finish (GLTRP). Status sistem dibaca dari JEST (3b).
+  " 3. AFKO — tanggal basic start (GSTRP), basic finish (GLTRP), actual finish
+  "    (GETRI). Status sistem dibaca dari JEST (3b).
   IF lt_afpo_pre IS NOT INITIAL.
-    SELECT aufnr gltrp FROM afko
+    SELECT aufnr gstrp gltrp getri FROM afko
       INTO CORRESPONDING FIELDS OF TABLE lt_afko_pre
       FOR ALL ENTRIES IN lt_afpo_pre
       WHERE aufnr = lt_afpo_pre-aufnr.
     SORT lt_afko_pre BY aufnr.
 
     " 3b. Status sistem order: AUFK (objnr) -> JEST (status aktif).
-    "     AFKO-GSTRS adalah TANGGAL, bukan teks status — jadi status dibaca
-    "     dari status manajemen di JEST (status sistem internal).
     SELECT aufnr objnr FROM aufk
       INTO CORRESPONDING FIELDS OF TABLE lt_aufk_pre
       FOR ALL ENTRIES IN lt_afpo_pre
@@ -188,11 +232,29 @@ IF lv_req_vb IS NOT INITIAL.
       ENDLOOP.
       SORT lt_ord_st BY aufnr.
     ENDIF.
+
+    " 3c. RESB — komponen/reservasi seluruh order produksi item ini (gaya COOIS).
+    SELECT aufnr matnr werks lgort bdmng meins FROM resb
+      INTO CORRESPONDING FIELDS OF TABLE lt_resb
+      FOR ALL ENTRIES IN lt_afpo_pre
+      WHERE aufnr = lt_afpo_pre-aufnr
+        AND xloek = ' '.
+    DELETE lt_resb WHERE matnr IS INITIAL.
+    SORT lt_resb BY aufnr matnr.
+
+    " 3d. Nama storage location (T001L) untuk kolom "Sloc - Nama Sloc"
+    IF lt_resb IS NOT INITIAL.
+      SELECT werks lgort lgobe FROM t001l
+        INTO CORRESPONDING FIELDS OF TABLE lt_sloc
+        FOR ALL ENTRIES IN lt_resb
+        WHERE werks = lt_resb-werks
+          AND lgort = lt_resb-lgort.
+      SORT lt_sloc BY werks lgort.
+    ENDIF.
   ENDIF.
 
   " 4. Gabungkan VBAP + AFPO: psmng/wemng DIJUMLAH per item; AUFNR wakil =
-  "    order dengan rasio GR/target TERENDAH (paling belum selesai). psmng=0
-  "    dianggap rasio 0 (belum produksi → paling perlu perhatian).
+  "    order dengan rasio GR/target TERENDAH (paling belum selesai).
   LOOP AT lt_temp_vbap INTO ls_vbap_row.
     CLEAR ls_item_row.
     ls_item_row-vbeln  = ls_vbap_row-vbeln.
@@ -213,7 +275,6 @@ IF lv_req_vb IS NOT INITIAL.
         ENDIF.
         ls_item_row-psmng = ls_item_row-psmng + ls_afpo_row-psmng.
         ls_item_row-wemng = ls_item_row-wemng + ls_afpo_row-wemng.
-        " Satuan dasar (MEINS) sama untuk semua order produksi item → ambil saja
         IF ls_item_row-meins IS INITIAL. ls_item_row-meins = ls_afpo_row-meins. ENDIF.
         IF ls_afpo_row-psmng > 0.
           lv_ratio = ls_afpo_row-wemng / ls_afpo_row-psmng.
@@ -229,7 +290,7 @@ IF lv_req_vb IS NOT INITIAL.
     APPEND ls_item_row TO lt_local_item.
   ENDLOOP.
 
-  " 5. BOM: MAST → STPO → MAKT (binary search ready) + MARD + EKPO
+  " 5. BOM master (MAST → STPO) — fallback untuk item TANPA order produksi.
   IF lt_local_item IS NOT INITIAL.
     SELECT matnr stlnr FROM mast
       INTO CORRESPONDING FIELDS OF TABLE lt_mast_pre
@@ -244,88 +305,92 @@ IF lv_req_vb IS NOT INITIAL.
         FOR ALL ENTRIES IN lt_mast_pre
         WHERE stlnr = lt_mast_pre-stlnr.
       SORT lt_stpo_pre BY stlnr.
+    ENDIF.
+  ENDIF.
 
-      " A1: guard FOR ALL ENTRIES. Jika STPO kosong (material punya MAST tapi
-      " tanpa komponen), FAE tanpa guard akan menarik SELURUH MAKT/MARD/EKPO.
-      IF lt_stpo_pre IS NOT INITIAL.
-        " C4: driver komponen unik (idnrk) untuk MAKT/MARD/EKPO — hindari FAE
-        "     dengan banyak baris duplikat (lt_stpo_pre terurut BY stlnr, jadi
-        "     tidak bisa di-dedup in-place tanpa merusak binary search BOM).
-        REFRESH lt_comp.
-        LOOP AT lt_stpo_pre INTO ls_stpo_wk.
-          ls_comp-idnrk = ls_stpo_wk-idnrk.
-          APPEND ls_comp TO lt_comp.
-        ENDLOOP.
-        SORT lt_comp BY idnrk.
-        DELETE ADJACENT DUPLICATES FROM lt_comp COMPARING idnrk.
+  " 6. MAKT — nama material untuk SEMUA komponen (RESB ∪ STPO) sekaligus.
+  REFRESH lt_makt_drv.
+  LOOP AT lt_resb INTO ls_resb.
+    ls_makt_drv-matnr = ls_resb-matnr. APPEND ls_makt_drv TO lt_makt_drv.
+  ENDLOOP.
+  LOOP AT lt_stpo_pre INTO ls_stpo_wk.
+    ls_makt_drv-matnr = ls_stpo_wk-idnrk. APPEND ls_makt_drv TO lt_makt_drv.
+  ENDLOOP.
+  SORT lt_makt_drv BY matnr.
+  DELETE ADJACENT DUPLICATES FROM lt_makt_drv COMPARING matnr.
+  IF lt_makt_drv IS NOT INITIAL.
+    SELECT matnr maktx FROM makt
+      INTO CORRESPONDING FIELDS OF TABLE lt_makt_pre
+      FOR ALL ENTRIES IN lt_makt_drv
+      WHERE matnr = lt_makt_drv-matnr
+        AND spras = sy-langu.
+    SORT lt_makt_pre BY matnr.
+  ENDIF.
 
-        SELECT matnr maktx FROM makt
-          INTO CORRESPONDING FIELDS OF TABLE lt_makt_pre
-          FOR ALL ENTRIES IN lt_comp
-          WHERE matnr = lt_comp-idnrk
-            AND spras = sy-langu.
-        SORT lt_makt_pre BY matnr.
+  " 7. MARD (stok) + EKPO/EKET (open PO) — hanya untuk fallback BOM master.
+  IF lt_stpo_pre IS NOT INITIAL.
+    REFRESH lt_comp.
+    LOOP AT lt_stpo_pre INTO ls_stpo_wk.
+      ls_comp-idnrk = ls_stpo_wk-idnrk.
+      APPEND ls_comp TO lt_comp.
+    ENDLOOP.
+    SORT lt_comp BY idnrk.
+    DELETE ADJACENT DUPLICATES FROM lt_comp COMPARING idnrk.
 
-        SELECT matnr labst FROM mard
-          INTO CORRESPONDING FIELDS OF TABLE lt_mard_raw
-          FOR ALL ENTRIES IN lt_comp
-          WHERE matnr = lt_comp-idnrk
-            AND werks = lc_plant
-            AND labst > 0.
-        LOOP AT lt_mard_raw INTO ls_mard_raw.
-          ls_mard_agg-matnr = ls_mard_raw-matnr.
-          ls_mard_agg-labst = ls_mard_raw-labst.
-          COLLECT ls_mard_agg INTO lt_mard_agg.
-        ENDLOOP.
-        SORT lt_mard_agg BY matnr.
+    SELECT matnr labst FROM mard
+      INTO CORRESPONDING FIELDS OF TABLE lt_mard_raw
+      FOR ALL ENTRIES IN lt_comp
+      WHERE matnr = lt_comp-idnrk
+        AND werks = lc_plant
+        AND labst > 0.
+    LOOP AT lt_mard_raw INTO ls_mard_raw.
+      ls_mard_agg-matnr = ls_mard_raw-matnr.
+      ls_mard_agg-labst = ls_mard_raw-labst.
+      COLLECT ls_mard_agg INTO lt_mard_agg.
+    ENDLOOP.
+    SORT lt_mard_agg BY matnr.
 
-        " A7: Open PO + ETA. EKPO = item PO aktif (tidak dihapus / belum lengkap
-        " penerimaannya), EKET = jadwal kirim. Qty terbuka = sisa (menge dijadwalkan
-        " - wemng diterima); ETA = tanggal kirim (EKET-EINDT) paling awal.
-        SELECT ebeln ebelp matnr FROM ekpo
-          INTO CORRESPONDING FIELDS OF TABLE lt_ekpo_pre
-          FOR ALL ENTRIES IN lt_comp
-          WHERE matnr = lt_comp-idnrk
-            AND werks = lc_plant
-            AND loekz = ' '
-            AND elikz = ' '.
-        SORT lt_ekpo_pre BY ebeln ebelp.
+    SELECT ebeln ebelp matnr FROM ekpo
+      INTO CORRESPONDING FIELDS OF TABLE lt_ekpo_pre
+      FOR ALL ENTRIES IN lt_comp
+      WHERE matnr = lt_comp-idnrk
+        AND werks = lc_plant
+        AND loekz = ' '
+        AND elikz = ' '.
+    SORT lt_ekpo_pre BY ebeln ebelp.
 
-        IF lt_ekpo_pre IS NOT INITIAL.
-          SELECT ebeln ebelp eindt menge wemng FROM eket
-            INTO CORRESPONDING FIELDS OF TABLE lt_eket_pre
-            FOR ALL ENTRIES IN lt_ekpo_pre
-            WHERE ebeln = lt_ekpo_pre-ebeln
-              AND ebelp = lt_ekpo_pre-ebelp.
+    IF lt_ekpo_pre IS NOT INITIAL.
+      SELECT ebeln ebelp eindt menge wemng FROM eket
+        INTO CORRESPONDING FIELDS OF TABLE lt_eket_pre
+        FOR ALL ENTRIES IN lt_ekpo_pre
+        WHERE ebeln = lt_ekpo_pre-ebeln
+          AND ebelp = lt_ekpo_pre-ebelp.
 
-          " Agregasi per material: total qty terbuka + ETA paling awal
-          LOOP AT lt_eket_pre INTO ls_eket.
-            lv_rem = ls_eket-menge - ls_eket-wemng.
-            IF lv_rem <= 0. CONTINUE. ENDIF.
-            READ TABLE lt_ekpo_pre INTO ls_ekpo_pre
-              WITH KEY ebeln = ls_eket-ebeln ebelp = ls_eket-ebelp BINARY SEARCH.
-            IF sy-subrc <> 0. CONTINUE. ENDIF.
-            READ TABLE lt_open_agg INTO ls_open_r
-              WITH KEY matnr = ls_ekpo_pre-matnr BINARY SEARCH.
-            IF sy-subrc = 0.
-              lv_agg_idx = sy-tabix.
-              ls_open_r-qty = ls_open_r-qty + lv_rem.
-              IF ls_open_r-eta IS INITIAL OR
-                 ( ls_eket-eindt IS NOT INITIAL AND ls_eket-eindt < ls_open_r-eta ).
-                ls_open_r-eta = ls_eket-eindt.
-              ENDIF.
-              MODIFY lt_open_agg FROM ls_open_r INDEX lv_agg_idx.
-            ELSE.
-              lv_agg_idx = sy-tabix.
-              CLEAR ls_open_r.
-              ls_open_r-matnr = ls_ekpo_pre-matnr.
-              ls_open_r-qty   = lv_rem.
-              ls_open_r-eta   = ls_eket-eindt.
-              INSERT ls_open_r INTO lt_open_agg INDEX lv_agg_idx.
-            ENDIF.
-          ENDLOOP.
+      LOOP AT lt_eket_pre INTO ls_eket.
+        lv_rem = ls_eket-menge - ls_eket-wemng.
+        IF lv_rem <= 0. CONTINUE. ENDIF.
+        READ TABLE lt_ekpo_pre INTO ls_ekpo_pre
+          WITH KEY ebeln = ls_eket-ebeln ebelp = ls_eket-ebelp BINARY SEARCH.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.
+        READ TABLE lt_open_agg INTO ls_open_r
+          WITH KEY matnr = ls_ekpo_pre-matnr BINARY SEARCH.
+        IF sy-subrc = 0.
+          lv_agg_idx = sy-tabix.
+          ls_open_r-qty = ls_open_r-qty + lv_rem.
+          IF ls_open_r-eta IS INITIAL OR
+             ( ls_eket-eindt IS NOT INITIAL AND ls_eket-eindt < ls_open_r-eta ).
+            ls_open_r-eta = ls_eket-eindt.
+          ENDIF.
+          MODIFY lt_open_agg FROM ls_open_r INDEX lv_agg_idx.
+        ELSE.
+          lv_agg_idx = sy-tabix.
+          CLEAR ls_open_r.
+          ls_open_r-matnr = ls_ekpo_pre-matnr.
+          ls_open_r-qty   = lv_rem.
+          ls_open_r-eta   = ls_eket-eindt.
+          INSERT ls_open_r INTO lt_open_agg INDEX lv_agg_idx.
         ENDIF.
-      ENDIF.
+      ENDLOOP.
     ENDIF.
   ENDIF.
 ENDIF.
@@ -411,7 +476,106 @@ ENDIF.
       <tr id="bom-row-<%= lv_vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;">
         <td colspan="7" style="padding: 0 16px 4px 16px;">
           <div class="bom-section-wrapper" id="wrapper-<%= lv_vbeln %>-<%= ls_item_row-posnr %>">
-            <div class="bom-title">Daftar Komponen BOM (MAST/STPO)</div>
+            <% IF ls_item_row-aufnr IS NOT INITIAL. %>
+            <!-- ===== Komponen order produksi (RESB), gaya COOIS ===== -->
+            <div class="bom-title">Daftar Komponen Order Produksi (RESB)</div>
+            <table class="bom-table cois-table">
+              <thead>
+                <tr>
+                  <th style="width: 22%;">Material Komponen</th>
+                  <th style="width: 16%;">Material</th>
+                  <th style="width: 32%;">Nama Material</th>
+                  <th style="width: 30%;">Sloc - Nama Sloc</th>
+                </tr>
+              </thead>
+              <tbody>
+                <%
+                  lv_has_comp = abap_false.
+                  " Telusuri semua order produksi item ini, lalu komponen RESB-nya
+                  READ TABLE lt_afpo_pre TRANSPORTING NO FIELDS
+                    WITH KEY kdauf = ls_item_row-vbeln kdpos = ls_item_row-posnr BINARY SEARCH.
+                  IF sy-subrc = 0.
+                    lv_ord_idx = sy-tabix.
+                    LOOP AT lt_afpo_pre INTO ls_afpo_ord FROM lv_ord_idx.
+                      IF ls_afpo_ord-kdauf <> ls_item_row-vbeln
+                         OR ls_afpo_ord-kdpos <> ls_item_row-posnr.
+                        EXIT.
+                      ENDIF.
+                      " Status sistem + tanggal order ini (dipakai semua komponennya)
+                      CLEAR: ls_ord_st, lv_cstat_lbl, lv_cstat_cls.
+                      READ TABLE lt_ord_st INTO ls_ord_st
+                        WITH KEY aufnr = ls_afpo_ord-aufnr BINARY SEARCH.
+                      CASE ls_ord_st-code.
+                        WHEN 4. lv_cstat_lbl = 'Selesai Teknis'. lv_cstat_cls = 'ord-teco'.
+                        WHEN 3. lv_cstat_lbl = 'Dikonfirmasi'.   lv_cstat_cls = 'ord-cnf'.
+                        WHEN 2. lv_cstat_lbl = 'Diproses'.       lv_cstat_cls = 'ord-rel'.
+                        WHEN OTHERS. lv_cstat_lbl = 'Dibuat'.    lv_cstat_cls = 'ord-crt'.
+                      ENDCASE.
+                      CLEAR: ls_afko_row, lv_bstart, lv_bfin, lv_afin.
+                      READ TABLE lt_afko_pre INTO ls_afko_row
+                        WITH KEY aufnr = ls_afpo_ord-aufnr BINARY SEARCH.
+                      IF sy-subrc = 0.
+                        lv_bstart = zcl_cs_util=>fmt_date( ls_afko_row-gstrp ).
+                        lv_bfin   = zcl_cs_util=>fmt_date( ls_afko_row-gltrp ).
+                        lv_afin   = zcl_cs_util=>fmt_date( ls_afko_row-getri ).
+                      ENDIF.
+                      IF lv_bstart IS INITIAL. lv_bstart = '-'. ENDIF.
+                      IF lv_bfin   IS INITIAL. lv_bfin   = '-'. ENDIF.
+                      IF lv_afin   IS INITIAL. lv_afin   = '-'. ENDIF.
+
+                      READ TABLE lt_resb TRANSPORTING NO FIELDS
+                        WITH KEY aufnr = ls_afpo_ord-aufnr BINARY SEARCH.
+                      IF sy-subrc = 0.
+                        lv_resb_idx = sy-tabix.
+                        LOOP AT lt_resb INTO ls_resb FROM lv_resb_idx.
+                          IF ls_resb-aufnr <> ls_afpo_ord-aufnr. EXIT. ENDIF.
+                          lv_has_comp = abap_true.
+                          lv_comp_seq = lv_comp_seq + 1.
+                          CLEAR lv_makt_text.
+                          READ TABLE lt_makt_pre INTO ls_makt_pre
+                            WITH KEY matnr = ls_resb-matnr BINARY SEARCH.
+                          IF sy-subrc = 0. lv_makt_text = ls_makt_pre-maktx. ENDIF.
+                          " Sloc - Nama Sloc
+                          IF ls_resb-lgort IS INITIAL.
+                            lv_sloc_disp = '-'.
+                          ELSE.
+                            CLEAR ls_sloc.
+                            READ TABLE lt_sloc INTO ls_sloc
+                              WITH KEY werks = ls_resb-werks lgort = ls_resb-lgort BINARY SEARCH.
+                            IF sy-subrc = 0 AND ls_sloc-lgobe IS NOT INITIAL.
+                              lv_sloc_disp = ls_resb-lgort && ' - ' && ls_sloc-lgobe.
+                            ELSE.
+                              lv_sloc_disp = ls_resb-lgort.
+                            ENDIF.
+                          ENDIF.
+                %>
+                <tr class="clickable-comp-row" onclick="toggleCompRow('<%= lv_vbeln %>-c<%= lv_comp_seq %>')">
+                  <td><code class="mat-code"><%= ls_resb-matnr %></code> <span style="font-size:0.7rem; color:#9ca3af;">(Klik detail)</span></td>
+                  <td><%= ls_item_row-matnr %></td>
+                  <td><%= lv_makt_text %></td>
+                  <td><%= lv_sloc_disp %></td>
+                </tr>
+                <tr id="compdet-<%= lv_vbeln %>-c<%= lv_comp_seq %>" class="comp-detail-row" style="display:none;">
+                  <td colspan="4">
+                    <div class="comp-detail">
+                      <div class="cd-cell"><span class="cd-lbl">System Status</span><span class="cd-val"><span class="ord-status-tag <%= lv_cstat_cls %>"><%= lv_cstat_lbl %></span></span></div>
+                      <div class="cd-cell"><span class="cd-lbl">Kuantitas</span><span class="cd-val"><span class="num-fmt"><%= ls_resb-bdmng %></span> <%= ls_resb-meins %></span></div>
+                      <div class="cd-cell"><span class="cd-lbl">Basic Start Date</span><span class="cd-val"><%= lv_bstart %></span></div>
+                      <div class="cd-cell"><span class="cd-lbl">Basic Finish Date</span><span class="cd-val"><%= lv_bfin %></span></div>
+                      <div class="cd-cell"><span class="cd-lbl">Actual Finish Date</span><span class="cd-val"><%= lv_afin %></span></div>
+                    </div>
+                  </td>
+                </tr>
+                <% ENDLOOP. ENDIF. %>
+                <% ENDLOOP. ENDIF. %>
+                <% IF lv_has_comp = abap_false. %>
+                <tr><td colspan="4" style="color:#9ca3af; text-align:center; padding:12px;">Tidak ada komponen order produksi (RESB) untuk item ini.</td></tr>
+                <% ENDIF. %>
+              </tbody>
+            </table>
+            <% ELSE. %>
+            <!-- ===== Fallback: BOM master (MAST/STPO) untuk item tanpa order ===== -->
+            <div class="bom-title">Daftar Komponen BOM Master (MAST/STPO) &#8212; belum ada order produksi</div>
             <table class="bom-table">
               <thead>
                 <tr>
@@ -476,9 +640,7 @@ ENDIF.
                       <%= ls_bom_row-idnrk %>
                     </code>
                   </td>
-                  <!-- nama material -->
                   <td><%= lv_makt_text %></td>
-                  <!-- Kuantitas -->
                   <td style="text-align: right; font-weight:600;"><span class="num-fmt"><%= ls_bom_row-menge %></span> <%= ls_bom_row-meins %></td>
                 </tr>
                 <% ENDLOOP. ENDIF. %>
@@ -487,6 +649,7 @@ ENDIF.
                 <% ENDIF. %>
               </tbody>
             </table>
+            <% ENDIF. %>
           </div>
         </td>
       </tr>

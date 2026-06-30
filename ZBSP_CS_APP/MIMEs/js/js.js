@@ -420,6 +420,13 @@ function viewDetails(vbeln) {
   xhr.send();
 }
 
+/** Toggle baris detail komponen (RESB/COOIS): status, qty, tanggal order. */
+function toggleCompRow(id) {
+  var row = document.getElementById('compdet-' + id);
+  if (!row) return;
+  row.style.display = (row.style.display === 'table-row') ? 'none' : 'table-row';
+}
+
 /** Toggle expand/collapse BOM row (server-rendered, no AJAX) */
 function toggleBOMRow(bomId) {
   var trContainer = document.getElementById('bom-row-' + bomId);
