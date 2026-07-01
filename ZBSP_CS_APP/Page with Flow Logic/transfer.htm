@@ -1,0 +1,383 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Page — Transfer Material 1D00 -> 2KCS (Plant 1000 -> Plant 2000)
+*& Menampilkan material yang PERLU dikirim dari Sloc 1D00 (Plant 1000) ke
+*& Sloc 2KCS (Plant 2000) untuk memenuhi kebutuhan produksi Plant 2000.
+*&
+*& Model REKONSILIASI per material (lihat plan-transfer-1000-2000.md):
+*&   Butuh (sisa kebutuhan produksi 2000)  = Σ(RESB.bdmng − RESB.enmng), open
+*&   Perlu Kirim = max(0, Butuh − Stok 2KCS)   ← inti "yang AKAN dikirim"
+*&   Sudah Dikirim (aktual) = Σ MSEG(mvt 301, 1D00→2KCS) net reversal (SHKZG)
+*&
+*& ASUMSI yang WAJIB diverifikasi (Fase 0) — sesuaikan bila beda di sistem:
+*&   - Movement type transfer  = '301' (lc_mvt_out). Cek MB51.
+*&   - "Belum dikirim" bersumber dari RESB kebutuhan Plant 2000 (Model B).
+*&     Bila ADA reservasi transfer langsung 1D00→2KCS (Model A), ganti filter
+*&     RESB jadi werks=1000/lgort=1D00/bwart IN (301,311).
+*&   - Netting reversal MSEG memakai SHKZG (H keluar, S masuk).
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_src_plant TYPE werks_d VALUE '1000',   " plant sumber
+           lc_src_sloc  TYPE lgort_d VALUE '1D00',   " sloc sumber
+           lc_dst_plant TYPE werks_d VALUE '2000',   " plant tujuan (Central Storage)
+           lc_dst_sloc  TYPE lgort_d VALUE '2KCS',   " sloc tujuan
+           lc_mvt_out   TYPE bwart   VALUE '301',    " gerakan transfer (VERIFIKASI)
+           lc_horizon   TYPE i       VALUE 90.       " horizon histori "Sudah Dikirim" (hari)
+
+TYPES: BEGIN OF ty_need,
+         matnr    TYPE resb-matnr,
+         meins    TYPE resb-meins,
+         need     TYPE resb-bdmng,   " Σ sisa kebutuhan (bdmng−enmng)
+         aufnr    TYPE resb-aufnr,   " order wakil (untuk tautan SO)
+         bdter    TYPE resb-bdter,   " tgl kebutuhan paling awal
+         vbeln    TYPE afpo-kdauf,   " SO terkait (dari aufnr→afpo)
+         stok_dst TYPE mard-labst,   " stok 2KCS
+         stok_src TYPE mard-labst,   " stok 1D00
+         sent     TYPE resb-bdmng,   " sudah dikirim aktual (MSEG, net)
+         last_dt  TYPE d,            " tgl kirim terakhir
+         last_doc TYPE mseg-mblnr,   " dokumen MB1B terakhir
+         perlu    TYPE resb-bdmng,   " perlu kirim = max(0, need−stok_dst)
+         maktx    TYPE makt-maktx,
+         status   TYPE string,
+         st_cls   TYPE string,
+       END OF ty_need.
+
+DATA: lt_need   TYPE SORTED TABLE OF ty_need WITH UNIQUE KEY matnr,
+      lt_disp   TYPE STANDARD TABLE OF ty_need,
+      ls_need   TYPE ty_need,
+      lt_resb   TYPE TABLE OF resb,
+      ls_resb   TYPE resb,
+      lt_afpo   TYPE TABLE OF afpo,
+      ls_afpo   TYPE afpo,
+      lt_mard   TYPE TABLE OF mard,
+      ls_mard   TYPE mard,
+      lt_makt   TYPE TABLE OF makt,
+      ls_makt   TYPE makt,
+      lt_mseg   TYPE TABLE OF mseg,
+      ls_mseg   TYPE mseg,
+      lt_mkpf   TYPE TABLE OF mkpf,
+      ls_mkpf   TYPE mkpf,
+      lt_so_auf TYPE TABLE OF afpo,
+      ls_so_auf TYPE afpo,
+      lr_aufnr  TYPE RANGE OF afpo-aufnr,
+      ls_r_auf  LIKE LINE OF lr_aufnr.
+
+DATA: lv_user     TYPE string,
+      lv_f_matnr  TYPE string,          " filter material (input)
+      lv_f_so     TYPE string,          " filter nomor SO (input)
+      lv_f_status TYPE string,          " filter status: '' / 'need' / 'ok'
+      lv_so_vbeln TYPE vbak-vbeln,
+      lv_matnr_up TYPE string,
+      lv_pat      TYPE string,
+      lv_open     TYPE resb-bdmng,
+      lv_hz_from  TYPE d,
+      lv_cnt_need TYPE i,
+      lv_cnt_short TYPE i,
+      lv_skip     TYPE abap_bool,
+      lt_del      TYPE TABLE OF matnr,
+      ls_del_m    TYPE matnr,
+      lv_bdter_s  TYPE string,
+      lv_ts_date  TYPE string,
+      lv_ts_time  TYPE string.
+
+FIELD-SYMBOLS <n> TYPE ty_need.
+
+lv_user    = sy-uname.
+lv_hz_from = sy-datum - lc_horizon.
+
+" === Baca filter (GET, idempotent — konsisten pola B4) ===
+lv_f_matnr  = request->get_form_field( 'matnr' ).
+lv_f_so     = request->get_form_field( 'so_num' ).
+lv_f_status = request->get_form_field( 'status' ).
+
+" === Filter SO → kumpulkan aufnr order produksi milik SO tsb (RESB by aufnr) ===
+IF lv_f_so IS NOT INITIAL.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING input = lv_f_so IMPORTING output = lv_so_vbeln.
+  SELECT * FROM afpo INTO TABLE lt_so_auf WHERE kdauf = lv_so_vbeln.
+  IF lt_so_auf IS INITIAL.
+    lv_skip = abap_true.               " SO tanpa order → hasil kosong
+  ELSE.
+    LOOP AT lt_so_auf INTO ls_so_auf.
+      ls_r_auf-sign = 'I'. ls_r_auf-option = 'EQ'.
+      ls_r_auf-low  = ls_so_auf-aufnr.
+      APPEND ls_r_auf TO lr_aufnr.
+    ENDLOOP.
+  ENDIF.
+ENDIF.
+
+IF lv_skip = abap_false.
+  " === 1. RESB — kebutuhan komponen produksi Plant 2000 yang masih terbuka ===
+  "     Model B. (Ganti ke werks=1000/lgort=1D00 bila pakai Model A.)
+  " Catatan: filter open-qty (bdmng>enmng) TIDAK di WHERE — Open SQL klasik tak
+  " mendukung banding kolom-ke-kolom. Disaring di loop bawah (IF lv_open <= 0).
+  SELECT * FROM resb INTO TABLE lt_resb
+    WHERE werks = lc_dst_plant
+      AND xloek = ' '
+      AND kzear = ' '
+      AND aufnr IN lr_aufnr.
+
+  " Agregasi per material: Σ sisa kebutuhan; simpan aufnr & bdter paling awal
+  LOOP AT lt_resb INTO ls_resb.
+    lv_open = ls_resb-bdmng - ls_resb-enmng.
+    IF lv_open <= 0. CONTINUE. ENDIF.
+    READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_resb-matnr.
+    IF sy-subrc <> 0.
+      CLEAR ls_need.
+      ls_need-matnr = ls_resb-matnr.
+      ls_need-meins = ls_resb-meins.
+      ls_need-need  = lv_open.
+      ls_need-aufnr = ls_resb-aufnr.
+      ls_need-bdter = ls_resb-bdter.
+      INSERT ls_need INTO TABLE lt_need.
+    ELSE.
+      <n>-need = <n>-need + lv_open.
+      IF <n>-bdter IS INITIAL
+         OR ( ls_resb-bdter IS NOT INITIAL AND ls_resb-bdter < <n>-bdter ).
+        <n>-bdter = ls_resb-bdter.
+      ENDIF.
+      IF <n>-aufnr IS INITIAL. <n>-aufnr = ls_resb-aufnr. ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDIF.
+
+IF lt_need IS NOT INITIAL.
+  " === 2. SO terkait: aufnr → AFPO → kdauf ===
+  SELECT * FROM afpo INTO TABLE lt_afpo
+    FOR ALL ENTRIES IN lt_need
+    WHERE aufnr = lt_need-aufnr.
+  SORT lt_afpo BY aufnr.
+  LOOP AT lt_need ASSIGNING <n>.
+    IF <n>-aufnr IS INITIAL. CONTINUE. ENDIF.
+    READ TABLE lt_afpo INTO ls_afpo WITH KEY aufnr = <n>-aufnr BINARY SEARCH.
+    IF sy-subrc = 0. <n>-vbeln = ls_afpo-kdauf. ENDIF.
+  ENDLOOP.
+
+  " === 3. Nama material (MAKT) ===
+  SELECT * FROM makt INTO TABLE lt_makt
+    FOR ALL ENTRIES IN lt_need
+    WHERE matnr = lt_need-matnr AND spras = sy-langu.
+  SORT lt_makt BY matnr.
+  LOOP AT lt_need ASSIGNING <n>.
+    READ TABLE lt_makt INTO ls_makt WITH KEY matnr = <n>-matnr BINARY SEARCH.
+    IF sy-subrc = 0. <n>-maktx = ls_makt-maktx. ENDIF.
+  ENDLOOP.
+
+  " === 4. Stok tujuan (2KCS) & sumber (1D00) — MARD ===
+  SELECT * FROM mard INTO TABLE lt_mard
+    FOR ALL ENTRIES IN lt_need
+    WHERE matnr = lt_need-matnr
+      AND ( ( werks = lc_dst_plant AND lgort = lc_dst_sloc )
+         OR ( werks = lc_src_plant AND lgort = lc_src_sloc ) ).
+  LOOP AT lt_mard INTO ls_mard.
+    READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mard-matnr.
+    IF sy-subrc <> 0. CONTINUE. ENDIF.
+    IF ls_mard-werks = lc_dst_plant AND ls_mard-lgort = lc_dst_sloc.
+      <n>-stok_dst = <n>-stok_dst + ls_mard-labst.
+    ELSEIF ls_mard-werks = lc_src_plant AND ls_mard-lgort = lc_src_sloc.
+      <n>-stok_src = <n>-stok_src + ls_mard-labst.
+    ENDIF.
+  ENDLOOP.
+
+  " === 5. Sudah Dikirim aktual: MSEG (mvt 301, 1D00→2KCS) net reversal (SHKZG) ===
+  "     Baris keluar dari sumber: werks=1000/lgort=1D00. H = keluar (+),
+  "     S = masuk/pembalikan (−) → reversal 302 otomatis ternetralkan.
+  SELECT * FROM mseg INTO TABLE lt_mseg
+    FOR ALL ENTRIES IN lt_need
+    WHERE matnr = lt_need-matnr
+      AND bwart = lc_mvt_out
+      AND werks = lc_src_plant
+      AND lgort = lc_src_sloc.
+  IF lt_mseg IS NOT INITIAL.
+    SELECT * FROM mkpf INTO TABLE lt_mkpf
+      FOR ALL ENTRIES IN lt_mseg
+      WHERE mblnr = lt_mseg-mblnr AND mjahr = lt_mseg-mjahr
+        AND budat >= lv_hz_from.
+    SORT lt_mkpf BY mblnr mjahr.
+    LOOP AT lt_mseg INTO ls_mseg.
+      READ TABLE lt_mkpf INTO ls_mkpf
+        WITH KEY mblnr = ls_mseg-mblnr mjahr = ls_mseg-mjahr BINARY SEARCH.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.   " di luar horizon
+      READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mseg-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      IF ls_mseg-shkzg = 'H'. <n>-sent = <n>-sent + ls_mseg-menge.
+      ELSE.                   <n>-sent = <n>-sent - ls_mseg-menge.
+      ENDIF.
+      IF ls_mkpf-budat >= <n>-last_dt.
+        <n>-last_dt  = ls_mkpf-budat.
+        <n>-last_doc = ls_mseg-mblnr.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+  " === 6. Hitung "Perlu Kirim" + status per material ===
+  LOOP AT lt_need ASSIGNING <n>.
+    <n>-perlu = <n>-need - <n>-stok_dst.
+    IF <n>-perlu < 0. <n>-perlu = 0. ENDIF.
+    IF <n>-perlu = 0.
+      <n>-status = 'Tercukupi'.        <n>-st_cls = 'tf-ok'.
+    ELSEIF <n>-stok_src >= <n>-perlu.
+      <n>-status = 'Akan Dikirim'.     <n>-st_cls = 'tf-need'.
+    ELSE.
+      <n>-status = 'Kurang Stok 1D00'. <n>-st_cls = 'tf-short'.
+    ENDIF.
+  ENDLOOP.
+
+  " Salin ke tabel display STANDAR (lt_need sorted tak boleh di-SORT field lain)
+  lt_disp = lt_need.
+
+  " === 7. Filter aplikasi: material (CP) & status ===
+  IF lv_f_matnr IS NOT INITIAL.
+    lv_matnr_up = lv_f_matnr. TRANSLATE lv_matnr_up TO UPPER CASE.
+    CONCATENATE '*' lv_matnr_up '*' INTO lv_pat.
+    " Kumpulkan dulu material yang tak cocok, baru DELETE (hindari ubah tabel saat LOOP)
+    REFRESH lt_del.
+    LOOP AT lt_disp ASSIGNING <n>.
+      lv_matnr_up = <n>-matnr. TRANSLATE lv_matnr_up TO UPPER CASE.
+      IF NOT lv_matnr_up CP lv_pat.
+        APPEND <n>-matnr TO lt_del.
+      ENDIF.
+    ENDLOOP.
+    LOOP AT lt_del INTO ls_del_m.
+      DELETE lt_disp WHERE matnr = ls_del_m.
+    ENDLOOP.
+  ENDIF.
+  IF lv_f_status = 'need'.
+    DELETE lt_disp WHERE perlu = 0.
+  ELSEIF lv_f_status = 'ok'.
+    DELETE lt_disp WHERE perlu > 0.
+  ENDIF.
+
+  " KPI + urutan: yang paling perlu di atas
+  LOOP AT lt_disp INTO ls_need.
+    IF ls_need-perlu > 0.           lv_cnt_need  = lv_cnt_need + 1. ENDIF.
+    IF ls_need-st_cls = 'tf-short'. lv_cnt_short = lv_cnt_short + 1. ENDIF.
+  ENDLOOP.
+  SORT lt_disp BY perlu DESCENDING matnr ASCENDING.
+ENDIF.
+
+lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
+lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
+%>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transfer Material 1D00 &rarr; 2KCS - Central Storage KMI 2</title>
+  <link rel="stylesheet" href="css/style.css?r=7">
+</head>
+<body>
+
+  <div class="header-bar">
+    <div class="header-title">
+      <h1>Central Storage Production Dashboard</h1>
+      <p>Transfer Material 1D00 &rarr; 2KCS (Plant 1000 &rarr; Plant 2000) &#8212; Kebutuhan Produksi</p>
+    </div>
+    <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_user %></span>
+      <div class="user-dropdown" id="user-dropdown">
+        <div class="dropdown-userinfo"><%= lv_user %></div>
+        <div class="dropdown-divider"></div>
+        <a href="javascript:void(0)" onclick="userLogout()">&#10007; Logout</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="navbar">
+    <a href="index.htm" class="nav-btn"><span class="nav-icon">&#9782;</span>Dashboard</a>
+    <a href="monitoring.htm" class="nav-btn"><span class="nav-icon">&#9741;</span>Monitoring</a>
+    <a href="riwayat.htm" class="nav-btn"><span class="nav-icon">&#128220;</span>Riwayat</a>
+    <a href="transfer.htm" class="nav-btn active"><span class="nav-icon">&#128666;</span>Transfer</a>
+  </div>
+
+  <div class="content">
+
+    <!-- FILTER (GET → idempotent, bisa di-bookmark/reload tanpa dialog kirim ulang) -->
+    <div class="filter-card">
+      <form method="get" action="">
+        <div class="filter-form">
+          <div class="form-group" style="width:24%;"><label>Material</label><input type="text" name="matnr" value="<%= lv_f_matnr %>" placeholder="Kode / sebagian material"></div>
+          <div class="form-group" style="width:20%;"><label>Nomor Sales Order</label><input type="text" name="so_num" value="<%= lv_f_so %>" placeholder="10000021"></div>
+          <div class="form-group" style="width:20%;"><label>Status</label>
+            <select name="status">
+              <option value=""     <% IF lv_f_status = ''.     %>selected<% ENDIF. %>>Semua</option>
+              <option value="need" <% IF lv_f_status = 'need'. %>selected<% ENDIF. %>>Perlu Dikirim</option>
+              <option value="ok"   <% IF lv_f_status = 'ok'.   %>selected<% ENDIF. %>>Tercukupi</option>
+            </select>
+          </div>
+          <div class="btn-submit"><button type="submit" name="search_btn" value="X">TAMPILKAN</button></div>
+        </div>
+      </form>
+    </div>
+
+    <!-- KPI ringkas -->
+    <div class="filter-bar" style="margin-bottom:16px; gap:20px;">
+      <span style="font-size:0.85rem; color:#374151;">Perlu Dikirim: <strong style="color:#f97316;"><%= lv_cnt_need %></strong> material</span>
+      <span style="font-size:0.85rem; color:#374151;">Kurang stok 1D00: <strong style="color:#ef4444;"><%= lv_cnt_short %></strong></span>
+      <span style="font-size:0.8rem; color:#6b7280;">Rute: 1000/1D00 &rarr; 2000/2KCS &bull; Histori kirim <%= lc_horizon %> hari</span>
+    </div>
+
+    <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
+      <% IF lt_disp IS INITIAL. %>
+      <div style="padding:40px; text-align:center; color:#9ca3af; font-size:0.95rem;">
+        <% IF lv_skip = abap_true. %>
+        Tidak ada order produksi untuk SO tersebut.
+        <% ELSE. %>
+        Tidak ada material yang perlu dikirim dari 1D00 ke 2KCS untuk kriteria ini.
+        <% ENDIF. %>
+      </div>
+      <% ELSE. %>
+      <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:0.82rem;">
+        <thead>
+          <tr style="background:#f9fafb; border-bottom:2px solid #e5e7eb; text-align:left; color:#374151;">
+            <th style="padding:10px 12px;">Material</th>
+            <th style="padding:10px 12px;">Nama</th>
+            <th style="padding:10px 12px; text-align:right;">Butuh</th>
+            <th style="padding:10px 12px; text-align:right;">Stok 2KCS</th>
+            <th style="padding:10px 12px; text-align:right;">Perlu Kirim</th>
+            <th style="padding:10px 12px;">Sat</th>
+            <th style="padding:10px 12px; text-align:right;">Stok 1D00</th>
+            <th style="padding:10px 12px; text-align:right;">Sudah Dikirim</th>
+            <th style="padding:10px 12px;">Tgl Butuh</th>
+            <th style="padding:10px 12px;">SO</th>
+            <th style="padding:10px 12px;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% LOOP AT lt_disp INTO ls_need.
+               lv_bdter_s = zcl_cs_util=>fmt_date( ls_need-bdter ).
+          %>
+          <tr style="border-bottom:1px solid #f3f4f6;">
+            <td style="padding:9px 12px; font-weight:700; color:#1e3a8a;"><%= ls_need-matnr %></td>
+            <td style="padding:9px 12px; color:#374151;"><%= ls_need-maktx %></td>
+            <td style="padding:9px 12px; text-align:right;"><span class="num-fmt" data-val="<%= ls_need-need %>"><%= ls_need-need %></span></td>
+            <td style="padding:9px 12px; text-align:right; color:#6b7280;"><span class="num-fmt" data-val="<%= ls_need-stok_dst %>"><%= ls_need-stok_dst %></span></td>
+            <td style="padding:9px 12px; text-align:right; font-weight:700; color:#b45309;"><span class="num-fmt" data-val="<%= ls_need-perlu %>"><%= ls_need-perlu %></span></td>
+            <td style="padding:9px 12px; color:#6b7280;"><%= ls_need-meins %></td>
+            <td style="padding:9px 12px; text-align:right;"><span class="num-fmt" data-val="<%= ls_need-stok_src %>"><%= ls_need-stok_src %></span></td>
+            <td style="padding:9px 12px; text-align:right; color:#6b7280;">
+              <span class="num-fmt" data-val="<%= ls_need-sent %>"><%= ls_need-sent %></span>
+              <% IF ls_need-last_doc IS NOT INITIAL. %><div style="font-size:0.68rem; color:#9ca3af;">Dok <%= ls_need-last_doc %></div><% ENDIF. %>
+            </td>
+            <td style="padding:9px 12px; color:#6b7280;"><%= lv_bdter_s %></td>
+            <td style="padding:9px 12px;">
+              <% IF ls_need-vbeln IS NOT INITIAL. %>
+              <a href="monitoring.htm?so_num=<%= ls_need-vbeln %>&amp;search_btn=X" style="color:#2563eb; font-weight:600; text-decoration:none;"><%= ls_need-vbeln %></a>
+              <% ELSE. %><span style="color:#cbd5e1;">&mdash;</span><% ENDIF. %>
+            </td>
+            <td style="padding:9px 12px;"><span class="badge <%= ls_need-st_cls %>"><%= ls_need-status %></span></td>
+          </tr>
+          <% ENDLOOP. %>
+        </tbody>
+      </table>
+      </div>
+      <% ENDIF. %>
+    </div>
+
+  </div>
+
+  <script src="js/js.js?r=3"></script>
+  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_user %> &bull; Rute: 1000/1D00 &rarr; 2000/2KCS</div>
+</body>
+</html>

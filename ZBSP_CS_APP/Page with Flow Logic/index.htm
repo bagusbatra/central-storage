@@ -31,6 +31,30 @@ TYPES: BEGIN OF ty_afpo_agg,
          wemng TYPE afpo-wemng,
        END OF ty_afpo_agg.
 
+" A3/A4: OTD & Lead Time berbasis tanggal GR aktual (MSEG/MKPF).
+" Order dianggap selesai bila wemng>=psmng; tanggal selesai aktual = posting date
+" GR (MKPF-BUDAT, gerakan 101) TERAKHIR per order; target = AFKO-GLTRP.
+TYPES: BEGIN OF ty_ord_fin,
+         aufnr TYPE afpo-aufnr,
+         kdauf TYPE afpo-kdauf,
+         gltrp TYPE afko-gltrp,
+         grdat TYPE d,
+       END OF ty_ord_fin.
+TYPES: BEGIN OF ty_afko_fin,
+         aufnr TYPE afko-aufnr,
+         gltrp TYPE afko-gltrp,
+       END OF ty_afko_fin.
+TYPES: BEGIN OF ty_mseg_gr,
+         mblnr TYPE mseg-mblnr,
+         mjahr TYPE mseg-mjahr,
+         aufnr TYPE mseg-aufnr,
+       END OF ty_mseg_gr.
+TYPES: BEGIN OF ty_mkpf_dt,
+         mblnr TYPE mkpf-mblnr,
+         mjahr TYPE mkpf-mjahr,
+         budat TYPE mkpf-budat,
+       END OF ty_mkpf_dt.
+
 TYPES: BEGIN OF ty_so_prog,
          vbeln  TYPE vbak-vbeln,
          kunnr  TYPE vbak-kunnr,
@@ -124,6 +148,17 @@ DATA: lt_card        TYPE TABLE OF ty_card,
       lt_recent_card TYPE TABLE OF ty_card,
       ls_card        TYPE ty_card.
 
+" A3/A4 — struktur OTD & lead time berbasis GR aktual
+DATA: lt_ordfin  TYPE SORTED TABLE OF ty_ord_fin WITH UNIQUE KEY aufnr,
+      ls_ordfin  TYPE ty_ord_fin,
+      lt_afko_fin TYPE TABLE OF ty_afko_fin,
+      ls_afko_fin TYPE ty_afko_fin,
+      lt_mseg    TYPE TABLE OF ty_mseg_gr,
+      ls_mseg    TYPE ty_mseg_gr,
+      lt_mkpf    TYPE TABLE OF ty_mkpf_dt,
+      ls_mkpf    TYPE ty_mkpf_dt.
+FIELD-SYMBOLS <fs_ord> TYPE ty_ord_fin.
+
 lv_user = sy-uname.
 
 " === Period filter ===
@@ -182,7 +217,7 @@ IF lt_vbak IS NOT INITIAL.
   " 1 item (kdauf/kdpos) bisa punya >1 order produksi → psmng & wemng dijumlah
   " via COLLECT agar klasifikasi memakai TOTAL & konsisten dgn Monitoring/Riwayat.
   IF lt_vbap IS NOT INITIAL.
-    SELECT kdauf kdpos psmng wemng
+    SELECT kdauf kdpos psmng wemng aufnr
       INTO CORRESPONDING FIELDS OF TABLE lt_afpo
       FROM afpo
       FOR ALL ENTRIES IN lt_vbap
@@ -244,20 +279,11 @@ IF lt_vbak IS NOT INITIAL.
         lv_is_done = 3.
     ENDCASE.
 
-    " --- KPI: penyelesaian order produksi (A3) + umur WIP & backlog (A4) ---
-    IF lv_is_done = 1 OR lv_is_done = 2.
-      lv_otd_total = lv_otd_total + 1.
-      IF lv_is_done = 1.
-        lv_otd_on_time = lv_otd_on_time + 1.
-      ELSE.
-        " item proses → umur WIP (pakai erdat SO yang sudah dibaca di control-break)
-        IF lv_so_erdat IS NOT INITIAL.
-          lv_lead_days  = lv_lead_days + ( sy-datum - lv_so_erdat ).
-          lv_lead_count = lv_lead_count + 1.
-          IF ( sy-datum - lv_so_erdat ) > 30.
-            lv_backlog_cnt = lv_backlog_cnt + 1.
-          ENDIF.
-        ENDIF.
+    " --- Backlog: item PROSES yang SO-nya dibuat > 30 hari lalu & belum selesai ---
+    "     (OTD & lead time dihitung terpisah dari tanggal GR aktual — lihat bawah)
+    IF lv_is_done = 2 AND lv_so_erdat IS NOT INITIAL.
+      IF ( sy-datum - lv_so_erdat ) > 30.
+        lv_backlog_cnt = lv_backlog_cnt + 1.
       ENDIF.
     ENDIF.
 
@@ -282,12 +308,74 @@ IF lt_vbak IS NOT INITIAL.
     lv_rate = ( lv_pct / lv_total_item ) * 100.
   ENDIF.
 
-  " === Penyelesaian Order Produksi (% item produksi yang selesai) ===
+  " === A3/A4: On-Time Delivery & Lead Time berbasis tanggal GR aktual ===
+  "  Order "selesai" = wemng >= psmng (>0). Tanggal selesai aktual = MKPF-BUDAT
+  "  (gerakan GR 101) TERAKHIR per order. OTD = order yg GR <= target (AFKO-GLTRP).
+  "  Lead time = rata-rata (tanggal GR - tanggal SO dibuat) hari.
+  "  Catatan performa: MSEG di-FAE per AUFNR — andalkan indeks sekunder MSEG-AUFNR.
+  LOOP AT lt_afpo INTO ls_afpo.
+    IF ls_afpo-aufnr IS INITIAL OR ls_afpo-psmng <= 0. CONTINUE. ENDIF.
+    IF ls_afpo-wemng < ls_afpo-psmng. CONTINUE. ENDIF.   " hanya order yang selesai
+    CLEAR ls_ordfin.
+    ls_ordfin-aufnr = ls_afpo-aufnr.
+    ls_ordfin-kdauf = ls_afpo-kdauf.
+    INSERT ls_ordfin INTO TABLE lt_ordfin.   " sorted-unique → dedup per aufnr
+  ENDLOOP.
+
+  IF lt_ordfin IS NOT INITIAL.
+    " Target finish per order (AFKO-GLTRP)
+    SELECT aufnr gltrp FROM afko INTO TABLE lt_afko_fin
+      FOR ALL ENTRIES IN lt_ordfin WHERE aufnr = lt_ordfin-aufnr.
+    LOOP AT lt_afko_fin INTO ls_afko_fin.
+      READ TABLE lt_ordfin ASSIGNING <fs_ord> WITH TABLE KEY aufnr = ls_afko_fin-aufnr.
+      IF sy-subrc = 0. <fs_ord>-gltrp = ls_afko_fin-gltrp. ENDIF.
+    ENDLOOP.
+
+    " Dokumen material GR (gerakan 101) → tanggal posting (MKPF-BUDAT)
+    SELECT mblnr mjahr aufnr FROM mseg INTO TABLE lt_mseg
+      FOR ALL ENTRIES IN lt_ordfin
+      WHERE aufnr = lt_ordfin-aufnr AND bwart = '101'.
+    IF lt_mseg IS NOT INITIAL.
+      SELECT mblnr mjahr budat FROM mkpf INTO TABLE lt_mkpf
+        FOR ALL ENTRIES IN lt_mseg
+        WHERE mblnr = lt_mseg-mblnr AND mjahr = lt_mseg-mjahr.
+      SORT lt_mkpf BY mblnr mjahr.
+      LOOP AT lt_mseg INTO ls_mseg.
+        READ TABLE lt_mkpf INTO ls_mkpf
+          WITH KEY mblnr = ls_mseg-mblnr mjahr = ls_mseg-mjahr BINARY SEARCH.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.
+        READ TABLE lt_ordfin ASSIGNING <fs_ord> WITH TABLE KEY aufnr = ls_mseg-aufnr.
+        IF sy-subrc = 0.
+          " ambil tanggal GR PALING AKHIR sebagai tanggal selesai order
+          IF <fs_ord>-grdat IS INITIAL OR ls_mkpf-budat > <fs_ord>-grdat.
+            <fs_ord>-grdat = ls_mkpf-budat.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    " Hitung OTD (butuh target) & lead time (butuh tgl SO dibuat)
+    LOOP AT lt_ordfin INTO ls_ordfin.
+      IF ls_ordfin-grdat IS INITIAL. CONTINUE. ENDIF.   " tanpa tgl GR → tak terukur
+      READ TABLE lt_vbak INTO ls_vbak
+        WITH KEY vbeln = ls_ordfin-kdauf BINARY SEARCH.
+      IF sy-subrc = 0 AND ls_vbak-erdat IS NOT INITIAL
+         AND ls_ordfin-grdat >= ls_vbak-erdat.
+        lv_lead_days  = lv_lead_days + ( ls_ordfin-grdat - ls_vbak-erdat ).
+        lv_lead_count = lv_lead_count + 1.
+      ENDIF.
+      IF ls_ordfin-gltrp IS NOT INITIAL.
+        lv_otd_total = lv_otd_total + 1.
+        IF ls_ordfin-grdat <= ls_ordfin-gltrp.
+          lv_otd_on_time = lv_otd_on_time + 1.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
   IF lv_otd_total > 0.
     lv_otd_rate = ( lv_otd_on_time / lv_otd_total ) * 100.
   ENDIF.
-
-  " === Rata-rata Umur Item Proses (hari, WIP aging) ===
   IF lv_lead_count > 0.
     lv_leadtime = lv_lead_days / lv_lead_count.
   ENDIF.
@@ -433,17 +521,17 @@ ELSE.
   lv_rate_alert = 'KRITIS: penyelesaian sangat rendah, perlu tindakan segera!'.
 ENDIF.
 
-" === Penyelesaian Order Produksi Thresholds ===
+" === On-Time Delivery (OTD) Thresholds ===
 IF lv_otd_total = 0.
   lv_otd_cls = 'kpi-gray'.
 ELSEIF lv_otd_rate >= 80.
   lv_otd_cls = 'kpi-green'.
 ELSEIF lv_otd_rate >= 50.
   lv_otd_cls = 'kpi-amber'.
-  lv_otd_alert = 'Penyelesaian order produksi di bawah target 80%'.
+  lv_otd_alert = 'Ketepatan waktu (OTD) di bawah target 80%'.
 ELSE.
   lv_otd_cls = 'kpi-red'.
-  lv_otd_alert = 'KRITIS: penyelesaian order produksi sangat rendah!'.
+  lv_otd_alert = 'KRITIS: banyak order produksi terlambat!'.
 ENDIF.
 
 " === Backlog Thresholds ===
@@ -490,7 +578,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard - Central Storage KMI 2</title>
-  <link rel="stylesheet" href="css/style.css?r=6">
+  <link rel="stylesheet" href="css/style.css?r=7">
 </head>
 <body class="page-loading">
 
@@ -512,6 +600,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <a href="index.htm" class="nav-btn active"><span class="nav-icon">&#9782;</span>Dashboard</a>
     <a href="monitoring.htm" class="nav-btn"><span class="nav-icon">&#9741;</span>Monitoring</a>
     <a href="riwayat.htm" class="nav-btn"><span class="nav-icon">&#128220;</span>Riwayat</a>
+    <a href="transfer.htm" class="nav-btn"><span class="nav-icon">&#128666;</span>Transfer</a>
   </div>
 
   <div class="content">
@@ -579,11 +668,11 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card <%= lv_otd_cls %>">
           <div class="stat-header">
-            <span class="stat-label">Penyelesaian Order Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Persentase item selesai dibanding item yang sudah punya order produksi (selesai + proses). Item belum produksi tidak dihitung. Catatan: ini bukan ketepatan waktu pengiriman.">i</button></span>
+            <span class="stat-label">On-Time Delivery (OTD) <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Persentase order produksi selesai TEPAT WAKTU: tanggal Goods Receipt aktual (MKPF-BUDAT, gerakan 101) terakhir tidak melewati target selesai order (AFKO-GLTRP). Hanya order yang sudah selesai & punya target yang dihitung.">i</button></span>
             <span class="stat-icon"><span class="ic-blue">&#9200;</span></span>
           </div>
           <div class="stat-value"><%= lv_otd_rate %>%</div>
-          <div class="stat-sub"><%= lv_otd_on_time %> / <%= lv_otd_total %> item produksi selesai</div>
+          <div class="stat-sub"><%= lv_otd_on_time %> / <%= lv_otd_total %> order selesai tepat waktu</div>
           <% IF lv_otd_alert <> ''. %>
           <div class="kpi-alert">&#9888; <%= lv_otd_alert %></div>
           <% ENDIF. %>
@@ -592,11 +681,11 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Rata-rata Umur Item Proses <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Rata-rata umur (hari) item yang masih diproduksi, dihitung dari tanggal SO dibuat sampai hari ini. Indikator penuaan WIP (work in process).">i</button></span>
+            <span class="stat-label">Rata-rata Lead Time <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Rata-rata durasi (hari) dari tanggal SO dibuat sampai tanggal Goods Receipt aktual (produksi selesai diterima ke gudang), dihitung atas order yang sudah selesai. Semakin kecil semakin cepat pemenuhan.">i</button></span>
             <span class="stat-icon"><span class="ic-amber">&#128197;</span></span>
           </div>
           <div class="stat-value"><%= lv_leadtime %></div>
-          <div class="stat-sub">hari rata-rata item yang masih diproduksi</div>
+          <div class="stat-sub">hari rata-rata SO dibuat &#8594; selesai (GR)</div>
         </div>
       </div>
       <div class="stat-cell" style="width:33.33%;">

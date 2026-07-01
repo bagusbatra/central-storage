@@ -7,7 +7,7 @@
 *& (tanpa wrapper html/head/body), pola sama dengan monitoring_detail.htm.
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant        TYPE vbap-werks VALUE '2000',
-           lc_backlog_days TYPE i          VALUE 365.  " horizon scan backlog (hari) — 1 tahun terakhir
+           lc_backlog_days TYPE i          VALUE 90.  " horizon scan backlog (hari) — 3 bulan terakhir
 
 TYPES: BEGIN OF ty_bl_stat,
          vbeln   TYPE vbak-vbeln,
@@ -26,6 +26,9 @@ TYPES: BEGIN OF ty_afpo_agg,
          wemng TYPE afpo-wemng,
        END OF ty_afpo_agg.
 
+" Status SD (GBSTK Overall / LFSTK Delivery) dibaca langsung dari VBAK —
+" S/4HANA: VBUK/VBUP dihapus, field status pindah ke VBAK. C = selesai penuh.
+" (FKSTK/billing bukan kolom VBAK & tak dipakai filter ini.)
 DATA: lt_bl_hdr     TYPE TABLE OF vbak,
       ls_bl_hdr     TYPE vbak,
       lt_bl_vbap    TYPE TABLE OF vbap,
@@ -47,13 +50,34 @@ DATA: lt_bl_hdr     TYPE TABLE OF vbak,
 lv_bl_from = sy-datum - lc_backlog_days.
 lv_bl_lbl  = zcl_cs_util=>fmt_date( lv_bl_from ).
 
-" 1. Header SO Plant 2000 dalam horizon backlog
-SELECT vbeln erdat kunnr auart FROM vbak
+" 1. Header SO Plant 2000 dalam horizon backlog + status SD (VBAK, S/4HANA).
+"    FKSTK (billing) TIDAK diambil: bukan kolom VBAK & tak dipakai filter ini.
+SELECT vbeln erdat kunnr auart gbstk lfstk FROM vbak
   INTO CORRESPONDING FIELDS OF TABLE lt_bl_hdr
   WHERE erdat >= lv_bl_from
     AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
 SORT lt_bl_hdr BY vbeln.
 
+IF lt_bl_hdr IS NOT INITIAL.
+  " 2. Filter status SD (langsung dari VBAK). SO dianggap SELESAI (buang dari
+  "    list) bila Delivery (LFSTK) = 'C' (Fully Delivered) ATAU Overall
+  "    (GBSTK) = 'C' (Completely processed). Untuk Central Storage, LFSTK='C'
+  "    berarti barang sudah terkirim penuh → tak perlu ditrack produksinya lagi.
+  "    Billing (FKSTK) SENGAJA tidak jadi trigger hapus — itu urusan Finance,
+  "    bukan produksi/Central Storage. Filter ini menggantikan AFPO done<total.
+  LOOP AT lt_bl_hdr INTO ls_bl_hdr.
+    IF ls_bl_hdr-lfstk = 'C'      " sudah fully delivered
+    OR ls_bl_hdr-gbstk = 'C'.     " atau sudah complete total
+      DELETE lt_bl_hdr.
+    ENDIF.
+  ENDLOOP.
+
+  " 3. Urut TERTUA dulu, ambil 5 — SEBELUM fetch produksi (hemat query)
+  SORT lt_bl_hdr BY erdat ASCENDING vbeln ASCENDING.
+  DELETE lt_bl_hdr FROM 6.
+ENDIF.
+
+" 4. Statistik produksi (untuk progress bar) HANYA untuk ≤5 SO terpilih
 IF lt_bl_hdr IS NOT INITIAL.
   SELECT vbeln posnr FROM vbap
     INTO CORRESPONDING FIELDS OF TABLE lt_bl_vbap
@@ -80,7 +104,7 @@ IF lt_bl_hdr IS NOT INITIAL.
     SORT lt_bl_afpoagg BY kdauf kdpos.
   ENDIF.
 
-  " Status per SO via COLLECT (1 item = 1 baris total) + Σ persentase item
+  " Status produksi per SO via COLLECT (1 item = 1 baris total) + Σ persentase item
   LOOP AT lt_bl_vbap INTO ls_bl_vbap.
     CLEAR: ls_bl_afpoagg, ls_bl_stat.
     ls_bl_stat-vbeln = ls_bl_vbap-vbeln.
@@ -98,30 +122,16 @@ IF lt_bl_hdr IS NOT INITIAL.
     COLLECT ls_bl_stat INTO lt_bl_stat.
   ENDLOOP.
   SORT lt_bl_stat BY vbeln.
-
-  " Sisakan hanya SO yang BELUM selesai (done < total)
-  LOOP AT lt_bl_hdr INTO ls_bl_hdr.
-    READ TABLE lt_bl_stat INTO ls_bl_stat_r
-      WITH KEY vbeln = ls_bl_hdr-vbeln BINARY SEARCH.
-    IF sy-subrc <> 0 OR ls_bl_stat_r-total = 0
-       OR ls_bl_stat_r-done >= ls_bl_stat_r-total.
-      DELETE lt_bl_hdr.
-    ENDIF.
-  ENDLOOP.
-
-  " Urut TERTUA dulu, ambil 5
-  SORT lt_bl_hdr BY erdat ASCENDING vbeln ASCENDING.
-  DELETE lt_bl_hdr FROM 6.
 ENDIF.
 %>
 <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
   <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
-    <h3 style="font-size:0.85rem; font-weight:700; color:#374151; margin:0;">&#9203; SO Tertua Belum Selesai</h3>
-    <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">Backlog terlama yang masih ada item belum selesai &#8212; sejak <%= lv_bl_lbl %> (Plant 2000)</div>
+    <h3 style="font-size:0.85rem; font-weight:700; color:#374151; margin:0;">&#9203; SO Terlama Belum Selesai</h3>
+    <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">SO terlama yang status Pengiriman / Penagihan / Keseluruhan belum tuntas (belum &lsquo;C&rsquo;) &#8212; sejak <%= lv_bl_lbl %> (Plant 2000)</div>
   </div>
   <div>
     <% IF lt_bl_hdr IS INITIAL. %>
-    <div style="padding:28px; text-align:center; color:#9ca3af; font-size:0.9rem;">Tidak ada SO yang belum selesai di Plant 2000.</div>
+    <div style="padding:28px; text-align:center; color:#9ca3af; font-size:0.9rem;">Tidak ada SO belum selesai (semua status SD sudah tuntas) di Plant 2000.</div>
     <% ELSE. %>
     <% LOOP AT lt_bl_hdr INTO ls_bl_hdr.
          CLEAR ls_bl_stat_r.

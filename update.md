@@ -115,8 +115,8 @@ Agar pedoman ini akurat, berikut item lama yang **kini sudah diimplementasikan**
 
 - **A1 ✅** `monitoring_detail.htm` — query MAKT/MARD/EKPO kini dibungkus `IF lt_stpo_pre IS NOT INITIAL`. Empty-FAE tidak lagi mungkin.
 - **A2 ✅** Status order tidak lagi dari `AFKO-GSTRS`. Ditambah query `AUFK` (objnr) → `JEST` (status aktif, `inact=' '`), dipetakan prioritas CRTD/REL(I0002)/CNF(I0009)/TECO(I0045) → label & class. **Uji:** pastikan kode status internal sesuai customizing Anda (`I0002/I0009/I0045`).
-- **A3 ✅ (relabel jujur)** Kartu "On-Time Delivery Rate" → **"Penyelesaian Order Produksi"** (= item selesai / item ber-order). Teks "tepat waktu" & alert OTD disesuaikan. OTD sejati (vs tanggal jatuh tempo) tetap di roadmap (F).
-- **A4 ✅ (reposisi)** Kartu "Rata-rata Lead Time" → **"Rata-rata Umur Item Proses"** (WIP aging); akumulasi dipindah dari item *selesai* ke item *proses* sehingga angkanya bermakna. Lead-time selesai sejati (butuh tgl GR aktual) tetap roadmap.
+- **A3 ✅✅ (relabel 29 Jun → fix sejati 1 Jul)** 29 Jun: relabel jujur jadi "Penyelesaian Order Produksi". **1 Jul: diganti OTD sejati berbasis tanggal GR aktual** — kartu kembali **"On-Time Delivery (OTD)"** = order produksi selesai dgn `MKPF-BUDAT` (GR 101) terakhir ≤ target `AFKO-GLTRP`, atas order selesai (`wemng≥psmng`). Query baru di `index.htm`: `AFKO`/`MSEG`(bwart 101)/`MKPF`. **Uji:** indeks `MSEG-AUFNR` & `MKPF-BUDAT` terisi.
+- **A4 ✅✅ (reposisi 29 Jun → fix sejati 1 Jul)** 29 Jun: jadi "Umur Item Proses" (WIP aging). **1 Jul: diganti lead time sejati** — kartu kembali **"Rata-rata Lead Time"** = rata-rata (`MKPF-BUDAT` GR terakhir − `VBAK-ERDAT`) hari, atas order selesai. Kartu **Backlog** tetap (item proses SO>30 hari).
 - **A5 ✅** `monitoring.htm` — kode customer kini diprioritaskan; jika kode & nama sama-sama diisi, kode dipakai (tidak lagi diam-diam mengabaikan filter).
 - **A6 ✅** Pencarian nama customer kini `WHERE mcod1 LIKE` (field pencarian huruf besar) → case-insensitive.
 - **A7 ✅** Open-PO dirombak: `EKPO` (item PO aktif) → `EKET` (jadwal kirim). Qty terbuka = `Σ(menge − wemng)` (sisa, bukan menge penuh); ETA = `EKET-EINDT` paling awal. **Uji:** verifikasi `EKET` terisi untuk PO Anda.
@@ -293,7 +293,7 @@ Konsolidasi backlog **terbuka** setelah paket kedua (Bagian 1b). Item yang sudah
 |---|------|-----------------|
 | **I-1** | **HTML-escape semua output `<%= %>` (E1).** Bungkus data master & input yang dipantulkan dengan `cl_http_utility=>escape_html( )` — terutama yang masuk atribut (`data-name`, `data-matnr`, `title`). | **Belum dikerjakan** & permukaan XSS **membesar**: kini ada `maktx`, `lgobe`, `arktx`, `name1`, echo pencarian, + banyak `data-*` di `monitoring_bom.htm`. |
 | **I-2** | **AUTHORITY-CHECK (E2/E4).** Objek otorisasi (mis. per plant) di `main.htm` **dan** di endpoint fragmen (`monitoring_detail.htm`, `monitoring_bom.htm`, `index_oldcard.htm`) yang menerima `vbeln` bebas. | Endpoint AJAX kini lebih banyak; semuanya tanpa cek hak akses. |
-| **I-3** | **OTD & lead time berbasis tanggal aktual (A3/A4/F).** `AFKO-GSTRI/GETRI` (sudah dibaca di `monitoring_bom.htm`) + `AFRU`/`MSEG` untuk tanggal GR nyata → ganti KPI relabel jadi metrik sejati. | Fondasi tanggal sudah tersedia sebagian (GETRI). |
+| ~~I-3~~ | ~~**OTD & lead time berbasis tanggal aktual (A3/A4).**~~ **✅ SELESAI 1 Jul 2026** — `index.htm` kini hitung OTD (GR `MKPF-BUDAT` ≤ target `AFKO-GLTRP`) & lead time (GR − `VBAK-ERDAT`) via `AFKO`/`MSEG`/`MKPF`. | Perlu verifikasi indeks `MSEG-AUFNR` di runtime. |
 | **I-4** | **Multi-plant (D4/F).** `lc_plant` hardcoded di **6+** file. Jadikan parameter (dropdown + propagasi ke semua endpoint). | Duplikasi makin banyak seiring bertambahnya halaman. |
 
 ### I.2 Prioritas Sedang
