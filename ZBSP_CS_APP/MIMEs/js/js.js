@@ -22,6 +22,8 @@ var currentActiveVBELN = null;
 var currentActiveBOMId = null;
 var soDetailCache      = {}; /* cache HTML fragmen detail ringan per vbeln */
 var soBomCache         = {}; /* cache HTML tab Item & BOM (berat) per vbeln */
+var bomInflight        = {}; /* XHR prefetch/muat BOM yang sedang berjalan per vbeln */
+var bomPrefetchTimer   = null; /* timer prefetch idle (dibatalkan saat pindah SO) */
 
 /* ------------------------------------------------------------------
    Helper: kotak dengan sudut bulat semua sisi (canvas 2D)
@@ -384,6 +386,7 @@ function viewDetails(vbeln) {
     container.innerHTML = soDetailCache[vbeln];
     formatNumbers(container);
     enhanceA11y(container);
+    schedulePrefetchBOM(vbeln);
     return;
   }
 
@@ -410,6 +413,8 @@ function viewDetails(vbeln) {
       enhanceA11y(container);
       /* B1: biarkan tab default "Ringkasan" tampil (sesuai markup server);
          tidak lagi memaksa ke Item & BOM + buka semua BOM. */
+      /* Prefetch idle: siapkan data tab Item & BOM di latar agar klik tab instan. */
+      schedulePrefetchBOM(vbeln);
     } else {
       container.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Gagal memuat data (HTTP ' + xhr.status + ').</p></div>';
     }
@@ -622,24 +627,90 @@ function switchTab(tabId, btn) {
 }
 
 /* ------------------------------------------------------------------
-   loadBOM — muat isi tab Item & BOM via AJAX (monitoring_bom.htm).
-   Endpoint ringan (monitoring_detail.htm) hanya mengirim Ringkasan/Info +
-   shell tab ini, sehingga detail tampil instan. Rantai BOM berat baru
-   diambil di sini, sekali per vbeln (di-cache).
+   Tab Item & BOM (endpoint berat monitoring_bom.htm) — strategi PREFETCH IDLE:
+   setelah Ringkasan tampil, data BOM diambil diam-diam di latar & di-cache,
+   sehingga saat pengguna mengklik tab, tampil (nyaris) instan.
+
+   - schedulePrefetchBOM: jadwalkan prefetch ~400ms setelah detail tampil,
+     hanya bila SO masih aktif (hindari boros saat menelusuri cepat).
+   - fetchBOM: 1 request per vbeln (dedup via bomInflight); isi soBomCache.
+     Bila ada pane yang sedang menunggu vbeln ini, langsung di-render.
+   - loadBOM: dipanggil saat tab diklik — sajikan dari cache, atau tampilkan
+     skeleton lalu tandai pane "menunggu" & pastikan fetch berjalan.
    ------------------------------------------------------------------ */
+
+/** Jadwalkan prefetch BOM di latar (idle) untuk SO yang baru dibuka. */
+function schedulePrefetchBOM(vbeln) {
+  if (!vbeln || soBomCache[vbeln]) return;
+  if (bomPrefetchTimer) clearTimeout(bomPrefetchTimer);
+  bomPrefetchTimer = setTimeout(function() {
+    /* Hanya prefetch bila SO ini masih yang aktif (bukan sudah pindah). */
+    if (currentActiveVBELN === vbeln) fetchBOM(vbeln);
+  }, 400);
+}
+
+/** Ambil fragmen BOM (1x per vbeln, dedup). Isi cache; render bila ada yg menunggu. */
+function fetchBOM(vbeln) {
+  if (!vbeln || soBomCache[vbeln] || bomInflight[vbeln]) return;
+  var xhr = new XMLHttpRequest();
+  bomInflight[vbeln] = xhr;
+  xhr.open('GET', 'monitoring_bom.htm?vbeln=' + encodeURIComponent(vbeln), true);
+  xhr.onload = function() {
+    delete bomInflight[vbeln];
+    if (xhr.status === 200) {
+      soBomCache[vbeln] = xhr.responseText;
+      applyBOMIfWaiting(vbeln);
+    } else {
+      applyBOMError(vbeln, 'Gagal memuat Item &amp; BOM (HTTP ' + xhr.status + ').');
+    }
+  };
+  xhr.onerror = function() {
+    delete bomInflight[vbeln];
+    applyBOMError(vbeln, 'Error koneksi ke server.');
+  };
+  xhr.send();
+}
+
+/** Render cache BOM ke pane tab-items. */
+function renderBOM(pane, vbeln) {
+  pane.innerHTML = soBomCache[vbeln];
+  pane.setAttribute('data-loaded', '1');
+  pane.removeAttribute('data-awaiting');
+  formatNumbers(pane);
+  enhanceA11y(pane);
+}
+
+/** Bila pane tab-items sedang menunggu vbeln ini (skeleton), render sekarang. */
+function applyBOMIfWaiting(vbeln) {
+  var pane = document.getElementById('tab-items');
+  if (pane && pane.getAttribute('data-awaiting') === vbeln && soBomCache[vbeln]) {
+    renderBOM(pane, vbeln);
+  }
+}
+
+/** Tampilkan pesan error bila pane sedang menunggu vbeln ini. */
+function applyBOMError(vbeln, msg) {
+  var pane = document.getElementById('tab-items');
+  if (pane && pane.getAttribute('data-awaiting') === vbeln) {
+    pane.removeAttribute('data-awaiting');
+    pane.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">' + msg + '</p></div>';
+  }
+}
+
+/** Dipanggil saat tab Item & BOM dibuka: sajikan cache, atau tunggu prefetch/fetch. */
 function loadBOM(pane) {
   var vbeln = pane.getAttribute('data-vbeln');
   if (!vbeln) return;
 
-  /* Sajikan dari cache jika sudah pernah dimuat */
+  /* Sudah siap di cache (prefetch selesai / pernah dimuat) → instan. */
   if (soBomCache[vbeln]) {
-    pane.innerHTML = soBomCache[vbeln];
-    pane.setAttribute('data-loaded', '1');
-    formatNumbers(pane);
-    enhanceA11y(pane);
+    renderBOM(pane, vbeln);
     return;
   }
 
+  /* Belum siap: tampilkan skeleton, tandai pane menunggu, pastikan fetch jalan.
+     Bila prefetch sudah in-flight, cukup menunggu callback-nya (fetchBOM dedup). */
+  pane.setAttribute('data-awaiting', vbeln);
   pane.innerHTML =
     '<div class="skel-table">' +
     '  <div class="skel-thead"></div>' +
@@ -647,24 +718,7 @@ function loadBOM(pane) {
     '  <div class="skel-row" style="width:80%"></div>' +
     '  <div class="skel-row" style="width:60%"></div>' +
     '</div>';
-
-  var xhr = new XMLHttpRequest();
-  xhr.open('GET', 'monitoring_bom.htm?vbeln=' + encodeURIComponent(vbeln), true);
-  xhr.onload = function() {
-    if (xhr.status === 200) {
-      soBomCache[vbeln] = xhr.responseText;
-      pane.innerHTML = xhr.responseText;
-      pane.setAttribute('data-loaded', '1');
-      formatNumbers(pane);
-      enhanceA11y(pane);
-    } else {
-      pane.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Gagal memuat Item &amp; BOM (HTTP ' + xhr.status + ').</p></div>';
-    }
-  };
-  xhr.onerror = function() {
-    pane.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">Error koneksi ke server.</p></div>';
-  };
-  xhr.send();
+  fetchBOM(vbeln);
 }
 
 /* ------------------------------------------------------------------

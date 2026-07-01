@@ -4,6 +4,13 @@
 > (`index.htm`, `monitoring.htm`, `monitoring_detail.htm`, `main.htm`, `js/js.js`, `css/style.css`).
 > Banyak isu dari versi sebelumnya **sudah selesai** (lihat Bagian 1). Bagian A–H di bawah hanya memuat
 > temuan yang **masih relevan** pada kode saat ini.
+>
+> **Pembaruan 1 Juli 2026:** paket besar kedua sudah dikerjakan (konsistensi status/progres, pemecahan
+> panel detail untuk kecepatan, Daftar Komponen gaya **COOIS** dari RESB, persentase **rata-rata** item,
+> dan **prefetch idle** tab Item & BOM). Ringkasan lengkap ada di **Bagian 1b**; backlog pengembangan
+> yang masih terbuka dikonsolidasi di **Bagian I** (paling bawah). Dokumen pendukung baru:
+> `update-monitoring.md` (strategi konsistensi & pemisahan endpoint) dan `erd_bom.md` (relasi tabel
+> tab Item & BOM).
 
 ---
 
@@ -17,18 +24,24 @@
 `VBAK` (header SO) → `VBAP` (item, filter `werks='2000'`) → `AFPO` (`psmng`=target, `wemng`=hasil GR) → status item.
 Drill BOM: `MAST` → `STPO` → `MAKT` (+ `MARD` stok, `EKPO` open PO, `AFKO` status order). Nama customer dari `KNA1`.
 
-**Aturan status item:** AFPO ada & `psmng>0` → `pct = wemng/psmng*100`; `≥100` = **Selesai**, selain itu = **Proses**; tidak ada AFPO / `psmng=0` = **Belum Produksi**.
+**Aturan status item (per item):** AFPO ada & `psmng>0` → `pct = wemng/psmng*100`; `≥100` = **Selesai**, selain itu = **Proses**; tidak ada AFPO / `psmng=0` = **Belum Produksi**. **Wajib agregasi:** 1 item bisa punya >1 order produksi → `psmng/wemng` **dijumlah per item** (`COLLECT` by `kdauf/kdpos`) sebelum klasifikasi. Klasifikasi & persentase dipusatkan di **`ZCL_CS_UTIL`** (`item_status`, `item_pct`, `css_pct`, `prog_bar_class`, `prog_txt_class`, `fmt_date`).
 
-**Halaman & alur:**
+**Persentase SO (per 1 Jul 2026):** = **rata-rata** progres tiap item (`Σ item_pct / jumlah item`), **bukan** rasio `done/total`. Lebar progress bar memakai `css_pct` (dibatasi 0..100 + desimal titik agar CSS valid).
+
+**Halaman & alur (arsitektur terkini):**
 | File | Peran |
 |------|-------|
 | `main.htm` | Flow Logic inisialisasi. Autentikasi = hanya cek `sy-uname` tidak kosong. |
-| `index.htm` | Dashboard: KPI, bar mingguan (Canvas), donut, kotak customer (KNA1), 10 SO terbaru. Filter periode 7/30/90 via POST reload. |
-| `monitoring.htm` | Pencarian (SO / kode cust / nama cust / rentang tanggal), sidebar daftar SO (paginasi 5/hal di sisi klien, **semua** baris dirender server-side), panel utama dimuat via AJAX. |
-| `monitoring_detail.htm` | Fragmen HTML AJAX (`?vbeln=`). Tab **Ringkasan / Item & BOM / Info Order**, expand BOM, tooltip material (stok & PO). |
-| `MIMEs/css/style.css`, `MIMEs/js/js.js` | Aset bersama (sudah dipisah dari HTML). Chart digambar manual via Canvas, tanpa library. |
+| `index.htm` | Dashboard: KPI, bar mingguan (Canvas), donut, kotak customer (KNA1), SO terbaru. Filter periode 7/30/90. Kartu backlog dimuat AJAX dari `index_oldcard.htm`. |
+| `index_oldcard.htm` | Fragmen AJAX "SO Tertua Belum Selesai" (backlog). |
+| `monitoring.htm` | Pencarian + sidebar daftar SO (paginasi klien, **semua** baris dirender server-side), panel utama via AJAX. Status/persentase konsisten (agregasi + rata-rata). |
+| `monitoring_detail.htm` | Fragmen AJAX **RINGAN** (`?vbeln=`): hanya **Ringkasan + Info Order** (~4 query) + shell tab Item & BOM. |
+| `monitoring_bom.htm` | Fragmen AJAX **BERAT** (`?vbeln=`) — isi tab **Item & BOM**. Daftar Komponen gaya **COOIS** dari **RESB** (+`T001L` nama Sloc), expand per komponen (System Status/Kuantitas/Basic Start/Basic Finish/Actual Finish dari AFKO+JEST), kolom **Progres** (order). Fallback **MAST/STPO** (+tooltip stok/PO) untuk item tanpa order. Dimuat lazy + **prefetch idle** oleh `js.js`. |
+| `riwayat.htm` | Arsip SO selesai (semua item GR 100%); agregasi + rata-rata sama. |
+| `classes/ZCL_CS_UTIL.abap` | Global class helper (warna progres, tanggal, klasifikasi, rata-rata, lebar CSS). **Wajib aktif SEBELUM halaman.** |
+| `MIMEs/css/style.css`, `MIMEs/js/js.js` | Aset bersama. Chart Canvas manual, tanpa library. Cache-buster: css `?r=5`, js `?r=6`. |
 
-Plant 2000 di-*hardcode* (`CONSTANTS lc_plant`) di setiap halaman.
+Plant 2000 di-*hardcode* (`CONSTANTS lc_plant`) di setiap halaman (lihat D4/Bagian I — multi-plant).
 
 ---
 
@@ -51,6 +64,33 @@ Agar pedoman ini akurat, berikut item lama yang **kini sudah diimplementasikan**
 - Paginasi sidebar dengan state di URL hash (`#page=N`).
 - Optimasi hitung item per SO: `READ … BINARY SEARCH` + `LOOP FROM` (bukan nested loop penuh).
 - Empty state pencarian dengan ilustrasi SVG.
+
+---
+
+## 1b. Selesai 30 Jun – 1 Jul 2026 ✅ (paket kedua)
+
+> Semua di bawah **sudah dikodekan**; belum diaktivasi/diuji di SAP nyata (tidak bisa dikompilasi di luar SAP).
+> Detail strategi: `update-monitoring.md`; relasi tabel tab Item & BOM: `erd_bom.md`.
+
+**Konsistensi status & progres**
+- **Agregasi AFPO per item** (`COLLECT` by `kdauf/kdpos`) di `index.htm`, `monitoring.htm`, `monitoring_detail.htm`, `riwayat.htm`, `index_oldcard.htm` — sebelumnya hanya `riwayat` yang agregat, sehingga item multi-order membaca 1 baris AFPO non-deterministik → **SO tampil "Selesai/100%" di daftar tapi "Proses/0%" di Ringkasan**. Kini konsisten di semua tampilan.
+- **Klasifikasi dipusatkan** di `ZCL_CS_UTIL=>item_status()` + konstanta `gc_st_done/inprog/noprod`.
+- **Persentase = rata-rata progres item** (`ZCL_CS_UTIL=>item_pct()`, dijumlah via field `sum_pct` lalu dibagi jumlah item) — bukan lagi `done/total`. Label "Selesai" tetap butuh semua item selesai.
+- **Lebar bar aman-lokal** via `ZCL_CS_UTIL=>css_pct()` (clamp 0..100 + paksa titik desimal) di semua progress bar.
+
+**Kecepatan panel detail**
+- `monitoring_detail.htm` **dirampingkan** → hanya Ringkasan + Info (~4 query); tab Item & BOM jadi shell kosong.
+- Endpoint berat dipisah ke **`monitoring_bom.htm`** (baru), dimuat lazy saat tab diklik (cache `soBomCache`).
+- **Prefetch idle** (`js.js`): ~400 ms setelah Ringkasan tampil, `monitoring_bom.htm` ditembak di latar untuk SO aktif → klik tab nyaris instan. Dedup via `bomInflight`, guard SO aktif, koordinasi `data-awaiting`.
+
+**Daftar Komponen gaya COOIS (`monitoring_bom.htm`)**
+- Komponen dari **RESB** (komponen/reservasi order) + **T001L** (nama Sloc), bukan lagi BOM master statis.
+- Kolom: **Material Komponen | Nama Material | Sloc - Nama Sloc | Progres** (kolom "Material induk" dihapus 1 Jul; kolom "Progres" = progres order produksi komponen).
+- **Expand per komponen**: System Status (JEST), Kuantitas (RESB-BDMNG), Basic Start (AFKO-GSTRP), Basic Finish (AFKO-GLTRP), Actual Finish (AFKO-GETRI).
+- **Fallback** ke BOM master MAST/STPO (+ tooltip stok/PO) hanya untuk item **tanpa** order produksi.
+- UoM ditambahkan ke kolom **Target** & **Hasil GR** (`AFPO-MEINS`) di tabel item.
+
+**Perlu verifikasi runtime (data nyata):** kode status JEST (`I0002/I0009/I0045`), `AFKO-GETRI` = actual finish, RESB (`BDMNG/LGORT/XLOEK`) & `T001L-LGOBE`, serta output desimal (titik).
 
 ---
 
@@ -240,3 +280,57 @@ Agar pedoman ini akurat, berikut item lama yang **kini sudah diimplementasikan**
 
 **Fase 4 — Roadmap**
 - Multi-plant, export, auto-refresh, OTD/lead time berbasis data aktual, dark mode, sinkron dokumentasi (G).
+
+---
+
+## I. Yang Perlu Dikembangkan Berikutnya (per 1 Juli 2026)
+
+Konsolidasi backlog **terbuka** setelah paket kedua (Bagian 1b). Item yang sudah selesai di A–D tidak diulang.
+
+### I.1 Prioritas Tinggi
+
+| # | Item | Kenapa sekarang |
+|---|------|-----------------|
+| **I-1** | **HTML-escape semua output `<%= %>` (E1).** Bungkus data master & input yang dipantulkan dengan `cl_http_utility=>escape_html( )` — terutama yang masuk atribut (`data-name`, `data-matnr`, `title`). | **Belum dikerjakan** & permukaan XSS **membesar**: kini ada `maktx`, `lgobe`, `arktx`, `name1`, echo pencarian, + banyak `data-*` di `monitoring_bom.htm`. |
+| **I-2** | **AUTHORITY-CHECK (E2/E4).** Objek otorisasi (mis. per plant) di `main.htm` **dan** di endpoint fragmen (`monitoring_detail.htm`, `monitoring_bom.htm`, `index_oldcard.htm`) yang menerima `vbeln` bebas. | Endpoint AJAX kini lebih banyak; semuanya tanpa cek hak akses. |
+| **I-3** | **OTD & lead time berbasis tanggal aktual (A3/A4/F).** `AFKO-GSTRI/GETRI` (sudah dibaca di `monitoring_bom.htm`) + `AFRU`/`MSEG` untuk tanggal GR nyata → ganti KPI relabel jadi metrik sejati. | Fondasi tanggal sudah tersedia sebagian (GETRI). |
+| **I-4** | **Multi-plant (D4/F).** `lc_plant` hardcoded di **6+** file. Jadikan parameter (dropdown + propagasi ke semua endpoint). | Duplikasi makin banyak seiring bertambahnya halaman. |
+
+### I.2 Prioritas Sedang
+
+| # | Item | Catatan |
+|---|------|---------|
+| **I-5** | **Ramping query `monitoring_bom.htm` (perf).** Lewati rantai fallback **MAST/STPO/MARD/EKPO/EKET** bila **semua** item punya order (kasus umum) — hemat ~5 query. Tandai **T001L** sebagai buffer. | Opsi yang sudah dianalisis; pelengkap prefetch idle. Cek dulu apakah ada item tanpa order sebelum menjalankan rantai fallback. |
+| **I-6** | **Lazy pagination sidebar (C2).** Render hanya halaman aktif + endpoint AJAX daftar + `COUNT`. | DOM membengkak untuk ratusan SO. |
+| **I-7** | **Export Excel/PDF** tabel SO/item/komponen. | Belum ada. |
+| **I-8** | **Sinkron dokumentasi (G/D8).** README/erd/flowchart + **`erd_bom.md` §4.2** (masih menyebut kolom "Material induk" yang sudah dihapus & kolom "Progres" baru). `update-monitoring.md` kini sebagian besar sudah terimplementasi — tandai selesai. | Dokumen tertinggal dari kode. |
+| **I-9** | **Auto-refresh dashboard** (timer + indikator live). | Roadmap F. |
+
+### I.3 Prioritas Rendah / Penyempurnaan
+
+| # | Item | Catatan |
+|---|------|---------|
+| **I-10** | **Caching SHM (C5).** `CL_SHM_AREA`/`EXPORT TO SHARED BUFFER` untuk agregat KPI, refresh N menit. | Infrastruktur. |
+| **I-11** | **Penyetelan prefetch BOM.** Opsional: batalkan XHR prefetch saat pindah SO, atau `sessionStorage` untuk cache lintas-reload, atau prefetch on-hover bila beban server jadi isu. | Fitur prefetch idle sudah jalan; ini tuning. |
+| **I-12** | **Bersihkan dead code.** `ls_card-rate`/`rate_i` di `index.htm` dihitung tapi tak ditampilkan sebagai bar. | Kebersihan. |
+| **I-13** | **Kuantitas ditarik komponen (RESB-ENMNG).** Tampilkan "qty ditarik vs dibutuhkan" di expand komponen bila diinginkan. | Ditawarkan saat desain kolom Progres; belum dipakai. |
+| **I-14** | **D5 (JSON serializer), C6 (subquery→FAE), preferensi user, role-based, dark mode, trend harian/bulanan, perbandingan periode, integrasi PP/EWM lebih dalam.** | Roadmap; risiko/manfaat rendah tanpa akses uji. |
+
+### I.4 Verifikasi wajib sebelum rilis (bukan pengembangan)
+
+- Kode status **JEST** (`I0002/I0009/I0045`) sesuai *customizing*.
+- **`AFKO-GETRI`** benar = *actual finish* di sistem ini; **`AFKO-GSTRP/GLTRP`** terisi.
+- **RESB** (`BDMNG/LGORT/XLOEK`) & **T001L-LGOBE** berperilaku sesuai asumsi; **EKET** terisi (A7).
+- Output angka desimal memakai **titik** (label & `css_pct`).
+
+---
+
+## J. Checklist Deployment (terkini)
+
+Urutan aktivasi di SAP (karena halaman memanggil class & endpoint baru):
+
+1. **`ZCL_CS_UTIL` (SE24/ADT) — AKTIFKAN DULU.** Harus memuat: `prog_bar_class`, `prog_txt_class`, `fmt_date`, `item_status`, `item_pct`, `css_pct`, + konstanta `gc_st_done/inprog/noprod` & tipe `ty_pct`. Assign ke package/transport `ZBSP_CS_APP`.
+2. **Buat & aktifkan BSP page baru `monitoring_bom.htm`** di SE80 (aplikasi `ZBSP_CS_APP`).
+3. **Aktifkan ulang** `monitoring_detail.htm` (kini ramping), `monitoring.htm`, `index.htm`, `index_oldcard.htm`, `riwayat.htm`.
+4. **Unggah ulang MIME** `js/js.js` (cache-buster `?r=6`) & `css/style.css` (`?r=5`).
+5. Smoke test **ST22** + browser: cari SO multi-order → status/% sama di semua tampilan; klik SO → Ringkasan instan; klik tab Item & BOM → komponen RESB + expand; item tanpa order → fallback BOM master.

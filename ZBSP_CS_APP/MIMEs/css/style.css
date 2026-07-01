@@ -431,10 +431,25 @@ canvas { display: block; max-width: 100%; }
 .so-border-inprog { border-left: 4px solid #2563eb; padding-left: 16px; }
 .so-border-noprod { border-left: 4px solid #9ca3af; padding-left: 16px; } /* B2: abu-abu, bukan hitam */
 
+/* Border kiri yang warnanya MENGIKUTI progress bar (prog-*) — dipakai monitoring.
+   Nilai warna identik dengan .prog-* agar border == bar. */
+.so-bl-red    { border-left: 4px solid #ef4444; padding-left: 16px; }
+.so-bl-orange { border-left: 4px solid #f97316; padding-left: 16px; }
+.so-bl-yellow { border-left: 4px solid #eab308; padding-left: 16px; }
+.so-bl-blue   { border-left: 4px solid #3b82f6; padding-left: 16px; }
+.so-bl-green  { border-left: 4px solid #22c55e; padding-left: 16px; }
+.so-bl-black  { border-left: 4px solid #9ca3af; padding-left: 16px; }
+
 /* Saat card dipilih, border biru aktif selalu menang (specificity lebih tinggi) */
 .so-item-row.active.so-border-done,
 .so-item-row.active.so-border-inprog,
-.so-item-row.active.so-border-noprod { border-left: 5px solid #2563eb; padding-left: 15px; }
+.so-item-row.active.so-border-noprod,
+.so-item-row.active.so-bl-red,
+.so-item-row.active.so-bl-orange,
+.so-item-row.active.so-bl-yellow,
+.so-item-row.active.so-bl-blue,
+.so-item-row.active.so-bl-green,
+.so-item-row.active.so-bl-black { border-left: 5px solid #2563eb; padding-left: 15px; }
 
 /* Label chip status */
 .so-status-label {

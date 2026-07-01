@@ -7,7 +7,7 @@
 *& (tanpa wrapper html/head/body), pola sama dengan monitoring_detail.htm.
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant        TYPE vbap-werks VALUE '2000',
-           lc_backlog_days TYPE i          VALUE 730.  " horizon scan backlog (hari)
+           lc_backlog_days TYPE i          VALUE 365.  " horizon scan backlog (hari) — 1 tahun terakhir
 
 TYPES: BEGIN OF ty_bl_stat,
          vbeln   TYPE vbak-vbeln,
@@ -40,7 +40,8 @@ DATA: lt_bl_hdr     TYPE TABLE OF vbak,
       lv_bl_from    TYPE d,
       lv_bl_lbl     TYPE string,
       lv_erdat_s    TYPE string,
-      lv_rate_i     TYPE i,
+      lv_rate_p     TYPE zcl_cs_util=>ty_pct,  " persentase presisi → width bar
+      lv_rate_i     TYPE i,                    " persentase bulat → label & ambang warna
       lv_color      TYPE string.
 
 lv_bl_from = sy-datum - lc_backlog_days.
@@ -127,10 +128,12 @@ ENDIF.
          READ TABLE lt_bl_stat INTO ls_bl_stat_r
            WITH KEY vbeln = ls_bl_hdr-vbeln BINARY SEARCH.
          lv_erdat_s = zcl_cs_util=>fmt_date( ls_bl_hdr-erdat ).
-         lv_rate_i = 0.
+         CLEAR: lv_rate_p, lv_rate_i.
          IF ls_bl_stat_r-total > 0.
-           " RATA-RATA progres item (Σ pct / jumlah item), bukan rasio done/total
-           lv_rate_i = ls_bl_stat_r-sum_pct / ls_bl_stat_r-total.
+           " RATA-RATA progres item (Σ pct / jumlah item), bukan rasio done/total.
+           " lv_rate_p (presisi) untuk width bar; lv_rate_i (bulat) untuk label & warna.
+           lv_rate_p = ls_bl_stat_r-sum_pct / ls_bl_stat_r-total.
+           lv_rate_i = lv_rate_p.
          ENDIF.
          IF     ls_bl_stat_r-noprod = ls_bl_stat_r-total. lv_color = '#9ca3af'.
          ELSEIF lv_rate_i >= 100.                         lv_color = '#22c55e'.
@@ -150,7 +153,7 @@ ENDIF.
         <span style="font-size:0.78rem; color:#6b7280;">Dibuat: <%= lv_erdat_s %></span>
       </div>
       <div style="display:flex; align-items:center; gap:8px;">
-        <div style="flex:1; height:7px; background:#e5e7eb; border-radius:4px; overflow:hidden;"><div style="height:100%; width:<%= lv_rate_i %>%; background:<%= lv_color %>; border-radius:4px;"></div></div>
+        <div style="flex:1; height:7px; background:#e5e7eb; border-radius:4px; overflow:hidden;"><div style="height:100%; width:<%= zcl_cs_util=>css_pct( lv_rate_p ) %>%; background:<%= lv_color %>; border-radius:4px;"></div></div>
         <span style="font-size:0.75rem; font-weight:700; color:#374151; min-width:36px; text-align:right;"><%= lv_rate_i %>%</span>
       </div>
       <div id="det-bl-<%= ls_bl_hdr-vbeln %>" style="display:none; margin-top:10px; padding-top:10px; border-top:1px dashed #e5e7eb; font-size:0.78rem; color:#4b5563;">
