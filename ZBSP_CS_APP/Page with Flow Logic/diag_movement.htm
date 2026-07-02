@@ -1,0 +1,319 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Page — DIAGNOSTIK Fase 0 (SEKALI PAKAI, read-only)
+*& Tujuan: mengungkap MODEL GERAKAN MATERIAL yang SEBENARNYA di sistem,
+*& agar asumsi movement type / arah SHKZG / rute sloc untuk Checkpoint
+*& Engine (Logic 2) bisa DIVERIFIKASI sebelum ditulis. Lihat result.md.
+*&
+*& Input: 1 material (wajib) + rentang tanggal (default 180 hari).
+*& Output:
+*&   A. Snapshot STOK (MARD) material di Plant 1000 & 2000 — lihat 1D00 vs 2KCS..229K
+*&   B. Ringkasan MOVEMENT TYPE yang muncul (bwart → berapa kali, contoh rute)
+*&   C. Daftar GERAKAN mentah (MSEG⨝MKPF): tgl, bwart, dari→ke sloc, SHKZG, qty
+*&
+*& CATATAN: halaman ini TIDAK ditautkan di navbar (alat diagnosa). Hapus/blok
+*& setelah asumsi terkunci.
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_p1000 TYPE werks_d VALUE '1000',
+           lc_p2000 TYPE werks_d VALUE '2000'.
+
+TYPES: BEGIN OF ty_mv,
+         mblnr TYPE mseg-mblnr,
+         mjahr TYPE mseg-mjahr,
+         zeile TYPE mseg-zeile,
+         matnr TYPE mseg-matnr,
+         werks TYPE mseg-werks,
+         lgort TYPE mseg-lgort,
+         bwart TYPE mseg-bwart,
+         shkzg TYPE mseg-shkzg,
+          menge TYPE mseg-menge,
+          meins TYPE mseg-meins,
+          umlgo TYPE mseg-umlgo,
+         aufnr TYPE mseg-aufnr,
+         budat TYPE mkpf-budat,
+       END OF ty_mv.
+
+TYPES: BEGIN OF ty_mard,
+         werks TYPE mard-werks,
+         lgort TYPE mard-lgort,
+         labst TYPE mard-labst,
+       END OF ty_mard.
+
+TYPES: BEGIN OF ty_sloc,
+         werks TYPE t001l-werks,
+         lgort TYPE t001l-lgort,
+         lgobe TYPE t001l-lgobe,
+       END OF ty_sloc.
+
+TYPES: BEGIN OF ty_sum,
+         bwart TYPE mseg-bwart,
+         cnt   TYPE i,
+         route TYPE string,     " contoh rute dari→ke (baris pertama yg dijumpai)
+         shk   TYPE mseg-shkzg,
+       END OF ty_sum.
+
+DATA: lt_mv    TYPE TABLE OF ty_mv,   ls_mv   TYPE ty_mv,
+      lt_mard  TYPE TABLE OF ty_mard, ls_mard TYPE ty_mard,
+      lt_sloc  TYPE TABLE OF ty_sloc, ls_sloc TYPE ty_sloc,
+      lt_sum   TYPE TABLE OF ty_sum,  ls_sum  TYPE ty_sum.
+
+FIELD-SYMBOLS <s> TYPE ty_sum.
+
+DATA: lv_user     TYPE string,
+      lv_in_matnr TYPE string,
+      lv_in_from  TYPE string,
+      lv_in_to    TYPE string,
+      lv_matnr    TYPE matnr,
+      lv_from     TYPE d,
+      lv_to       TYPE d,
+      lv_maktx    TYPE maktx,
+      lv_route    TYPE string,
+      lv_sloc_nm  TYPE string,
+      lv_um_nm    TYPE string,
+      lv_dt       TYPE string,
+      lv_cnt_mv   TYPE i,
+      lv_hl       TYPE string,   " highlight style bila sloc di pipeline/1D00
+      lv_pipe     TYPE string,   " daftar sloc pipeline utk cek highlight
+      lv_tok      TYPE string,   " token '/SLOC/' utk cek keanggotaan pipeline
+      lv_c1       TYPE string,
+      lv_c2       TYPE string.
+
+lv_user = sy-uname.
+lv_pipe = '/1D00/2KCS/2261/2262/22F2/22F3/229K/'.   " penanda highlight
+
+lv_in_matnr = request->get_form_field( 'matnr' ).
+lv_in_from  = request->get_form_field( 'date_from' ).
+lv_in_to    = request->get_form_field( 'date_to' ).
+
+" Rentang tanggal (default 180 hari terakhir)
+IF lv_in_from IS NOT INITIAL AND strlen( lv_in_from ) = 10.
+  lv_from = lv_in_from(4) && lv_in_from+5(2) && lv_in_from+8(2).
+ELSE.
+  lv_from = sy-datum - 180.
+ENDIF.
+IF lv_in_to IS NOT INITIAL AND strlen( lv_in_to ) = 10.
+  lv_to = lv_in_to(4) && lv_in_to+5(2) && lv_in_to+8(2).
+ELSE.
+  lv_to = sy-datum.
+ENDIF.
+
+IF lv_in_matnr IS NOT INITIAL.
+  CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+    EXPORTING input = lv_in_matnr IMPORTING output = lv_matnr.
+
+  " Nama material
+  SELECT SINGLE maktx FROM makt INTO lv_maktx
+    WHERE matnr = lv_matnr AND spras = sy-langu.
+
+  " A. Stok MARD di Plant 1000 & 2000 (semua sloc)
+  SELECT werks lgort labst FROM mard INTO TABLE lt_mard
+    WHERE matnr = lv_matnr AND ( werks = lc_p1000 OR werks = lc_p2000 ).
+  SORT lt_mard BY werks lgort.
+
+  " C. Gerakan MSEG ⨝ MKPF (tgl posting), difilter material + rentang tgl
+  SELECT m~mblnr m~mjahr m~zeile m~matnr m~werks m~lgort m~bwart m~shkzg
+         m~menge m~meins m~umlgo m~aufnr k~budat
+    FROM mseg AS m INNER JOIN mkpf AS k
+      ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+    INTO TABLE lt_mv
+    WHERE m~matnr = lv_matnr
+      AND k~budat BETWEEN lv_from AND lv_to
+      AND ( m~werks = lc_p1000 OR m~werks = lc_p2000 ).
+  SORT lt_mv BY budat DESCENDING mblnr DESCENDING zeile ASCENDING.
+  lv_cnt_mv = lines( lt_mv ).
+
+  " Nama sloc (T001L) untuk semua werks/lgort yg muncul (MARD + MSEG lgort & umlgo)
+  IF lt_mard IS NOT INITIAL OR lt_mv IS NOT INITIAL.
+    DATA: lt_slkey TYPE TABLE OF ty_sloc, ls_slkey TYPE ty_sloc.
+    LOOP AT lt_mard INTO ls_mard.
+      ls_slkey-werks = ls_mard-werks. ls_slkey-lgort = ls_mard-lgort.
+      APPEND ls_slkey TO lt_slkey.
+    ENDLOOP.
+    LOOP AT lt_mv INTO ls_mv.
+      IF ls_mv-lgort IS NOT INITIAL.
+        ls_slkey-werks = ls_mv-werks. ls_slkey-lgort = ls_mv-lgort.
+        APPEND ls_slkey TO lt_slkey.
+      ENDIF.
+    ENDLOOP.
+    SORT lt_slkey BY werks lgort.
+    DELETE ADJACENT DUPLICATES FROM lt_slkey COMPARING werks lgort.
+    IF lt_slkey IS NOT INITIAL.
+      SELECT werks lgort lgobe FROM t001l INTO TABLE lt_sloc
+        FOR ALL ENTRIES IN lt_slkey
+        WHERE werks = lt_slkey-werks AND lgort = lt_slkey-lgort.
+      SORT lt_sloc BY werks lgort.
+    ENDIF.
+  ENDIF.
+
+  " B. Ringkasan per movement type (bwart): jumlah + contoh rute
+  LOOP AT lt_mv INTO ls_mv.
+    IF ls_mv-umlgo IS NOT INITIAL.
+      lv_route = ls_mv-werks && '/' && ls_mv-lgort && ' -> ?/' && ls_mv-umlgo.
+    ELSE.
+      lv_route = ls_mv-werks && '/' && ls_mv-lgort && ' (' && ls_mv-shkzg && ')'.
+    ENDIF.
+    READ TABLE lt_sum ASSIGNING <s> WITH KEY bwart = ls_mv-bwart.
+    IF sy-subrc = 0.
+      <s>-cnt = <s>-cnt + 1.
+    ELSE.
+      CLEAR ls_sum.
+      ls_sum-bwart = ls_mv-bwart.
+      ls_sum-cnt   = 1.
+      ls_sum-route = lv_route.
+      ls_sum-shk   = ls_mv-shkzg.
+      APPEND ls_sum TO lt_sum.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_sum BY cnt DESCENDING bwart ASCENDING.
+ENDIF.
+%>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnostik Gerakan Material (Fase 0)</title>
+  <link rel="stylesheet" href="css/style.css?r=9">
+  <style>
+    .dg-wrap { max-width:1200px; margin:0 auto; padding:20px; }
+    .dg-tbl { width:100%; border-collapse:collapse; font-size:0.8rem; background:#fff; }
+    .dg-tbl th { background:#f9fafb; text-align:left; padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#374151; }
+    .dg-tbl td { padding:7px 10px; border-bottom:1px solid #f3f4f6; }
+    .dg-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; margin-bottom:20px; }
+    .dg-hd { background:#1e3a8a; color:#fff; padding:10px 14px; font-weight:700; font-size:0.9rem; }
+    .dg-hl { background:#ecfdf5; font-weight:700; color:#065f46; }
+    .dg-in { background:#eff6ff; }  /* SHKZG S = masuk */
+    .dg-out{ background:#fef2f2; }  /* SHKZG H = keluar */
+    .dg-code { font-family:monospace; font-weight:700; }
+    .dg-legend { font-size:0.75rem; color:#6b7280; margin:6px 0 0; }
+  </style>
+</head>
+<body>
+  <div class="header-bar">
+    <div class="header-title">
+      <h1>Diagnostik Gerakan Material &#8212; Fase 0</h1>
+      <p>Verifikasi movement type / arah SHKZG / rute sloc sebelum membangun Checkpoint Engine (read-only)</p>
+    </div>
+    <div class="header-user"><span>User SAP: <%= lv_user %></span></div>
+  </div>
+
+  <div class="dg-wrap">
+    <div class="dg-card">
+      <div class="dg-hd">Parameter</div>
+      <form method="get" action="" style="padding:14px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+        <div class="form-group" style="width:280px;"><label>Material (wajib)</label><input type="text" name="matnr" value="<%= lv_in_matnr %>" placeholder="kode material"></div>
+        <div class="form-group" style="width:170px;"><label>Dari Tanggal</label><input type="date" name="date_from" value="<%= lv_in_from %>"></div>
+        <div class="form-group" style="width:170px;"><label>Sampai Tanggal</label><input type="date" name="date_to" value="<%= lv_in_to %>"></div>
+        <div class="btn-submit"><button type="submit" value="X">TAMPILKAN</button></div>
+        <a href="index.htm" style="padding:9px 14px; color:#374151; text-decoration:none; border:1px solid #d1d5db; border-radius:8px;">&larr; Dashboard</a>
+      </form>
+      <p class="dg-legend" style="padding:0 14px 12px;">Sloc pipeline (1D00 &rarr; 2KCS &rarr; 2261 &rarr; 2262 &rarr; 22F2 &rarr; 22F3 &rarr; 229K) di-<span class="dg-hl">highlight hijau</span>. Baris gerakan: <span class="dg-in">biru = SHKZG 'S' (masuk)</span>, <span class="dg-out">merah = 'H' (keluar)</span>.</p>
+    </div>
+
+    <% IF lv_in_matnr IS INITIAL. %>
+    <div class="dg-card"><div style="padding:28px; text-align:center; color:#9ca3af;">Masukkan kode material lalu klik TAMPILKAN.</div></div>
+    <% ELSE. %>
+
+    <div style="font-size:0.95rem; font-weight:700; color:#1e3a8a; margin-bottom:12px;">Material: <%= lv_matnr %> &#8212; <%= lv_maktx %></div>
+
+    <!-- A. STOK MARD -->
+    <div class="dg-card">
+      <div class="dg-hd">A. Snapshot Stok (MARD) &#8212; di mana stok berada kini?</div>
+      <table class="dg-tbl">
+        <thead><tr><th>Plant</th><th>Sloc</th><th>Nama Sloc</th><th style="text-align:right;">Stok (labst)</th></tr></thead>
+        <tbody>
+          <% IF lt_mard IS INITIAL. %>
+          <tr><td colspan="4" style="text-align:center; color:#9ca3af; padding:16px;">Tidak ada record MARD di Plant 1000/2000 untuk material ini.</td></tr>
+          <% ELSE.
+             LOOP AT lt_mard INTO ls_mard.
+               CLEAR lv_sloc_nm.
+               READ TABLE lt_sloc INTO ls_sloc WITH KEY werks = ls_mard-werks lgort = ls_mard-lgort BINARY SEARCH.
+               IF sy-subrc = 0. lv_sloc_nm = ls_sloc-lgobe. ENDIF.
+               CLEAR lv_hl.
+               lv_tok = '/' && ls_mard-lgort && '/'.
+               IF lv_pipe CS lv_tok. lv_hl = 'dg-hl'. ENDIF.
+          %>
+          <tr class="<%= lv_hl %>">
+            <td><%= ls_mard-werks %></td>
+            <td class="dg-code"><%= ls_mard-lgort %></td>
+            <td><%= lv_sloc_nm %></td>
+            <td style="text-align:right;"><span class="num-fmt"><%= ls_mard-labst %></span></td>
+          </tr>
+          <% ENDLOOP. ENDIF. %>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- B. RINGKASAN MOVEMENT TYPE -->
+    <div class="dg-card">
+      <div class="dg-hd">B. Movement Type yang Muncul (kunci verifikasi!)</div>
+      <table class="dg-tbl">
+        <thead><tr><th>Movement Type (bwart)</th><th style="text-align:right;">Jumlah baris</th><th>SHKZG contoh</th><th>Contoh rute (dari &rarr; ke)</th></tr></thead>
+        <tbody>
+          <% IF lt_sum IS INITIAL. %>
+          <tr><td colspan="4" style="text-align:center; color:#9ca3af; padding:16px;">Tidak ada gerakan pada rentang ini.</td></tr>
+          <% ELSE. LOOP AT lt_sum INTO ls_sum. %>
+          <tr>
+            <td class="dg-code" style="font-size:0.95rem; color:#1e3a8a;"><%= ls_sum-bwart %></td>
+            <td style="text-align:right;"><%= ls_sum-cnt %></td>
+            <td class="dg-code"><%= ls_sum-shk %></td>
+            <td style="font-family:monospace;"><%= ls_sum-route %></td>
+          </tr>
+          <% ENDLOOP. ENDIF. %>
+        </tbody>
+      </table>
+      <p class="dg-legend" style="padding:8px 14px 12px;">Legenda umum: 101=GR produksi/PO, 261=konsumsi ke order, 311/313/315=transfer antar-sloc, 301=transfer antar-plant, 309=transfer material. <strong>Perhatikan bwart mana yang rutenya menyentuh 2KCS/2261/2262/22F2/22F3/229K</strong> &mdash; itulah gerakan checkpoint yang akan dipakai engine.</p>
+    </div>
+
+    <!-- C. GERAKAN MENTAH -->
+    <div class="dg-card">
+      <div class="dg-hd">C. Daftar Gerakan Mentah (MSEG &#8901; MKPF) &#8212; <%= lv_cnt_mv %> baris</div>
+      <div style="overflow-x:auto;">
+      <table class="dg-tbl">
+        <thead><tr>
+          <th>Tgl Posting</th><th>Dokumen</th><th>Zeile</th><th>Bwart</th>
+          <th>Werks</th><th>Sloc</th><th>SHKZG</th><th style="text-align:right;">Qty</th>
+          <th>&rarr; Sloc</th><th>Order</th>
+        </tr></thead>
+        <tbody>
+          <% IF lt_mv IS INITIAL. %>
+          <tr><td colspan="10" style="text-align:center; color:#9ca3af; padding:16px;">Tidak ada gerakan MSEG pada rentang ini.</td></tr>
+          <% ELSE.
+             LOOP AT lt_mv INTO ls_mv.
+               lv_dt = zcl_cs_util=>fmt_date( ls_mv-budat ).
+               CLEAR lv_hl.
+               IF ls_mv-shkzg = 'S'. lv_hl = 'dg-in'. ELSE. lv_hl = 'dg-out'. ENDIF.
+               " highlight sel sloc bila di pipeline
+               CLEAR: lv_c1, lv_c2.
+               lv_tok = '/' && ls_mv-lgort && '/'.
+               IF lv_pipe CS lv_tok. lv_c1 = 'dg-hl'. ENDIF.
+               IF ls_mv-umlgo IS NOT INITIAL.
+                 lv_tok = '/' && ls_mv-umlgo && '/'.
+                 IF lv_pipe CS lv_tok. lv_c2 = 'dg-hl'. ENDIF.
+               ENDIF.
+          %>
+          <tr class="<%= lv_hl %>">
+            <td><%= lv_dt %></td>
+            <td class="dg-code"><%= ls_mv-mblnr %></td>
+            <td><%= ls_mv-zeile %></td>
+            <td class="dg-code" style="color:#1e3a8a;"><%= ls_mv-bwart %></td>
+            <td><%= ls_mv-werks %></td>
+            <td class="dg-code <%= lv_c1 %>"><%= ls_mv-lgort %></td>
+            <td class="dg-code"><%= ls_mv-shkzg %></td>
+            <td style="text-align:right;"><span class="num-fmt"><%= ls_mv-menge %></span> <%= ls_mv-meins %></td>
+            <td class="dg-code <%= lv_c2 %>"><%= ls_mv-umlgo %></td>
+            <td><%= ls_mv-aufnr %></td>
+          </tr>
+          <% ENDLOOP. ENDIF. %>
+        </tbody>
+      </table>
+      </div>
+    </div>
+
+    <% ENDIF. %>
+  </div>
+
+  <script src="js/js.js?r=6"></script>
+</body>
+</html>
