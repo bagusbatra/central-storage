@@ -22,7 +22,9 @@ CONSTANTS: lc_src_plant TYPE werks_d VALUE '1000',   " plant sumber
            lc_dst_plant TYPE werks_d VALUE '2000',   " plant tujuan (Central Storage)
            lc_dst_sloc  TYPE lgort_d VALUE '2KCS',   " sloc tujuan
            lc_mvt_out   TYPE bwart   VALUE '301',    " gerakan transfer (VERIFIKASI)
-           lc_horizon   TYPE i       VALUE 90.       " horizon histori "Sudah Dikirim" (hari)
+           lc_horizon   TYPE i       VALUE 90,       " horizon histori "Sudah Dikirim" (hari)
+           lc_cache_ttl TYPE i       VALUE 600,      " TTL snapshot cache INDX (detik)
+           lc_page_size TYPE i       VALUE 50.       " jumlah baris per halaman (pagination)
 
 TYPES: BEGIN OF ty_need,
          matnr    TYPE resb-matnr,
@@ -42,23 +44,38 @@ TYPES: BEGIN OF ty_need,
          st_cls   TYPE string,
        END OF ty_need.
 
+" Tipe fetch ramping — hanya kolom yang dipakai (kurangi transfer & memori)
+TYPES: BEGIN OF ty_resb,
+         matnr TYPE resb-matnr, meins TYPE resb-meins,
+         bdmng TYPE resb-bdmng, enmng TYPE resb-enmng,
+         aufnr TYPE resb-aufnr, bdter TYPE resb-bdter,
+       END OF ty_resb,
+       BEGIN OF ty_afpo,
+         aufnr TYPE afpo-aufnr, kdauf TYPE afpo-kdauf,
+       END OF ty_afpo,
+       BEGIN OF ty_makt,
+         matnr TYPE makt-matnr, maktx TYPE makt-maktx,
+       END OF ty_makt,
+       BEGIN OF ty_mard,
+         matnr TYPE mard-matnr, werks TYPE mard-werks,
+         lgort TYPE mard-lgort, labst TYPE mard-labst,
+       END OF ty_mard,
+       BEGIN OF ty_mv,
+         mblnr TYPE mseg-mblnr, matnr TYPE mseg-matnr,
+         menge TYPE mseg-menge, shkzg TYPE mseg-shkzg,
+         budat TYPE mkpf-budat,
+       END OF ty_mv,
+       BEGIN OF ty_soauf, aufnr TYPE afpo-aufnr, END OF ty_soauf.
+
 DATA: lt_need   TYPE SORTED TABLE OF ty_need WITH UNIQUE KEY matnr,
       lt_disp   TYPE STANDARD TABLE OF ty_need,
       ls_need   TYPE ty_need,
-      lt_resb   TYPE TABLE OF resb,
-      ls_resb   TYPE resb,
-      lt_afpo   TYPE TABLE OF afpo,
-      ls_afpo   TYPE afpo,
-      lt_mard   TYPE TABLE OF mard,
-      ls_mard   TYPE mard,
-      lt_makt   TYPE TABLE OF makt,
-      ls_makt   TYPE makt,
-      lt_mseg   TYPE TABLE OF mseg,
-      ls_mseg   TYPE mseg,
-      lt_mkpf   TYPE TABLE OF mkpf,
-      ls_mkpf   TYPE mkpf,
-      lt_so_auf TYPE TABLE OF afpo,
-      ls_so_auf TYPE afpo,
+      lt_resb   TYPE TABLE OF ty_resb,   ls_resb   TYPE ty_resb,
+      lt_afpo   TYPE TABLE OF ty_afpo,   ls_afpo   TYPE ty_afpo,
+      lt_makt   TYPE TABLE OF ty_makt,   ls_makt   TYPE ty_makt,
+      lt_mard   TYPE TABLE OF ty_mard,   ls_mard   TYPE ty_mard,
+      lt_mv     TYPE TABLE OF ty_mv,     ls_mv     TYPE ty_mv,
+      lt_so_auf TYPE TABLE OF ty_soauf,  ls_so_auf TYPE ty_soauf,
       lr_aufnr  TYPE RANGE OF afpo-aufnr,
       ls_r_auf  LIKE LINE OF lr_aufnr.
 
@@ -80,7 +97,20 @@ DATA: lv_user     TYPE string,
       lv_total_disp TYPE i,
       lv_row_bg   TYPE string,
       lv_ts_date  TYPE string,
-      lv_ts_time  TYPE string.
+      lv_ts_time  TYPE string,
+      lv_cacheable TYPE abap_bool,
+      lv_use_cache TYPE abap_bool,
+      lv_cache_ts  TYPE timestamp,
+      lv_now_ts    TYPE timestamp,
+      lv_cache_age TYPE i,
+      lv_f_page    TYPE string,      " pagination: input halaman (GET)
+      lv_page      TYPE i,
+      lv_pages     TYPE i,
+      lv_prev      TYPE i,
+      lv_next      TYPE i,
+      lv_from      TYPE i,
+      lv_to        TYPE i,
+      lv_qs        TYPE string.       " query-string filter untuk link halaman
 
 FIELD-SYMBOLS <n> TYPE ty_need.
 
@@ -91,12 +121,18 @@ lv_hz_from = sy-datum - lc_horizon.
 lv_f_matnr  = request->get_form_field( 'matnr' ).
 lv_f_so     = request->get_form_field( 'so_num' ).
 lv_f_status = request->get_form_field( 'status' ).
+lv_f_page   = request->get_form_field( 'page' ).
+IF lv_f_page IS NOT INITIAL AND lv_f_page CO '0123456789'.
+  lv_page = lv_f_page.
+ELSE.
+  lv_page = 1.
+ENDIF.
 
 " === Filter SO → kumpulkan aufnr order produksi milik SO tsb (RESB by aufnr) ===
 IF lv_f_so IS NOT INITIAL.
   CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
     EXPORTING input = lv_f_so IMPORTING output = lv_so_vbeln.
-  SELECT * FROM afpo INTO TABLE lt_so_auf WHERE kdauf = lv_so_vbeln.
+  SELECT aufnr FROM afpo INTO TABLE lt_so_auf WHERE kdauf = lv_so_vbeln.
   IF lt_so_auf IS INITIAL.
     lv_skip = abap_true.               " SO tanpa order → hasil kosong
   ELSE.
@@ -108,12 +144,39 @@ IF lv_f_so IS NOT INITIAL.
   ENDIF.
 ENDIF.
 
-IF lv_skip = abap_false.
+" === POIN 7: Cache snapshot (cluster INDX, TTL lc_cache_ttl) ===
+"     Hanya untuk tampilan default (tanpa filter SO), karena filter SO
+"     mengubah sumber query RESB. Filter material/status tetap diterapkan
+"     di ABAP atas data cache → load default nyaris instan.
+IF lv_f_so IS INITIAL.
+  lv_cacheable = abap_true.
+ENDIF.
+GET TIME STAMP FIELD lv_now_ts.
+IF lv_cacheable = abap_true.
+  " ID diberi versi (V1). Bila struktur ty_need diubah, naikkan ke V2 dst.
+  IMPORT tab = lt_need ts = lv_cache_ts FROM DATABASE indx(cs) ID 'TRANSFER_V2'.
+  IF sy-subrc = 0.
+    TRY.
+        lv_cache_age = cl_abap_tstmp=>subtract(
+                         tstmp1 = lv_now_ts tstmp2 = lv_cache_ts ).
+      CATCH cx_parameter_invalid_range cx_parameter_invalid_type.
+        lv_cache_age = lc_cache_ttl + 1.
+    ENDTRY.
+    IF lv_cache_age <= lc_cache_ttl.
+      lv_use_cache = abap_true.        " snapshot masih segar → pakai
+    ELSE.
+      CLEAR lt_need.                   " kadaluarsa → hitung ulang
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+IF lv_use_cache = abap_false AND lv_skip = abap_false.
   " === 1. RESB — kebutuhan komponen produksi Plant 2000 yang masih terbuka ===
   "     Model B. (Ganti ke werks=1000/lgort=1D00 bila pakai Model A.)
   " Catatan: filter open-qty (bdmng>enmng) TIDAK di WHERE — Open SQL klasik tak
   " mendukung banding kolom-ke-kolom. Disaring di loop bawah (IF lv_open <= 0).
-  SELECT * FROM resb INTO TABLE lt_resb
+  SELECT matnr meins bdmng enmng aufnr bdter
+    FROM resb INTO TABLE lt_resb
     WHERE werks = lc_dst_plant
       AND xloek = ' '
       AND kzear = ' '
@@ -141,94 +204,118 @@ IF lv_skip = abap_false.
       IF <n>-aufnr IS INITIAL. <n>-aufnr = ls_resb-aufnr. ENDIF.
     ENDIF.
   ENDLOOP.
-ENDIF.
 
-IF lt_need IS NOT INITIAL.
-  " === 2. SO terkait: aufnr → AFPO → kdauf ===
-  SELECT * FROM afpo INTO TABLE lt_afpo
-    FOR ALL ENTRIES IN lt_need
-    WHERE aufnr = lt_need-aufnr.
-  SORT lt_afpo BY aufnr.
-  LOOP AT lt_need ASSIGNING <n>.
-    IF <n>-aufnr IS INITIAL. CONTINUE. ENDIF.
-    READ TABLE lt_afpo INTO ls_afpo WITH KEY aufnr = <n>-aufnr BINARY SEARCH.
-    IF sy-subrc = 0. <n>-vbeln = ls_afpo-kdauf. ENDIF.
-  ENDLOOP.
-
-  " === 3. Nama material (MAKT) ===
-  SELECT * FROM makt INTO TABLE lt_makt
-    FOR ALL ENTRIES IN lt_need
-    WHERE matnr = lt_need-matnr AND spras = sy-langu.
-  SORT lt_makt BY matnr.
-  LOOP AT lt_need ASSIGNING <n>.
-    READ TABLE lt_makt INTO ls_makt WITH KEY matnr = <n>-matnr BINARY SEARCH.
-    IF sy-subrc = 0. <n>-maktx = ls_makt-maktx. ENDIF.
-  ENDLOOP.
-
-  " === 4. Stok tujuan (2KCS) & sumber (1D00) — MARD ===
-  SELECT * FROM mard INTO TABLE lt_mard
-    FOR ALL ENTRIES IN lt_need
-    WHERE matnr = lt_need-matnr
-      AND ( ( werks = lc_dst_plant AND lgort = lc_dst_sloc )
-         OR ( werks = lc_src_plant AND lgort = lc_src_sloc ) ).
-  LOOP AT lt_mard INTO ls_mard.
-    READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mard-matnr.
-    IF sy-subrc <> 0. CONTINUE. ENDIF.
-    IF ls_mard-werks = lc_dst_plant AND ls_mard-lgort = lc_dst_sloc.
-      <n>-stok_dst = <n>-stok_dst + ls_mard-labst.
-    ELSEIF ls_mard-werks = lc_src_plant AND ls_mard-lgort = lc_src_sloc.
-      <n>-stok_src = <n>-stok_src + ls_mard-labst.
-    ENDIF.
-  ENDLOOP.
-
-  " === 5. Sudah Dikirim aktual: MSEG (mvt 301, 1D00→2KCS) net reversal (SHKZG) ===
-  "     Baris keluar dari sumber: werks=1000/lgort=1D00. H = keluar (+),
-  "     S = masuk/pembalikan (−) → reversal 302 otomatis ternetralkan.
-  SELECT * FROM mseg INTO TABLE lt_mseg
-    FOR ALL ENTRIES IN lt_need
-    WHERE matnr = lt_need-matnr
-      AND bwart = lc_mvt_out
-      AND werks = lc_src_plant
-      AND lgort = lc_src_sloc.
-  IF lt_mseg IS NOT INITIAL.
-    SELECT * FROM mkpf INTO TABLE lt_mkpf
-      FOR ALL ENTRIES IN lt_mseg
-      WHERE mblnr = lt_mseg-mblnr AND mjahr = lt_mseg-mjahr
-        AND budat >= lv_hz_from.
-    SORT lt_mkpf BY mblnr mjahr.
-    LOOP AT lt_mseg INTO ls_mseg.
-      READ TABLE lt_mkpf INTO ls_mkpf
-        WITH KEY mblnr = ls_mseg-mblnr mjahr = ls_mseg-mjahr BINARY SEARCH.
-      IF sy-subrc <> 0. CONTINUE. ENDIF.   " di luar horizon
-      READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mseg-matnr.
-      IF sy-subrc <> 0. CONTINUE. ENDIF.
-      IF ls_mseg-shkzg = 'H'. <n>-sent = <n>-sent + ls_mseg-menge.
-      ELSE.                   <n>-sent = <n>-sent - ls_mseg-menge.
+  " === POIN 2: trim awal per filter material di path SO (tak di-cache) →
+  "     memangkas SELECT MSEG/MARD yang mahal. Path cache TIDAK di-trim
+  "     agar snapshot tetap lengkap. ===
+  IF lv_cacheable = abap_false AND lv_f_matnr IS NOT INITIAL.
+    lv_matnr_up = lv_f_matnr. TRANSLATE lv_matnr_up TO UPPER CASE.
+    CONCATENATE '*' lv_matnr_up '*' INTO lv_pat.
+    REFRESH lt_del.
+    LOOP AT lt_need ASSIGNING <n>.
+      lv_matnr_up = <n>-matnr. TRANSLATE lv_matnr_up TO UPPER CASE.
+      IF NOT lv_matnr_up CP lv_pat.
+        APPEND <n>-matnr TO lt_del.
       ENDIF.
-      IF ls_mkpf-budat >= <n>-last_dt.
-        <n>-last_dt  = ls_mkpf-budat.
-        <n>-last_doc = ls_mseg-mblnr.
+    ENDLOOP.
+    LOOP AT lt_del INTO ls_del_m.
+      DELETE lt_need WHERE matnr = ls_del_m.
+    ENDLOOP.
+  ENDIF.
+
+  IF lt_need IS NOT INITIAL.
+    " === 2. SO terkait: aufnr → AFPO → kdauf ===
+    SELECT aufnr kdauf FROM afpo INTO TABLE lt_afpo
+      FOR ALL ENTRIES IN lt_need
+      WHERE aufnr = lt_need-aufnr.
+    SORT lt_afpo BY aufnr.
+    LOOP AT lt_need ASSIGNING <n>.
+      IF <n>-aufnr IS INITIAL. CONTINUE. ENDIF.
+      READ TABLE lt_afpo INTO ls_afpo WITH KEY aufnr = <n>-aufnr BINARY SEARCH.
+      IF sy-subrc = 0. <n>-vbeln = ls_afpo-kdauf. ENDIF.
+    ENDLOOP.
+
+    " === 3. Nama material (MAKT) ===
+    SELECT matnr maktx FROM makt INTO TABLE lt_makt
+      FOR ALL ENTRIES IN lt_need
+      WHERE matnr = lt_need-matnr AND spras = sy-langu.
+    SORT lt_makt BY matnr.
+    LOOP AT lt_need ASSIGNING <n>.
+      READ TABLE lt_makt INTO ls_makt WITH KEY matnr = <n>-matnr BINARY SEARCH.
+      IF sy-subrc = 0. <n>-maktx = ls_makt-maktx. ENDIF.
+    ENDLOOP.
+
+    " === 4. Stok tujuan (2KCS) & sumber (1D00) — MARD ===
+    "     Catatan: agregasi SUM/GROUP BY tak bisa dipakai bersama FOR ALL ENTRIES
+    "     di Open SQL klasik → dijumlahkan di loop. Kolom tetap eksplisit (poin 3).
+    SELECT matnr werks lgort labst
+      FROM mard INTO TABLE lt_mard
+      FOR ALL ENTRIES IN lt_need
+      WHERE matnr = lt_need-matnr
+        AND ( ( werks = lc_dst_plant AND lgort = lc_dst_sloc )
+           OR ( werks = lc_src_plant AND lgort = lc_src_sloc ) ).
+    LOOP AT lt_mard INTO ls_mard.
+      READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mard-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      IF ls_mard-werks = lc_dst_plant AND ls_mard-lgort = lc_dst_sloc.
+        <n>-stok_dst = <n>-stok_dst + ls_mard-labst.
+      ELSEIF ls_mard-werks = lc_src_plant AND ls_mard-lgort = lc_src_sloc.
+        <n>-stok_src = <n>-stok_src + ls_mard-labst.
+      ENDIF.
+    ENDLOOP.
+
+    " === 5. Sudah Dikirim aktual: MSEG ⨝ MKPF (mvt 301, 1D00→2KCS) ===
+    "     POIN 1: tanggal disaring di DB (budat >= horizon) via INNER JOIN,
+    "     bukan tarik seluruh histori MSEG lalu saring di ABAP.
+    "     H = keluar (+), S = masuk/pembalikan (−) → reversal 302 ternetralkan.
+    SELECT m~mblnr m~matnr m~menge m~shkzg k~budat
+      FROM mseg AS m INNER JOIN mkpf AS k
+        ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+      INTO TABLE lt_mv
+      FOR ALL ENTRIES IN lt_need
+      WHERE m~matnr = lt_need-matnr
+        AND m~bwart = lc_mvt_out
+        AND m~werks = lc_src_plant
+        AND m~lgort = lc_src_sloc
+        AND k~budat >= lv_hz_from.
+    LOOP AT lt_mv INTO ls_mv.
+      READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mv-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      IF ls_mv-shkzg = 'H'. <n>-sent = <n>-sent + ls_mv-menge.
+      ELSE.                 <n>-sent = <n>-sent - ls_mv-menge.
+      ENDIF.
+      IF ls_mv-budat >= <n>-last_dt.
+        <n>-last_dt  = ls_mv-budat.
+        <n>-last_doc = ls_mv-mblnr.
+      ENDIF.
+    ENDLOOP.
+
+    " === 6. Hitung "Perlu Kirim" + status per material ===
+    LOOP AT lt_need ASSIGNING <n>.
+      <n>-perlu = <n>-need - <n>-stok_dst.
+      IF <n>-perlu < 0. <n>-perlu = 0. ENDIF.
+      IF <n>-perlu = 0.
+        <n>-status = 'Tercukupi'.        <n>-st_cls = 'tf-ok'.
+      ELSEIF <n>-stok_src >= <n>-perlu.
+        <n>-status = 'Akan Dikirim'.     <n>-st_cls = 'tf-need'.
+      ELSE.
+        <n>-status = 'Kurang Stok 1D00'. <n>-st_cls = 'tf-short'.
       ENDIF.
     ENDLOOP.
   ENDIF.
 
-  " === 6. Hitung "Perlu Kirim" + status per material ===
-  LOOP AT lt_need ASSIGNING <n>.
-    <n>-perlu = <n>-need - <n>-stok_dst.
-    IF <n>-perlu < 0. <n>-perlu = 0. ENDIF.
-    IF <n>-perlu = 0.
-      <n>-status = 'Tercukupi'.        <n>-st_cls = 'tf-ok'.
-    ELSEIF <n>-stok_src >= <n>-perlu.
-      <n>-status = 'Akan Dikirim'.     <n>-st_cls = 'tf-need'.
-    ELSE.
-      <n>-status = 'Kurang Stok 1D00'. <n>-st_cls = 'tf-short'.
-    ENDIF.
-  ENDLOOP.
+  " Simpan snapshot penuh ke cache (hanya path default tanpa filter SO)
+  IF lv_cacheable = abap_true.
+    EXPORT tab = lt_need ts = lv_now_ts TO DATABASE indx(cs) ID 'TRANSFER_V2'.
+  ENDIF.
+ENDIF.
 
+IF lt_need IS NOT INITIAL.
   " Salin ke tabel display STANDAR (lt_need sorted tak boleh di-SORT field lain)
   lt_disp = lt_need.
 
   " === 7. Filter aplikasi: material (CP) & status ===
+  "     (path cache: filter di sini; path SO: sebagian sudah di-trim di atas)
   IF lv_f_matnr IS NOT INITIAL.
     lv_matnr_up = lv_f_matnr. TRANSLATE lv_matnr_up TO UPPER CASE.
     CONCATENATE '*' lv_matnr_up '*' INTO lv_pat.
@@ -250,13 +337,43 @@ IF lt_need IS NOT INITIAL.
     DELETE lt_disp WHERE perlu > 0.
   ENDIF.
 
+  " Poin 3: sembunyikan material tanpa stok 1D00 (tak mungkin dikirim)
+  " DIAGNOSA SEMENTARA: dinonaktifkan agar nilai Stok 1D00 terlihat.
+  " Aktifkan kembali baris di bawah setelah kondisi data dipastikan.
+  " DELETE lt_disp WHERE stok_src <= 0.
+
   " KPI + urutan: yang paling perlu di atas
   LOOP AT lt_disp INTO ls_need.
     IF ls_need-perlu > 0.           lv_cnt_need  = lv_cnt_need + 1. ENDIF.
     IF ls_need-st_cls = 'tf-short'. lv_cnt_short = lv_cnt_short + 1. ENDIF.
   ENDLOOP.
-  SORT lt_disp BY perlu DESCENDING matnr ASCENDING.
+  " Urut: Tgl Butuh terbaru di atas (bdter kosong turun ke bawah), lalu material
+  SORT lt_disp BY bdter DESCENDING matnr ASCENDING.
   lv_total_disp = lines( lt_disp ).
+
+  " === Pagination: hitung jumlah halaman & rentang baris halaman aktif ===
+  lv_pages = lv_total_disp DIV lc_page_size.
+  IF lv_total_disp MOD lc_page_size > 0. lv_pages = lv_pages + 1. ENDIF.
+  IF lv_pages < 1. lv_pages = 1. ENDIF.
+  IF lv_page < 1.        lv_page = 1.        ENDIF.
+  IF lv_page > lv_pages. lv_page = lv_pages. ENDIF.
+  lv_prev = lv_page - 1.
+  lv_next = lv_page + 1.
+  lv_from = ( lv_page - 1 ) * lc_page_size + 1.
+  lv_to   = lv_page * lc_page_size.
+  IF lv_to > lv_total_disp. lv_to = lv_total_disp. ENDIF.
+
+  " Query-string filter agar link halaman mempertahankan filter aktif
+  CLEAR lv_qs.
+  IF lv_f_matnr IS NOT INITIAL.
+    lv_qs = lv_qs && '&amp;matnr=' && cl_http_utility=>escape_url( lv_f_matnr ).
+  ENDIF.
+  IF lv_f_so IS NOT INITIAL.
+    lv_qs = lv_qs && '&amp;so_num=' && cl_http_utility=>escape_url( lv_f_so ).
+  ENDIF.
+  IF lv_f_status IS NOT INITIAL.
+    lv_qs = lv_qs && '&amp;status=' && lv_f_status.
+  ENDIF.
 ENDIF.
 
 lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
@@ -331,7 +448,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         <% ENDIF. %>
       </div>
       <% ELSE. %>
-      <div style="overflow:auto; max-height:640px;">
+      <div>
       <table style="width:100%; border-collapse:collapse; font-size:0.82rem;">
         <thead>
           <tr style="background:#f9fafb; border-bottom:2px solid #e5e7eb; text-align:left; color:#374151;">
@@ -349,7 +466,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           </tr>
         </thead>
         <tbody>
-          <% LOOP AT lt_disp INTO ls_need.
+          <% LOOP AT lt_disp INTO ls_need FROM lv_from TO lv_to.
                lv_bdter_s = zcl_cs_util=>fmt_date( ls_need-bdter ).
                CLEAR lv_row_bg.
                IF ls_need-st_cls = 'tf-short'. lv_row_bg = 'background:#fef2f2;'. ENDIF.
@@ -378,12 +495,30 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         </tbody>
       </table>
       </div>
+
+      <!-- Pagination (50 baris / halaman) -->
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-top:1px solid #e5e7eb; background:#f9fafb; font-size:0.8rem; color:#374151;">
+        <span>Menampilkan <strong><%= lv_from %></strong>&ndash;<strong><%= lv_to %></strong> dari <strong><%= lv_total_disp %></strong></span>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <% IF lv_page > 1. %>
+          <a href="transfer.htm?page=<%= lv_prev %><%= lv_qs %>" style="padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none; color:#374151; background:#fff;">&lsaquo; Sebelumnya</a>
+          <% ELSE. %>
+          <span style="padding:6px 12px; border:1px solid #e5e7eb; border-radius:6px; color:#cbd5e1;">&lsaquo; Sebelumnya</span>
+          <% ENDIF. %>
+          <span style="padding:0 8px;">Hal. <strong><%= lv_page %></strong> / <%= lv_pages %></span>
+          <% IF lv_page < lv_pages. %>
+          <a href="transfer.htm?page=<%= lv_next %><%= lv_qs %>" style="padding:6px 12px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none; color:#374151; background:#fff;">Berikutnya &rsaquo;</a>
+          <% ELSE. %>
+          <span style="padding:6px 12px; border:1px solid #e5e7eb; border-radius:6px; color:#cbd5e1;">Berikutnya &rsaquo;</span>
+          <% ENDIF. %>
+        </div>
+      </div>
       <% ENDIF. %>
     </div>
 
   </div>
 
   <script src="js/js.js?r=3"></script>
-  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_user %> &bull; Rute: 1000/1D00 &rarr; 2000/2KCS</div>
+  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_user %> &bull; Rute: 1000/1D00 &rarr; 2000/2KCS<% IF lv_use_cache = abap_true. %> &bull; snapshot cache (&le; <%= lc_cache_ttl %> dtk)<% ENDIF. %></div>
 </body>
 </html>
