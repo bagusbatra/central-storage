@@ -1,9 +1,14 @@
 # Planning — Dot-bar Perjalanan Sloc di `monitoring_bom.htm` (tab Item & BOM)
 
-> Mengganti **progress bar % pada baris KOMPONEN (RESB)** di tab Item & BOM dengan
-> **dot-bar 4 titik** yang melacak perjalanan fisik material melewati sloc-sloc Plant 2000:
-> `1D00 → 2KCS → 2261 → 2262 → 22F2 → 22F3 → 229K`.
-> Status dokumen: **DRAFT / PLAN — untuk didiskusikan**. Disusun setelah tanya-jawab (lihat §1).
+> ⛔ **SUPERSEDED / DIBATALKAN.** Pendekatan dot-bar 4-titik + pipeline sloc TETAP ternyata **tidak cocok**:
+> rute internal Plant 2000 **dinamis per material** (banyak sloc: 22EK/2293/2292/…; mvt 311/261/101),
+> tak ada urutan tahap baku. **Diganti** oleh kolom **"Sloc Terkini"** (badge lokasi stok kini via MARD)
+> — sudah diimplementasikan di `monitoring_bom.htm` §3e + `style.css .sloc-badge`. Lihat `reference.md` §7.
+> Dokumen ini disimpan sebagai **rekam jejak keputusan**. Helper `dot_stages`/`pipeline_slocs` di
+> `ZCL_CS_UTIL` kini tak dipakai (boleh dihapus).
+>
+> ~~Mengganti progress bar % pada baris KOMPONEN (RESB) dengan dot-bar 4 titik yang melacak
+> perjalanan material melewati `1D00 → 2KCS → 2261 → 2262 → 22F2 → 22F3 → 229K`.~~
 
 ---
 
@@ -160,26 +165,48 @@ Bump cache-buster `style.css?r=` di semua halaman pemuat (atau minimal `monitori
 ### 4.3 `js.js`
 Tidak ada logika baru wajib (dot dirender server-side). Opsional: tooltip hover (title sudah cukup). Fragment tetap lewat `formatNumbers()`.
 
-### 4.4 `ZCL_CS_UTIL` (disarankan)
-Tambah method murni untuk memetakan angka → warna titik agar teruji & reusable:
+### 4.4 `ZCL_CS_UTIL` — ✅ SUDAH DIIMPLEMENTASIKAN
+Ditambahkan method murni + konstanta terpusat (aktifkan class di SE24/ADT sebelum halaman):
 ```abap
-" iv_q_2kcs..iv_q_229k, RETURNING warna 4 titik (mis. string 4-char 'GGYX')
-methods dot_stages IMPORTING ... RETURNING VALUE(rv_dots) TYPE string.
+" Konstanta pipeline: gc_plant_2000/1000, gc_sloc_1d00/2kcs/2261/2262/22f2/22f3/229k
+TYPES ty_qty    TYPE p LENGTH 15 DECIMALS 3.
+TYPES ty_dotbar ... " d1..d4 (kelas CSS 'dot-…'), pct, sloc_lbl, all_done
+
+" Range 6 sloc untuk WHERE lgort IN ( … )
+CLASS-METHODS pipeline_slocs RETURNING VALUE(rt_lgort) TYPE ty_lgort_range.
+
+" Inti: qty net masuk tiap sloc → 4 kelas warna titik
+CLASS-METHODS dot_stages
+  IMPORTING iv_q_2kcs iv_q_2261 iv_q_2262 iv_q_22f2 iv_q_22f3 iv_q_229k TYPE ty_qty
+            iv_at_1d00 TYPE abap_bool DEFAULT abap_false
+  RETURNING VALUE(rs_dot) TYPE ty_dotbar.
 ```
-Sekaligus tempat memusatkan urutan sloc & ambang. (Konsisten pola `prog_bar_class` dsb.)
+**Model final (mengatasi isu double-count §3.6):** `dot_stages` memakai **kumulatif-max dari hilir**
+`reached[s] = max( iv_q_s , reached[s+1] )`, sehingga `reached[s]` = "qty yang pernah mencapai
+minimal tahap s" — monotonik, tanpa penjumlahan antar-sloc, tahan anomali/perpindahan lanjutan.
+Acuan `R = max( iv_q_2kcs , reached[2261] )`. HIJAU bila `reached[s] >= R`, KUNING bila `0<…<R`,
+ABU bila 0; titik-1 MERAH bila `R=0 & iv_at_1d00`. Titik 4 KUNING saat parsial (keputusan §6-B).
+
+> ⚠️ **Sisa tanggung jawab halaman (belum di util):** menghitung `iv_q_*` = penerimaan **NET** ke tiap
+> sloc (net reversal `SHKZG` **saja**, BUKAN dikurangi arus keluar ke hilir). Opsi rumus A/B §3.6
+> kini hanya soal **cara netting MSEG di halaman**, bukan lagi soal model dot — dikunci setelah Fase 0.
 
 ---
 
-## 5. Asumsi & Verifikasi Sistem (Fase 0 — WAJIB sebelum kunci logika)
+## 5. Asumsi & Verifikasi Sistem (Fase 0 — ✅ DIKONFIRMASI)
 
-| # | Cek | Transaksi | Yang dicatat | Konsekuensi |
-|---|-----|-----------|--------------|-------------|
-| V1 | **Movement type antar-sloc** 2KCS→2261→…→229K | MB51 (werks 2000, per sloc) | 311? 313/315? Z? | Set filter `bwart` untuk "masuk sloc". Beda → sesuaikan. |
-| V2 | **Arah baris MSEG** masuk sloc | SE16 MSEG 1 dokumen | baris `lgort=tujuan` → `SHKZG`=`S`? | Kunci definisi "qty masuk sloc s". |
-| V3 | **Masuk 2KCS** dari 1D00 | MB51 | tetap 301 (seperti transfer.htm)? | Sumber `R = q[2KCS]`. |
-| V4 | **UoM konsisten** antar sloc & vs RESB | MMBE/MM03 | sama? | Beda → konversi base unit; jangan campur. |
-| V5 | **Keterkaitan SO** | MSEG `aufnr` pada 311? | biasanya kosong | Menentukan §6-A (per-material vs per-SO). |
-| V6 | **Horizon cukup** | — | material lama (>90 hr) masih relevan? | Sesuaikan `lc_horizon`. |
+> **Hasil Fase 0 (dikonfirmasi user):** movement type **301 (1D00→2KCS) & 311 (antar-sloc)**;
+> arah baris masuk `SHKZG='S'`; **horizon 90 hari cukup**. Kode di `monitoring_bom.htm` §3e sudah final
+> memakai ini. Reversal **302/312** di-net sebagai standar SAP (aman bila tak ada).
+
+| # | Cek | Hasil |
+|---|-----|-------|
+| V1 | Movement type antar-sloc | ✅ **311** |
+| V2 | Arah baris MSEG masuk sloc | ✅ `SHKZG='S'` (pembalikan `'H'` mvt 302/312) |
+| V3 | Masuk 2KCS dari 1D00 | ✅ **301** |
+| V4 | UoM konsisten antar sloc & vs RESB | ⚠️ belum diuji spesifik — asumsikan base unit sama; cek bila angka janggal |
+| V5 | Keterkaitan SO (`aufnr` pada 311) | ➖ per-material agregat dipakai (§6-A) |
+| V6 | Horizon cukup | ✅ **90 hari cukup** |
 
 ---
 
@@ -220,10 +247,12 @@ Sekaligus tempat memusatkan urutan sloc & ambang. (Konsisten pola `prog_bar_clas
 ---
 
 ## 9. Urutan Implementasi
-1. **Fase 0** — verifikasi V1–V6 (movement type antar-sloc & arah `SHKZG` paling kritis).
+1. ✅ **Fase 0** — dikonfirmasi: mvt 301/311, `SHKZG='S'` masuk, horizon 90 hari cukup.
 2. Kunci keputusan §6 (A–H) bersama.
-3. `ZCL_CS_UTIL=>dot_stages` + unit sanity (tabel §2).
-4. `monitoring_bom.htm` — query MSEG/MARD + hitung + render dot-bar.
-5. CSS dot-bar + cache-buster.
-6. Uji (Checklist §8) & validasi angka vs MB51/MMBE.
-7. `reference.md`.
+3. ✅ `ZCL_CS_UTIL=>dot_stages` + `pipeline_slocs` + konstanta sloc (aktifkan class di SE24/ADT).
+4. ✅ `monitoring_bom.htm` — query MSEG(301/302/311/312)⨝MKPF + MARD(1D00) → hitung `iv_q_*`
+   (net: masuk `SHKZG='S'`, pembalikan `SHKZG='H'`, arus keluar diabaikan) → `dot_stages` → dot-bar.
+   **Fase 0 ✅ dikonfirmasi (mvt 301/311, SHKZG 'S', horizon 90) — logika final.**
+5. ✅ CSS `.dotbar/.dot/.dot-red/.dot-yellow/.dot-green` di `style.css`; cache-buster `?r=8` di 4 halaman.
+6. ⏳ Uji (Checklist §8) & validasi angka vs MB51/MMBE — **setelah Fase 0 dikonfirmasi**.
+7. ⏳ `reference.md`.

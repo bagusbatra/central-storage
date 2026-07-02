@@ -37,6 +37,8 @@ Sumber: `ZBSP_CS_APP/classes/ZCL_CS_UTIL.abap`. **Tidak** mengakses tabel DB (mu
 | `prog_bar_class( iv_pct )` | → `string` | Kelas warna bar (`prog-green/blue/yellow/orange/red`). |
 | `prog_txt_class( iv_pct )` | → `string` | Kelas warna teks persen. |
 | `fmt_date( iv_date )` | → `string` | `DATS` → `'DD/MM/YYYY'`. |
+| `gc_plant_2000/1000`, `gc_sloc_1d00` | konstanta | Plant/sloc dipakai `monitoring_bom.htm` (Sloc Terkini) & transfer. |
+| `ty_qty` / `ty_dotbar` / `ty_lgort_range`, `gc_sloc_2kcs…229k`, `pipeline_slocs( )`, `dot_stages( … )` | tipe/konstanta/method | **Tidak dipakai** (sisa pendekatan dot-bar/pipeline yang diganti "Sloc Terkini"). Boleh dihapus. |
 
 ---
 
@@ -145,6 +147,17 @@ Sumber: `ZBSP_CS_APP/classes/ZCL_CS_UTIL.abap`. **Tidak** mengakses tabel DB (mu
 | 11 | Stok | **MARD** | `matnr, labst` | FAE `lt_comp`, `matnr=idnrk AND werks=2000 AND labst>0` | Stok komponen (tooltip). |
 | 12 | PO terbuka | **EKPO** | `ebeln, ebelp, matnr` | FAE `lt_comp`, `matnr=idnrk AND werks=2000 AND loekz=' ' AND elikz=' '` | PO belum lengkap komponen. |
 | 13 | Jadwal PO | **EKET** | `ebeln, ebelp, eindt, menge, wemng` | FAE `lt_ekpo_pre`, `ebeln=... AND ebelp=...` | Qty terbuka `Σ(menge−wemng)` + ETA `eindt` terawal. |
+| 14 | **Sloc Terkini** (stok) | **MARD** | `matnr, werks, lgort, labst` | FAE material komponen (RESB), `labst>0 AND (werks=2000 OR (werks=1000 AND lgort=1D00))` | Lokasi stok material kini (semua sloc Plant 2000; +1D00 bila belum masuk). |
+| 15 | Nama sloc terkini | **T001L** | `werks, lgort, lgobe` | FAE `lt_curloc`, `werks=... AND lgort=...` | Nama sloc untuk badge Sloc Terkini (bisa di luar sloc reservasi RESB). |
+
+**Kolom "Sloc Terkini"** pada baris komponen (menggantikan progres GR/target lama): badge sloc tempat
+**stok material berada kini** (MARD `labst>0`) di Plant 2000, atau `1D00` (merah) bila belum masuk.
+Rute internal Plant 2000 **dinamis** per material (banyak sloc; mvt 311/261/101) → **tidak** dilacak
+sebagai tahap/persen. Material yang sama hanya berpindah sloc (bukan menjadi assembly baru).
+Bila material tersebar di >1 sloc, semua badge ditampilkan (qty terbesar dulu).
+
+> **Catatan:** `ZCL_CS_UTIL=>dot_stages`/`pipeline_slocs` + tipe `ty_qty`/`ty_dotbar` masih ada di class
+> namun **tidak dipakai lagi** (pendekatan dot-bar/pipeline diganti "Sloc Terkini"). Boleh dihapus.
 
 ---
 

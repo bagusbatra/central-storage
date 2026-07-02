@@ -17,6 +17,12 @@
 *& expand per komponen (status sistem, kuantitas, basic start/finish, actual
 *& finish dari AFKO). Untuk item TANPA order → fallback BOM master (MAST/STPO)
 *& dengan tooltip stok/PO (MARD/EKPO/EKET). Lihat erd_bom.md & update-monitoring.md.
+*&
+*& KOLOM "SLOC TERKINI" (menggantikan progres GR/target komponen):
+*& menampilkan sloc tempat STOK material komponen berada kini (MARD labst>0) di
+*& Plant 2000, plus 1000/1D00 bila belum masuk. Rute internal Plant 2000 dinamis
+*& per material (banyak sloc; mvt 311/261/101) → TIDAK dilacak sebagai tahap/%.
+*& Nama sloc dari T001L. Material yang sama hanya berpindah sloc (bukan jadi assembly baru).
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
 
@@ -95,11 +101,7 @@ DATA: lv_comp_seq    TYPE i,
       lv_cstat_cls   TYPE string,
       lv_bstart      TYPE string,
       lv_bfin        TYPE string,
-      lv_afin        TYPE string,
-      lv_oprog       TYPE p DECIMALS 2,   " progres order produksi (GR/target) utk kolom Progres
-      lv_obcls       TYPE string,
-      lv_opcls       TYPE string,
-      lv_ohas        TYPE abap_bool.
+      lv_afin        TYPE string.
 
 TYPES: BEGIN OF ty_mard_agg,
          matnr TYPE mara-matnr,
@@ -174,6 +176,26 @@ DATA: lv_makt_text  TYPE maktx,
       lv_po_date    TYPE string,
       lv_rem        TYPE p DECIMALS 3,
       lv_agg_idx    TYPE i.
+
+" === SLOC TERKINI: tipe & tabel kerja (lokasi stok aktual per material komponen) ===
+"     Rute material di Plant 2000 dinamis (banyak sloc, mvt 311/261/101) → tidak
+"     dilacak sebagai tahap/%; cukup tampilkan sloc tempat stok material BERADA kini.
+TYPES: BEGIN OF ty_curloc,
+         matnr TYPE mard-matnr,
+         werks TYPE mard-werks,
+         lgort TYPE mard-lgort,
+         labst TYPE mard-labst,
+       END OF ty_curloc.
+
+DATA: lt_dot_drv  TYPE TABLE OF ty_mat,
+      lt_curloc   TYPE TABLE OF ty_curloc,
+      ls_curloc   TYPE ty_curloc,
+      lt_cur_sloc TYPE TABLE OF ty_sloc,
+      ls_cur_sloc TYPE ty_sloc,
+      lv_has_cur  TYPE abap_bool,
+      lv_cur_idx  TYPE i,
+      lv_cur_name TYPE string,
+      lv_badge_cls TYPE string.
 
 lv_req_vb = request->get_form_field( 'vbeln' ).
 
@@ -254,6 +276,41 @@ IF lv_req_vb IS NOT INITIAL.
         WHERE werks = lt_resb-werks
           AND lgort = lt_resb-lgort.
       SORT lt_sloc BY werks lgort.
+    ENDIF.
+
+    " === 3e. SLOC TERKINI: lokasi stok aktual material komponen (MARD) ===
+    "   Rute Plant 2000 dinamis (banyak sloc; mvt 311/261/101) → tampilkan sloc
+    "   tempat stok material BERADA kini, bukan tahap/%. Sumber: MARD labst>0 di
+    "   Plant 2000 (semua sloc) + 1000/1D00 (bila belum masuk 2000). Nama sloc: T001L.
+    IF lt_resb IS NOT INITIAL.
+      REFRESH lt_dot_drv.
+      LOOP AT lt_resb INTO ls_resb.
+        ls_makt_drv-matnr = ls_resb-matnr.
+        APPEND ls_makt_drv TO lt_dot_drv.
+      ENDLOOP.
+      SORT lt_dot_drv BY matnr.
+      DELETE ADJACENT DUPLICATES FROM lt_dot_drv COMPARING matnr.
+
+      IF lt_dot_drv IS NOT INITIAL.
+        SELECT matnr werks lgort labst FROM mard
+          INTO TABLE lt_curloc
+          FOR ALL ENTRIES IN lt_dot_drv
+          WHERE matnr = lt_dot_drv-matnr
+            AND labst > 0
+            AND ( werks = lc_plant
+               OR ( werks = zcl_cs_util=>gc_plant_1000 AND lgort = zcl_cs_util=>gc_sloc_1d00 ) ).
+        IF lt_curloc IS NOT INITIAL.
+          " Nama sloc terkini (T001L) — bisa mencakup sloc di luar reservasi RESB
+          SELECT werks lgort lgobe FROM t001l
+            INTO CORRESPONDING FIELDS OF TABLE lt_cur_sloc
+            FOR ALL ENTRIES IN lt_curloc
+            WHERE werks = lt_curloc-werks
+              AND lgort = lt_curloc-lgort.
+          SORT lt_cur_sloc BY werks lgort.
+        ENDIF.
+        " Urut per material, qty terbesar dulu (sloc utama tampil pertama)
+        SORT lt_curloc BY matnr labst DESCENDING.
+      ENDIF.
     ENDIF.
   ENDIF.
 
@@ -489,7 +546,7 @@ ENDIF.
                   <th style="width: 26%;">Material Komponen</th>
                   <th style="width: 32%;">Nama Material</th>
                   <th style="width: 24%;">Sloc - Nama Sloc</th>
-                  <th style="width: 18%; text-align: center;">Progres</th>
+                  <th style="width: 18%; text-align: center;" title="Sloc tempat stok material berada kini (Plant 2000; atau 1D00 bila belum masuk)">Sloc Terkini</th>
                 </tr>
               </thead>
               <tbody>
@@ -527,16 +584,6 @@ ENDIF.
                       IF lv_bfin   IS INITIAL. lv_bfin   = '-'. ENDIF.
                       IF lv_afin   IS INITIAL. lv_afin   = '-'. ENDIF.
 
-                      " Progres order produksi (GR/target) — kolom Progres tiap komponennya
-                      CLEAR: lv_oprog, lv_obcls, lv_opcls, lv_ohas.
-                      IF ls_afpo_ord-psmng > 0.
-                        lv_ohas  = abap_true.
-                        lv_oprog = ls_afpo_ord-wemng * 100 / ls_afpo_ord-psmng.
-                        IF lv_oprog > 100. lv_oprog = 100. ENDIF.
-                        lv_obcls = zcl_cs_util=>prog_bar_class( lv_oprog ).
-                        lv_opcls = zcl_cs_util=>prog_txt_class( lv_oprog ).
-                      ENDIF.
-
                       READ TABLE lt_resb TRANSPORTING NO FIELDS
                         WITH KEY aufnr = ls_afpo_ord-aufnr BINARY SEARCH.
                       IF sy-subrc = 0.
@@ -568,12 +615,30 @@ ENDIF.
                   <td><%= lv_makt_text %></td>
                   <td><%= lv_sloc_disp %></td>
                   <td style="text-align: center;">
-                    <% IF lv_ohas = abap_true. %>
-                    <div class="prog-container">
-                      <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_obcls %>" style="width:<%= zcl_cs_util=>css_pct( lv_oprog ) %>%;"></div></div></div>
-                      <span class="prog-pct <%= lv_opcls %>"><%= lv_oprog %>%</span>
-                    </div>
-                    <% ELSE. %><span style="font-style:italic; color:#9ca3af; font-size:0.8rem;">No Prod</span>
+                    <%
+                      lv_has_cur = abap_false.
+                      READ TABLE lt_curloc TRANSPORTING NO FIELDS
+                        WITH KEY matnr = ls_resb-matnr BINARY SEARCH.
+                      IF sy-subrc = 0.
+                        lv_cur_idx = sy-tabix.
+                        LOOP AT lt_curloc INTO ls_curloc FROM lv_cur_idx.
+                          IF ls_curloc-matnr <> ls_resb-matnr. EXIT. ENDIF.
+                          lv_has_cur = abap_true.
+                          CLEAR lv_cur_name.
+                          READ TABLE lt_cur_sloc INTO ls_cur_sloc
+                            WITH KEY werks = ls_curloc-werks lgort = ls_curloc-lgort BINARY SEARCH.
+                          IF sy-subrc = 0. lv_cur_name = ls_cur_sloc-lgobe. ENDIF.
+                          IF ls_curloc-werks = zcl_cs_util=>gc_plant_1000.
+                            lv_badge_cls = 'sloc-src'.
+                          ELSE.
+                            lv_badge_cls = 'sloc-cur'.
+                          ENDIF.
+                    %>
+                    <span class="sloc-badge <%= lv_badge_cls %>" title="Stok: <%= ls_curloc-labst %>"><%= ls_curloc-lgort %><% IF lv_cur_name IS NOT INITIAL. %> &middot; <%= lv_cur_name %><% ENDIF. %></span>
+                    <% ENDLOOP.
+                       ENDIF.
+                       IF lv_has_cur = abap_false. %>
+                    <span style="color:#9ca3af; font-style:italic; font-size:0.8rem;">Tidak ada stok</span>
                     <% ENDIF. %>
                   </td>
                 </tr>
