@@ -77,6 +77,8 @@ DATA: lv_user     TYPE string,
       lt_del      TYPE TABLE OF matnr,
       ls_del_m    TYPE matnr,
       lv_bdter_s  TYPE string,
+      lv_total_disp TYPE i,
+      lv_row_bg   TYPE string,
       lv_ts_date  TYPE string,
       lv_ts_time  TYPE string.
 
@@ -254,6 +256,7 @@ IF lt_need IS NOT INITIAL.
     IF ls_need-st_cls = 'tf-short'. lv_cnt_short = lv_cnt_short + 1. ENDIF.
   ENDLOOP.
   SORT lt_disp BY perlu DESCENDING matnr ASCENDING.
+  lv_total_disp = lines( lt_disp ).
 ENDIF.
 
 lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
@@ -314,6 +317,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <div class="filter-bar" style="margin-bottom:16px; gap:20px;">
       <span style="font-size:0.85rem; color:#374151;">Perlu Dikirim: <strong style="color:#f97316;"><%= lv_cnt_need %></strong> material</span>
       <span style="font-size:0.85rem; color:#374151;">Kurang stok 1D00: <strong style="color:#ef4444;"><%= lv_cnt_short %></strong></span>
+      <span style="font-size:0.85rem; color:#374151;">Total material: <strong><%= lv_total_disp %></strong></span>
       <span style="font-size:0.8rem; color:#6b7280;">Rute: 1000/1D00 &rarr; 2000/2KCS &bull; Histori kirim <%= lc_horizon %> hari</span>
     </div>
 
@@ -327,7 +331,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         <% ENDIF. %>
       </div>
       <% ELSE. %>
-      <div style="overflow-x:auto;">
+      <div style="overflow:auto; max-height:640px;">
       <table style="width:100%; border-collapse:collapse; font-size:0.82rem;">
         <thead>
           <tr style="background:#f9fafb; border-bottom:2px solid #e5e7eb; text-align:left; color:#374151;">
@@ -347,8 +351,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         <tbody>
           <% LOOP AT lt_disp INTO ls_need.
                lv_bdter_s = zcl_cs_util=>fmt_date( ls_need-bdter ).
+               CLEAR lv_row_bg.
+               IF ls_need-st_cls = 'tf-short'. lv_row_bg = 'background:#fef2f2;'. ENDIF.
           %>
-          <tr style="border-bottom:1px solid #f3f4f6;">
+          <tr style="border-bottom:1px solid #f3f4f6; <%= lv_row_bg %>">
             <td style="padding:9px 12px; font-weight:700; color:#1e3a8a;"><%= ls_need-matnr %></td>
             <td style="padding:9px 12px; color:#374151;"><%= ls_need-maktx %></td>
             <td style="padding:9px 12px; text-align:right;"><span class="num-fmt" data-val="<%= ls_need-need %>"><%= ls_need-need %></span></td>

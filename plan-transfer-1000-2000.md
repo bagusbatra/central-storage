@@ -199,16 +199,31 @@ Alih-alih dua daftar terpisah, hasil akhir = **satu baris per material** (opsion
 
 ## 8. Rencana Implementasi Bertahap
 
-| Fase | Aktivitas | Output |
+| Fase | Aktivitas | Status |
 |------|-----------|--------|
-| **0. Verifikasi data** | ST05/MB51 cek movement type nyata (301/311/Z); SE16 RESB cek Model A vs B ada tidaknya; konfirmasi field `UMWRK/UMLGO` terisi | Keputusan movement type & model data |
-| **1. Skeleton halaman** | Buat `transfer.htm` (header, navbar, filter form kosong), tambah tab di 3 halaman lain | Halaman tampil, navigasi jalan |
-| **2. Basis rekonsiliasi (RESB)** | RESB (Model A/B) → Butuh/Terkirim/Sisa per material + MAKT | Tabel inti Butuh/Terkirim/Sisa |
-| **3. Aktual MB1B (MSEG) + VALIDASI** | MSEG+MKPF (net reversal) untuk tgl kirim & nomor dokumen. **Gerbang: cocokkan qty Terkirim vs MB51 sebelum lanjut** | Angka terverifikasi |
-| **4. Kolom pelengkap** | Stok 1D00 (MARD), SO terkait (AFPO→VBAK), status per baris | Tabel lengkap |
-| **5. Filter & status** | Filter material/tgl/status/dok + badge | Interaktif |
-| **6. Polish** | Format angka, paginasi, empty-state, KPI kecil, a11y | Setara halaman lain |
-| **7. Dokumentasi** | Update `reference.md` (§ tab baru) + `README`/`erd` | Docs sinkron |
+| **0. Verifikasi data** | MB51 movement type; SE16 RESB Model A/B; `UMWRK/UMLGO`, `SHKZG`, UoM, batch | ⏳ **MENUNGGU ANDA** (butuh akses SAP) — worksheet §8.1 |
+| **1. Skeleton halaman** | `transfer.htm` + tab ke-4 di 4 halaman | ✅ Selesai |
+| **2. Basis rekonsiliasi (RESB)** | RESB → Butuh/Sisa per material + MAKT | ✅ Selesai (Model B, perlu konfirmasi Fase 0) |
+| **3. Aktual MB1B (MSEG)** | MSEG+MKPF (net `SHKZG`) → tgl & dok kirim | ✅ Selesai (asumsi mvt 301) |
+| **4. Kolom pelengkap** | Stok 1D00/2KCS (MARD), SO (AFPO→VBAK), status | ✅ Selesai |
+| **5. Filter & status** | Material / SO / status + badge | ✅ Selesai |
+| **6. Polish** | Format angka, KPI, empty-state, total, scroll, highlight kurang-stok | ✅ Selesai (paginasi & filter tgl/dok → v2) |
+| **7. Dokumentasi** | `reference.md` §8b + matriks | ✅ Selesai |
+
+> **Ringkas:** Fase 1–7 sudah dikodekan (v1). **Fase 0 wajib Anda jalankan** untuk memvalidasi 3 asumsi
+> (movement type, Model A/B, netting `SHKZG`). Bila hasilnya beda, ubahannya kecil & terlokalisir di `transfer.htm`.
+
+### 8.1. Worksheet Fase 0 (jalankan di SAP, lapor hasilnya)
+
+| # | Cek | Transaksi / Query | Yang dicatat | Konsekuensi |
+|---|-----|-------------------|--------------|-------------|
+| **V1** | Movement type transfer | **MB51**: Plant `1000`, Sloc `1D00`, filter tujuan ke 2000/2KCS | Angka mvt (301? 311? Z?) | Kalau ≠ 301 → ubah `lc_mvt_out` di `transfer.htm` |
+| **V2** | Struktur baris & arah | **SE16→MSEG**: buka 1 dokumen dari V1 | Baris `WERKS=1000/LGORT=1D00` → `SHKZG`=? (`H`/`S`); `UMWRK/UMLGO`=2000/2KCS? | Konfirmasi netting `SHKZG='H'` benar (bila keluar = `S`, balik tanda) |
+| **V3** | Reservasi transfer (Model A) | **SE16→RESB**: `WERKS=1000, LGORT=1D00, BWART=301` | Ada baris? | **Ada → Model A** (ganti filter RESB ke 1000/1D00). **Tidak → tetap Model B** |
+| **V4** | Reservasi produksi 2000 (Model B) | **SE16→RESB**: `WERKS=2000, KZEAR=' ', XLOEK=' '` | Ada baris open? `AUFNR` terisi? | Bila kosong → sumber "Butuh" perlu didefinisikan ulang |
+| **V5** | Satuan (UoM) | Bandingkan `RESB-MEINS` vs `MSEG-MEINS` vs `MARD` (MMBE) 1 material | Sama atau beda? | Beda → tambah konversi base unit |
+| **V6** | Batch | Material master (MM03) 1 komponen | Batch-managed? | Ya → tambah kolom `CHARG` |
+| **V7** | Cocokkan angka | **MB51/MMBE/MD04** vs tampilan tab | Terkirim/Stok/Butuh cocok? | Selisih → telusuri filter terkait |
 
 ---
 
