@@ -3,8 +3,7 @@
 *&---------------------------------------------------------------------*
 *& Dashboard Statistik & Grafik — Central Storage KMI 2 — Plant 2000
 *&---------------------------------------------------------------------*
-CONSTANTS: lc_plant        TYPE vbap-werks VALUE '2000',
-           lc_backlog_days TYPE i          VALUE 730.  " horizon scan "SO Tertua Belum Selesai" (hari) — atur sesuai kebutuhan
+CONSTANTS lc_plant TYPE vbap-werks VALUE '2000'.
 
 TYPES: BEGIN OF ty_cust_info,
          kunnr  TYPE kna1-kunnr,
@@ -64,8 +63,7 @@ TYPES: BEGIN OF ty_so_prog,
          done   TYPE i,
          inprog TYPE i,
          noprod TYPE i,
-          rate   TYPE p LENGTH 8 DECIMALS 1,
-        END OF ty_so_prog.
+       END OF ty_so_prog.
 
 TYPES: BEGIN OF ty_card,
          vbeln   TYPE vbak-vbeln,
@@ -75,8 +73,6 @@ TYPES: BEGIN OF ty_card,
          done    TYPE i,
          inprog  TYPE i,
          noprod  TYPE i,
-         rate    TYPE zcl_cs_util=>ty_pct,
-         rate_i  TYPE i,
          kunnr   TYPE vbak-kunnr,
          auart   TYPE vbak-auart,
        END OF ty_card.
@@ -93,17 +89,12 @@ DATA: lv_user         TYPE string,
       lv_done         TYPE i,
       lv_inprog       TYPE i,
       lv_noprod       TYPE i,
-      lv_rate         TYPE p DECIMALS 1,
-      lv_rate_class   TYPE string,
-      lv_rate_alert   TYPE string,
       lv_dfrom        TYPE d,
       lv_dto          TYPE d,
-      lv_pct          TYPE p DECIMALS 2,
       lv_mm           TYPE string,
       lv_idx          TYPE i,
       lv_is_done      TYPE i,
       lv_cur_vbeln    TYPE vbak-vbeln,
-      lv_so_erdat     TYPE d,
       lv_sp_filled    TYPE abap_bool,
       lv_weekday      TYPE i,
       lv_week_mon     TYPE d,
@@ -123,8 +114,6 @@ DATA: lv_user         TYPE string,
       lv_lead_days    TYPE i,
       lv_lead_count   TYPE i,
       lv_leadtime     TYPE p DECIMALS 1,
-      lv_backlog_cnt  TYPE i,
-      lv_backlog_cls  TYPE string,
       lt_cust_list    TYPE TABLE OF ty_cust_info,
       ls_cust_list    TYPE ty_cust_info,
       lt_cust_kunnr   TYPE TABLE OF kna1-kunnr,
@@ -180,7 +169,7 @@ ENDIF.
 lv_dfrom = sy-datum - lv_period_days.
 lv_dto   = sy-datum.
 
-" === Kartu "SO Terbaru" & "SO Tertua Belum Selesai" dibangun dari lt_so_prog (lihat bawah) ===
+" === Kartu "SO Terbaru" dibangun dari lt_so_prog (lihat bawah) ===
 
 " === SELECT header SO Plant 2000 pada periode — filter plant di DB (PERF #1) ===
 SELECT vbeln erdat kunnr auart
@@ -238,21 +227,20 @@ IF lt_vbak IS NOT INITIAL.
   " C1: lt_vbap sudah terurut BY vbeln, jadi item satu SO berurutan. Pakai
   "     control-break manual → O(n): tanpa READ lt_so_prog linear per item,
   "     dan READ lt_vbak hanya sekali per SO (bukan per item).
-  CLEAR: lv_cur_vbeln, lv_so_erdat, lv_sp_filled.
+  CLEAR: lv_cur_vbeln, lv_sp_filled.
   LOOP AT lt_vbap INTO ls_vbap.
     " --- Control break: pindah ke SO baru ---
     IF ls_vbap-vbeln <> lv_cur_vbeln.
       IF lv_sp_filled = abap_true.
         APPEND ls_so_prog TO lt_so_prog.
       ENDIF.
-      CLEAR: ls_so_prog, lv_so_erdat.
+      CLEAR ls_so_prog.
       ls_so_prog-vbeln = ls_vbap-vbeln.
       READ TABLE lt_vbak INTO ls_vbak
         WITH KEY vbeln = ls_vbap-vbeln BINARY SEARCH.
       IF sy-subrc = 0.
         ls_so_prog-kunnr = ls_vbak-kunnr.
         ls_so_prog-auart = ls_vbak-auart.
-        lv_so_erdat      = ls_vbak-erdat.
         ls_so_prog-erdat = zcl_cs_util=>fmt_date( ls_vbak-erdat ).
       ENDIF.
       lv_cur_vbeln = ls_vbap-vbeln.
@@ -279,14 +267,6 @@ IF lt_vbak IS NOT INITIAL.
         lv_is_done = 3.
     ENDCASE.
 
-    " --- Backlog: item PROSES yang SO-nya dibuat > 30 hari lalu & belum selesai ---
-    "     (OTD & lead time dihitung terpisah dari tanggal GR aktual — lihat bawah)
-    IF lv_is_done = 2 AND lv_so_erdat IS NOT INITIAL.
-      IF ( sy-datum - lv_so_erdat ) > 30.
-        lv_backlog_cnt = lv_backlog_cnt + 1.
-      ENDIF.
-    ENDIF.
-
     " --- Akumulasi per-SO (di working area control-break) ---
     ls_so_prog-total = ls_so_prog-total + 1.
     IF lv_is_done = 1.
@@ -300,12 +280,6 @@ IF lt_vbak IS NOT INITIAL.
   " flush SO terakhir
   IF lv_sp_filled = abap_true.
     APPEND ls_so_prog TO lt_so_prog.
-  ENDIF.
-
-  " === Overall completion rate ===
-  IF lv_total_item > 0.
-    lv_pct  = lv_done.
-    lv_rate = ( lv_pct / lv_total_item ) * 100.
   ENDIF.
 
   " === A3/A4: On-Time Delivery & Lead Time berbasis tanggal GR aktual ===
@@ -380,16 +354,6 @@ IF lt_vbak IS NOT INITIAL.
     lv_leadtime = lv_lead_days / lv_lead_count.
   ENDIF.
 
-  " === Compute per-SO rates ===
-  LOOP AT lt_so_prog INTO ls_so_prog.
-    lv_idx = sy-tabix.
-    IF ls_so_prog-total > 0.
-      lv_pct = ls_so_prog-done.
-      ls_so_prog-rate = ( lv_pct / ls_so_prog-total ) * 100.
-    ENDIF.
-    MODIFY lt_so_prog FROM ls_so_prog INDEX lv_idx.
-  ENDLOOP.
-
   " === Data kartu dashboard: gabung lt_so_prog + erdat mentah (untuk sorting) ===
   LOOP AT lt_so_prog INTO ls_so_prog.
     CLEAR ls_card.
@@ -398,8 +362,6 @@ IF lt_vbak IS NOT INITIAL.
     ls_card-done    = ls_so_prog-done.
     ls_card-inprog  = ls_so_prog-inprog.
     ls_card-noprod  = ls_so_prog-noprod.
-    ls_card-rate    = ls_so_prog-rate.
-    ls_card-rate_i  = ls_so_prog-rate.
     ls_card-kunnr   = ls_so_prog-kunnr.
     ls_card-auart   = ls_so_prog-auart.
     ls_card-erdat_s = ls_so_prog-erdat.
@@ -415,8 +377,6 @@ IF lt_vbak IS NOT INITIAL.
   lt_recent_card = lt_card.
   SORT lt_recent_card BY erdat DESCENDING vbeln DESCENDING.
   DELETE lt_recent_card FROM 6.
-
-  " Kartu kiri (old-card) dibangun TERPISAH tanpa batas periode (lihat blok di bawah).
 
   " === Agregasi per minggu ===
   SORT lt_so_prog BY vbeln.
@@ -453,10 +413,6 @@ IF lt_vbak IS NOT INITIAL.
   ENDLOOP.
   SORT lt_mth BY month ASCENDING.
 ENDIF.
-
-" === Kartu "SO Tertua Belum Selesai" (old-card) dimuat via AJAX: index_oldcard.htm ===
-" PERF #2: query backlog yang berat dipindah ke endpoint terpisah agar TIDAK
-"          memblokir render halaman utama. Dimuat asinkron setelah halaman tampil.
 
 " === Customer list by SO ===
 lv_cust_search = request->get_form_field( 'cust_search' ).
@@ -508,19 +464,6 @@ IF lt_vbak IS NOT INITIAL.
   ENDIF.
 ENDIF.
 
-" === KPI Thresholds ===
-IF lv_total_item = 0.
-  lv_rate_class = 'kpi-gray'.
-ELSEIF lv_rate >= 80.
-  lv_rate_class = 'kpi-green'.
-ELSEIF lv_rate >= 50.
-  lv_rate_class = 'kpi-amber'.
-  lv_rate_alert = 'Perhatian: tingkat penyelesaian di bawah target 80%'.
-ELSE.
-  lv_rate_class = 'kpi-red'.
-  lv_rate_alert = 'KRITIS: penyelesaian sangat rendah, perlu tindakan segera!'.
-ENDIF.
-
 " === On-Time Delivery (OTD) Thresholds ===
 IF lv_otd_total = 0.
   lv_otd_cls = 'kpi-gray'.
@@ -532,15 +475,6 @@ ELSEIF lv_otd_rate >= 50.
 ELSE.
   lv_otd_cls = 'kpi-red'.
   lv_otd_alert = 'KRITIS: banyak order produksi terlambat!'.
-ENDIF.
-
-" === Backlog Thresholds ===
-IF lv_backlog_cnt > 5.
-  lv_backlog_cls = 'kpi-red'.
-ELSEIF lv_backlog_cnt > 0.
-  lv_backlog_cls = 'kpi-amber'.
-ELSE.
-  lv_backlog_cls = 'kpi-green'.
 ENDIF.
 
 " === Build JSON arrays untuk chart ===
@@ -619,7 +553,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
     <!-- STAT CARDS -->
     <div class="stat-grid">
-      <div class="stat-cell">
+      <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card">
           <div class="stat-header">
             <span class="stat-label">Total Sales Order <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Jumlah Sales Order Plant 2000 dengan tanggal buat pada periode terpilih dan memiliki minimal satu item produksi (VBAP werks 2000).">i</button></span>
@@ -629,7 +563,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           <div class="stat-sub"><%= lv_period_lbl %> &#8212; Plant 2000</div>
         </div>
       </div>
-      <div class="stat-cell">
+      <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card">
           <div class="stat-header">
             <span class="stat-label">Total Item Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Total baris item produksi (VBAP, werks 2000) dari seluruh SO pada periode ini.">i</button></span>
@@ -639,7 +573,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           <div class="stat-sub">Dari seluruh SO aktif terdaftar</div>
         </div>
       </div>
-      <div class="stat-cell">
+      <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card">
           <div class="stat-header">
             <span class="stat-label">Item Selesai (GR 100%) <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang hasil Goods Receipt (wemng) sudah mencapai atau melebihi target produksi (psmng). Sub-teks menunjukkan jumlah item yang masih dalam proses.">i</button></span>
@@ -649,23 +583,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           <div class="stat-sub"><%= lv_inprog %> masih dalam proses produksi</div>
         </div>
       </div>
-      <div class="stat-cell">
-        <div class="stat-card <%= lv_rate_class %>">
-          <div class="stat-header">
-            <span class="stat-label">Tingkat Penyelesaian <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Persentase item selesai dibanding total item. Warna kartu: hijau jika 80% ke atas, kuning 50-79%, merah di bawah 50%.">i</button></span>
-            <span class="stat-icon"><span class="ic-gray">&#9203;</span></span>
-          </div>
-          <div class="stat-value"><%= lv_rate %>%</div>
-          <div class="stat-sub"><%= lv_noprod %> item belum ada produksi</div>
-          <% IF lv_rate_alert <> ''. %>
-          <div class="kpi-alert">&#9888; <%= lv_rate_alert %></div>
-          <% ENDIF. %>
-        </div>
-      </div>
     </div>
 
     <div class="stat-grid-2">
-      <div class="stat-cell" style="width:33.33%;">
+      <div class="stat-cell" style="width:50%;">
         <div class="stat-card <%= lv_otd_cls %>">
           <div class="stat-header">
             <span class="stat-label">On-Time Delivery (OTD) <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Persentase order produksi selesai TEPAT WAKTU: tanggal Goods Receipt aktual (MKPF-BUDAT, gerakan 101) terakhir tidak melewati target selesai order (AFKO-GLTRP). Hanya order yang sudah selesai & punya target yang dihitung.">i</button></span>
@@ -678,7 +599,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           <% ENDIF. %>
         </div>
       </div>
-      <div class="stat-cell" style="width:33.33%;">
+      <div class="stat-cell" style="width:50%;">
         <div class="stat-card">
           <div class="stat-header">
             <span class="stat-label">Rata-rata Lead Time <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Rata-rata durasi (hari) dari tanggal SO dibuat sampai tanggal Goods Receipt aktual (produksi selesai diterima ke gudang), dihitung atas order yang sudah selesai. Semakin kecil semakin cepat pemenuhan.">i</button></span>
@@ -686,16 +607,6 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           </div>
           <div class="stat-value"><%= lv_leadtime %></div>
           <div class="stat-sub">hari rata-rata SO dibuat &#8594; selesai (GR)</div>
-        </div>
-      </div>
-      <div class="stat-cell" style="width:33.33%;">
-        <div class="stat-card <%= lv_backlog_cls %>">
-          <div class="stat-header">
-            <span class="stat-label">Item Backlog <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Jumlah item proses yang SO-nya dibuat lebih dari 30 hari lalu tetapi belum selesai. Warna kartu: merah jika lebih dari 5, kuning 1-5, hijau jika 0.">i</button></span>
-            <span class="stat-icon"><span class="ic-gray">&#128203;</span></span>
-          </div>
-          <div class="stat-value"><%= lv_backlog_cnt %></div>
-          <div class="stat-sub">item proses, SO &gt;30 hari belum selesai</div>
         </div>
       </div>
     </div>
@@ -778,21 +689,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <% ENDIF. %>
     </div>
 
-    <!-- OLD CARD (kiri) + RECENT CARD (kanan) — 100% mandiri: gaya inline + JS inline -->
+    <!-- RECENT CARD — 100% mandiri: gaya inline + JS inline -->
     <div style="display:flex; gap:24px; margin-bottom:24px; align-items:stretch; flex-wrap:wrap;">
 
-      <!-- KIRI: SO tertua belum selesai — dimuat via AJAX (index_oldcard.htm), PERF #2 -->
-      <div style="flex:1; min-width:280px;" id="oldcard-container">
-        <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
-          <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
-            <h3 style="font-size:0.85rem; font-weight:700; color:#374151; margin:0;">&#9203; SO Tertua Belum Selesai</h3>
-            <div style="font-size:0.72rem; color:#9ca3af; margin-top:2px;">Backlog terlama yang masih ada item belum selesai (Plant 2000)</div>
-          </div>
-          <div style="padding:28px; text-align:center; color:#9ca3af; font-size:0.9rem;">&#8987; Memuat backlog&hellip;</div>
-        </div>
-      </div>
-
-      <!-- KANAN: SO terbaru -->
+      <!-- SO terbaru -->
       <div style="flex:1; min-width:280px;">
         <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.05); overflow:hidden; height:100%;">
           <div style="background:#f9fafb; padding:14px 20px; border-bottom:1px solid #e5e7eb;">
@@ -832,22 +732,6 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
 
   </div>
-
-  <!-- PERF #2: muat kartu "SO Tertua Belum Selesai" asinkron agar tak memblokir render -->
-  <script>
-    (function () {
-      var c = document.getElementById('oldcard-container');
-      if (!c) return;
-      var x = new XMLHttpRequest();
-      x.open('GET', 'index_oldcard.htm', true);
-      x.onload = function () {
-        if (x.status === 200) { c.innerHTML = x.responseText; }
-        else { c.innerHTML = '<div style="padding:24px;text-align:center;color:#ef4444;font-size:0.85rem;">Gagal memuat backlog (HTTP ' + x.status + ').</div>'; }
-      };
-      x.onerror = function () { c.innerHTML = '<div style="padding:24px;text-align:center;color:#ef4444;font-size:0.85rem;">Gagal memuat backlog.</div>'; };
-      x.send();
-    })();
-  </script>
 
   <!-- Data dari ABAP (inline, karena nilai diisi server-side oleh BSP) -->
   <script>
