@@ -303,3 +303,29 @@ banyak material berbeda menampilkan angka **Butuh yang sama (20)**, mirip qty SO
 | `transfer.htm` | AFPO, RESB, MAKT, MARD, MSEG, MKPF |
 
 > **Catatan status kolom VBAK (S/4HANA):** `GBSTK`/`LFSTK` ada di VBAK; `FKSTK` (billing) **tidak** ada di VBAK dan tidak dipakai. Di sistem ECC, status ada di VBUK/VBUP (tidak berlaku untuk sistem ini).
+
+---
+
+## 11. Bug & Lessons Learned
+
+### 11.1 `<form action="">` kosong → filter GET tidak terkirim (DIPERBAIKI 2026-07-11)
+
+- **Gejala:** form filter (Material / No SO / dsb) **selalu mengembalikan SEMUA data** (full plant-wide scan,
+  mis. 27.195 baris di `transfer.htm`) **berapa pun input yang diisi** user. Terjadi sebelum & sesudah klik
+  tombol TAMPILKAN. Seolah filter tidak pernah diterapkan.
+- **Diagnosis (yang MEMBUKTIKAN letak masalah):** dites manual dengan mengetik URL berisi query string
+  (`transfer.htm?matnr=20185100&so_num=10000021&search_btn=X`) → hasil **AKURAT** ("Tidak ada order produksi
+  untuk SO tersebut"). Ini membuktikan **server-side `request->get_form_field` 100% baik**; nama field HTML
+  (`name="matnr"`/`"so_num"`) juga SUDAH cocok dengan yang dibaca ABAP. Cek address bar setelah klik tombol:
+  URL **tanpa query string** sama sekali → berarti browser tak pernah mengirim parameter.
+- **Akar masalah:** `<form method="get" action="">` — atribut **`action` kosong** gagal menambahkan query
+  string saat form disubmit lewat tombol pada browser yang dipakai (khas embedded IE/Trident / Edge IE-mode
+  yang lazim di lingkungan SAP GUI). Spec mengizinkan `action=""`, tapi tidak reliabel di sini.
+- **Solusi:** `action` **WAJIB diisi eksplisit** dengan nama file halaman itu sendiri, mis.
+  `action="transfer.htm"`. **Jangan pernah** biarkan `action=""`.
+- **Halaman terdampak & diperbaiki 2026-07-11:** `transfer.htm` (L424), `monitoring.htm` (L299),
+  `riwayat.htm` (L297), `diag_movement.htm` (L204). Satu bug yang tersebar di 4 halaman, bukan hanya transfer.
+- **Pola yang SUDAH benar sejak awal (referensi):** `index.htm` (L543 & L647) memakai `action="index.htm"`.
+- **⚠️ ATURAN untuk developer masa depan:** setiap kali membuat halaman BSP baru dengan `<form method="get">`,
+  **isi `action` eksplisit** (`action="<nama_file>.htm"`) — jangan dikosongkan. Bila menjumpai gejala "filter
+  tidak jalan / hasil selalu semua data", cek `action` form ini LEBIH DULU sebelum menduga masalah ABAP.

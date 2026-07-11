@@ -421,7 +421,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
     <!-- FILTER (GET → idempotent, bisa di-bookmark/reload tanpa dialog kirim ulang) -->
     <div class="filter-card">
-      <form method="get" action="">
+      <form method="get" action="transfer.htm">
         <div class="filter-form">
           <div class="form-group" style="width:24%;"><label>Material</label><input type="text" name="matnr" value="<%= lv_f_matnr %>" placeholder="Kode / sebagian material"></div>
           <div class="form-group" style="width:20%;"><label>Nomor Sales Order</label><input type="text" name="so_num" value="<%= lv_f_so %>" placeholder="10000021"></div>
