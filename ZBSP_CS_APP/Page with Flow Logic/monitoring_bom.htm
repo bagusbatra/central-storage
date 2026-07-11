@@ -341,14 +341,11 @@ IF lv_req_vb IS NOT INITIAL.
 
         " K5. Sudah Dikirim aktual: MSEG ⨝ MKPF (mvt 301, keluar 1D00), net SHKZG.
         "     *** SINKRON dengan transfer.htm §5 (query "Sudah Dikirim"). ***
-        "     TODO (BELUM DIVERIFIKASI — jangan ubah sebelum konfirmasi SE11):
-        "       tambah filter m~umwrk = '2000' AND m~umlgo = '2KCS' (receiving
-        "       plant/sloc) agar transfer 301 INTERNAL Plant 1000 (contoh nyata:
-        "       1D00 -> 1E03 "Molding Input") TIDAK ikut terhitung → cegah
-        "       OVERCOUNTING "Sudah Dikirim". Nama field (UMWRK/UMLGO) perlu
-        "       dikonfirmasi di SE11 dulu. Ref: temuan MB51/MIGO Display 2026-07-11
-        "       & reference.md (backlog). Sengaja dibiarkan apa-adanya agar angka
-        "       konsisten dengan transfer.htm yang sudah berjalan.
+        "     Filter TUJUAN via UMWRK/UMLGO (receiving plant/sloc). DIVERIFIKASI &
+        "     DIPERBAIKI 2026-07-11 (SE11: MSEG-UMWRK/UMLGO = CHAR4; SE16 doc
+        "     4908670272 → baris keluar SLoc=1D00/DC=H membawa UMWRK=1000/UMLGO=1E03,
+        "     transfer INTERNAL Plant 1000, BUKAN 2KCS). Tanpa filter ini "Sudah
+        "     Dikirim" OVER-count. Sinkron dgn transfer.htm §5 — ubah keduanya bersama.
         SELECT m~mblnr m~matnr m~menge m~shkzg k~budat
           FROM mseg AS m INNER JOIN mkpf AS k
             ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
@@ -358,6 +355,8 @@ IF lv_req_vb IS NOT INITIAL.
             AND m~bwart = lc_mvt_out
             AND m~werks = zcl_cs_util=>gc_plant_1000
             AND m~lgort = zcl_cs_util=>gc_sloc_1d00
+            AND m~umwrk = lc_plant
+            AND m~umlgo = zcl_cs_util=>gc_sloc_2kcs
             AND k~budat >= lv_khz_from.
         LOOP AT lt_kmv INTO ls_kmv.
           READ TABLE lt_kneed ASSIGNING <kn> WITH KEY matnr = ls_kmv-matnr.

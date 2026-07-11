@@ -183,15 +183,49 @@ filter/cache/pagination). Konstanta plant/sloc reuse `ZCL_CS_UTIL` (`gc_plant_10
 agar kebutuhan paling kritis tidak tersembunyi (keputusan edge-case, selaras Action Center). Urut `perlu` DESC.
 Empty-state: `lr_kaufnr` kosong → "belum ada order produksi"; ada order tapi tak ada kekurangan → "Semua bahan telah dikirim".
 
-> ⚠️ **BACKLOG — overcounting "Sudah Dikirim" (UMWRK/UMLGO, BELUM DIVERIFIKASI):** query MSEG di `transfer.htm`
-> **dan** cabang `mode=kirim` hanya menyaring sisi **keluar** (`werks=1000/lgort=1D00 + bwart=301`) tanpa
-> memverifikasi **tujuan**. Temuan MB51/MIGO Display **2026-07-11**: mvt 301 dari `1D00` bisa menuju sloc lain
-> di **Plant 1000** (contoh nyata: `1E03` "Molding Input"), **bukan** `2KCS` → "Sudah Dikirim" dapat **over-count**
-> (angka transfer internal ikut terhitung). Kandidat perbaikan: tambah `UMWRK='2000' AND UMLGO='2KCS'` (receiving
-> plant/sloc) ke WHERE. **Status: nama field belum dikonfirmasi di SE11** — sengaja belum diubah agar angka tetap
-> konsisten dengan `transfer.htm` yang sudah berjalan. Perbaikan idealnya **terpusat** (mis. method di `ZCL_CS_UTIL`
-> yang dipakai kedua tempat). Validasi silang tambahan yang tersedia: MD04 (Special Procurement `40` di MM03 MRP2
-> menghasilkan Planned Order/PurReq dengan Supplying Plant eksplisit) — **cross-check**, bukan pengganti Model B.
+#### Validasi 2026-07-11 — "Butuh" (kolom) sumbernya RESB, BUKAN VBAP-KWMENG
+
+**Jenis bukti: INSPEKSI KODE (static), bukan runtime.** Terpicu kecurigaan: di browser tab Butuh Dikirim,
+banyak material berbeda menampilkan angka **Butuh yang sama (20)**, mirip qty SO → diduga salah ambil dari
+`VBAP-KWMENG`. Hasil telusur kode:
+- Field "Butuh" = `ls_kneed-need`, diisi HANYA dari `RESB-BDMNG − RESB-ENMNG` (`monitoring_bom.htm`
+  baris 292 `lv_kopen = ls_kresb-bdmng - ls_kresb-enmng`, 299 `ls_kneed-need = lv_kopen`, 304
+  `<kn>-need = <kn>-need + lv_kopen`), diagregasi per `matnr`. **Tidak ada `SELECT … FROM vbap` di
+  cabang `mode=kirim`** (VBAP/`KWMENG` hanya di cabang Item & BOM). ⇒ Hipotesis "Butuh dari VBAP-KWMENG"
+  **TERBANTAH oleh kode**.
+- Logika "Butuh" di `mode=kirim` **byte-identik** dengan `transfer.htm` (baris 178–206): SELECT, rumus
+  `bdmng−enmng`, agregasi per material, dan scope (`aufnr` dari `AFPO WHERE kdauf=SO`) semua sama; `lc_plant`
+  = `lc_dst_plant` = `'2000'`. ⇒ Untuk SO yang sama, **kedua halaman WAJIB menghasilkan angka Butuh identik**;
+  lift tidak menambah divergensi.
+
+> ⏳ **BELUM DIKONFIRMASI RUNTIME (SO uji: 10578).** Perbandingan angka aktual `transfer.htm?so_num=10578`
+> vs `mode=kirim` untuk SO 10578 **belum tercatat** — sesi ini hanya inspeksi kode + prediksi, angka browser
+> tidak pernah di-paste balik. **Jangan tulis sebagai "tervalidasi" tanpa angka.** Cara memutuskan apakah
+> "semua = 20" itu benar/bug: buka **SE16 → RESB** untuk 1 order SO 10578 (`AUFNR` dari `AFPO WHERE kdauf`),
+> baca `BDMNG` per `MATNR`. Jika RESB genuinely bervariasi (mis. 20/40/80) tapi tab tampil semua-20 → bug
+> di logika BERSAMA (transfer.htm ⇄ kirim), perbaiki terpusat. Jika RESB sendiri = 20 untuk semua komponen
+> → data 1:1/unit, tampilan benar. **TODO sesi berikut: isi angka aktual di sini.**
+
+> ✅ **DIVERIFIKASI & DIPERBAIKI 2026-07-11 — overcounting "Sudah Dikirim" (filter UMWRK/UMLGO):**
+> query MSEG di `transfer.htm` **dan** cabang `mode=kirim` semula hanya menyaring sisi **keluar**
+> (`werks=1000/lgort=1D00 + bwart=301`) tanpa memverifikasi **tujuan** → mvt 301 dari `1D00` yang sebenarnya
+> transfer **internal Plant 1000** (mis. `1D00 → 1E03` "Molding Input", **bukan** `2KCS`) ikut terhitung
+> sebagai "Sudah Dikirim" (**over-count**).
+> **Verifikasi (SE11 + SE16):** `MSEG-UMWRK` = *Receiving plant*, `MSEG-UMLGO` = *Receiving storage location*,
+> keduanya **CHAR 4**. Bukti nyata: **dokumen material 4908670272** — baris keluar (`LGORT=1D00`, `SHKZG='H'`)
+> membawa `UMWRK=1000` / `UMLGO=1E03` (dikonfirmasi via MIGO Display), yaitu transfer internal Plant 1000.
+> **Perbaikan:** ditambahkan `AND m~umwrk = '2000' AND m~umlgo = '2KCS'` ke WHERE SELECT MSEG di **KEDUA** file
+> (di `transfer.htm` via `lc_dst_plant`/`lc_dst_sloc`; di `monitoring_bom.htm` K5 via `lc_plant`/`gc_sloc_2kcs`
+> — nilai identik `'2000'`/`'2KCS'`, sinkron, tanpa divergensi). `UMWRK`/`UMLGO` dipakai di WHERE saja (tidak
+> perlu masuk SELECT list / `ty_mv`/`ty_kmv`).
+> **⚠️ DAMPAK ANGKA (DIHARAPKAN, BUKAN BUG):** setelah perbaikan ini, kolom **"Sudah Dikirim" bisa TURUN** di
+> `transfer.htm` dan `mode=kirim` untuk material yang sebelumnya ter-inflasi oleh transfer internal 1D00 (mis.
+> ke 1E03). Ini **koreksi overcounting yang disengaja** — bukan regresi. Konsekuensi lanjutan: sebagian material
+> bisa tampak **lebih** butuh dikirim dari sebelumnya (lebih akurat). Bila ada yang bingung melihat riwayat angka
+> berubah turun mulai 2026-07-11, inilah sebabnya.
+> **Backlog sisa (opsional):** sentralisasi query rekonsiliasi ke method `ZCL_CS_UTIL` agar logika bersama
+> transfer.htm ⇄ kirim tidak lagi diduplikasi (hindari drift ke depan). Cross-check tambahan: MD04 (Special
+> Procurement `40` di MM03 MRP2 → Planned Order/PurReq dengan Supplying Plant eksplisit) — pelengkap, bukan pengganti.
 
 ---
 

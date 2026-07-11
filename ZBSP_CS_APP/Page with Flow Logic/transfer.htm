@@ -268,13 +268,11 @@ IF lv_use_cache = abap_false AND lv_skip = abap_false.
     "     POIN 1: tanggal disaring di DB (budat >= horizon) via INNER JOIN,
     "     bukan tarik seluruh histori MSEG lalu saring di ABAP.
     "     H = keluar (+), S = masuk/pembalikan (−) → reversal 302 ternetralkan.
-    "     TODO (BELUM DIVERIFIKASI — jangan ubah sebelum konfirmasi SE11):
-    "       WHERE ini hanya menyaring sisi KELUAR (werks=1000/lgort=1D00) tanpa
-    "       memverifikasi TUJUAN. Temuan MB51/MIGO Display 2026-07-11: mvt 301 dari
-    "       1D00 bisa menuju sloc lain di Plant 1000 (mis. 1E03 "Molding Input"),
-    "       BUKAN 2KCS → "Sudah Dikirim" bisa OVERCOUNT. Perlu filter receiving
-    "       plant/sloc (kandidat UMWRK='2000' AND UMLGO='2KCS') — nama field wajib
-    "       dikonfirmasi di SE11 dulu. Lihat reference.md (backlog transfer/kirim).
+    "     Filter TUJUAN via UMWRK/UMLGO (receiving plant/sloc). DIVERIFIKASI &
+    "     DIPERBAIKI 2026-07-11 (SE11: MSEG-UMWRK/UMLGO = CHAR4; SE16 doc
+    "     4908670272 → baris keluar SLoc=1D00/DC=H membawa UMWRK=1000/UMLGO=1E03,
+    "     transfer INTERNAL Plant 1000, BUKAN 2KCS). Tanpa filter ini "Sudah
+    "     Dikirim" OVER-count. Sinkron dgn monitoring_bom.htm K5 — ubah keduanya bersama.
     SELECT m~mblnr m~matnr m~menge m~shkzg k~budat
       FROM mseg AS m INNER JOIN mkpf AS k
         ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
@@ -284,6 +282,8 @@ IF lv_use_cache = abap_false AND lv_skip = abap_false.
         AND m~bwart = lc_mvt_out
         AND m~werks = lc_src_plant
         AND m~lgort = lc_src_sloc
+        AND m~umwrk = lc_dst_plant
+        AND m~umlgo = lc_dst_sloc
         AND k~budat >= lv_hz_from.
     LOOP AT lt_mv INTO ls_mv.
       READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mv-matnr.
