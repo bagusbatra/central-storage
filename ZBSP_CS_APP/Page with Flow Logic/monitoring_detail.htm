@@ -5,11 +5,12 @@
 *& URL: monitoring_detail.htm?vbeln=XXXXXXXXXX
 *& Returns HTML fragment only (no html/head/body wrapper)
 *&
-*& Hanya menghitung yang dibutuhkan tab DEFAULT (Ringkasan) + Info Order:
-*& VBAK, KNA1, VBAP, AFPO (agregat). Rantai BOM & status order dipindah ke
-*& endpoint terpisah `monitoring_bom.htm` yang dimuat lazy saat tab Item & BOM
-*& diklik (lihat js.js loadBOM) — agar detail tampil instan. Lihat
-*& update-monitoring.md (Masalah #2).
+*& Hanya menghitung yang dibutuhkan tab Ringkasan (kini GABUNGAN Info Order +
+*& ringkasan status item): VBAK, KNA1, VBAP, AFPO (agregat). Rantai BOM & status
+*& order dipindah ke endpoint terpisah `monitoring_bom.htm` yang dimuat lazy saat
+*& tab Item & BOM diklik (lihat js.js loadBOM) — agar detail tampil instan.
+*& Tab "Butuh Dikirim" juga lazy dari `monitoring_bom.htm?mode=kirim`. Lihat
+*& update-monitoring.md (Masalah #2) & plan-monitoring-detail-butuh-dikirim.md.
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
 
@@ -149,11 +150,48 @@ ENDIF.
   <nav class="tab-nav">
     <button class="tab-btn active" onclick="switchTab('tab-summary',this)">&#9635;&nbsp;Ringkasan</button>
     <button class="tab-btn" id="tab-items-btn" onclick="switchTab('tab-items',this)">&#9776;&nbsp;Item &amp; BOM</button>
-    <button class="tab-btn" onclick="switchTab('tab-info',this)">&#9432;&nbsp;Info Order</button>
+    <button class="tab-btn" onclick="switchTab('tab-kirim',this)">&#128666;&nbsp;Butuh Dikirim</button>
   </nav>
 
-  <!-- ===== TAB 1: RINGKASAN ===== -->
+  <!-- ===== TAB 1: RINGKASAN (gabungan Info Order + Ringkasan Status) ===== -->
   <div class="tab-pane active" id="tab-summary">
+    <div class="bom-title">Info Order</div>
+    <div class="info-order-grid">
+      <div class="info-field">
+        <div class="info-field-lbl">Nomor SO</div>
+        <div class="info-field-val"><%= ls_vbak_hdr-vbeln %></div>
+      </div>
+      <div class="info-field">
+        <div class="info-field-lbl">Tanggal Dibuat</div>
+        <div class="info-field-val"><%= lv_hdr_date %></div>
+      </div>
+      <div class="info-field">
+        <div class="info-field-lbl">Tipe Dokumen</div>
+        <div class="info-field-val"><%= ls_vbak_hdr-auart %></div>
+      </div>
+      <div class="info-field">
+        <div class="info-field-lbl">Kode Customer</div>
+        <div class="info-field-val"><%= ls_vbak_hdr-kunnr %></div>
+      </div>
+      <div class="info-field info-field-full">
+        <div class="info-field-lbl">Nama Customer</div>
+        <div class="info-field-val"><%= ls_kna1_hdr-name1 %></div>
+      </div>
+      <% IF ls_kna1_hdr-ort01 IS NOT INITIAL. %>
+      <div class="info-field">
+        <div class="info-field-lbl">Kota</div>
+        <div class="info-field-val"><%= ls_kna1_hdr-ort01 %></div>
+      </div>
+      <% ENDIF. %>
+      <% IF ls_vbak_hdr-netwr > 0. %>
+      <div class="info-field">
+        <div class="info-field-lbl">Nilai SO</div>
+        <div class="info-field-val"><span class="cur-fmt"><%= ls_vbak_hdr-netwr %></span> <%= ls_vbak_hdr-waerk %></div>
+      </div>
+      <% ENDIF. %>
+    </div>
+
+    <div class="bom-title" style="margin-top:18px;">Ringkasan Status</div>
     <div class="sum-kpi-row">
       <div class="sum-kpi-card">
         <div class="sum-kpi-num"><%= lv_tot_items %></div>
@@ -210,42 +248,9 @@ ENDIF.
     <div class="bom-lazy-hint">Memuat detail item &amp; BOM&#8230;</div>
   </div>
 
-  <!-- ===== TAB 3: INFO ORDER ===== -->
-  <div class="tab-pane" id="tab-info">
-    <div class="info-order-grid">
-      <div class="info-field">
-        <div class="info-field-lbl">Nomor SO</div>
-        <div class="info-field-val"><%= ls_vbak_hdr-vbeln %></div>
-      </div>
-      <div class="info-field">
-        <div class="info-field-lbl">Tanggal Dibuat</div>
-        <div class="info-field-val"><%= lv_hdr_date %></div>
-      </div>
-      <div class="info-field">
-        <div class="info-field-lbl">Tipe Dokumen</div>
-        <div class="info-field-val"><%= ls_vbak_hdr-auart %></div>
-      </div>
-      <div class="info-field">
-        <div class="info-field-lbl">Kode Customer</div>
-        <div class="info-field-val"><%= ls_vbak_hdr-kunnr %></div>
-      </div>
-      <div class="info-field info-field-full">
-        <div class="info-field-lbl">Nama Customer</div>
-        <div class="info-field-val"><%= ls_kna1_hdr-name1 %></div>
-      </div>
-      <% IF ls_kna1_hdr-ort01 IS NOT INITIAL. %>
-      <div class="info-field">
-        <div class="info-field-lbl">Kota</div>
-        <div class="info-field-val"><%= ls_kna1_hdr-ort01 %></div>
-      </div>
-      <% ENDIF. %>
-      <% IF ls_vbak_hdr-netwr > 0. %>
-      <div class="info-field">
-        <div class="info-field-lbl">Nilai SO</div>
-        <div class="info-field-val"><span class="cur-fmt"><%= ls_vbak_hdr-netwr %></span> <%= ls_vbak_hdr-waerk %></div>
-      </div>
-      <% ENDIF. %>
-    </div>
+  <!-- ===== TAB 3: BUTUH DIKIRIM (lazy-load via monitoring_bom.htm?mode=kirim) ===== -->
+  <div class="tab-pane" id="tab-kirim" data-vbeln="<%= lv_vbeln %>" data-loaded="0">
+    <div class="bom-lazy-hint">Memuat data butuh dikirim&#8230;</div>
   </div>
 
 </div>

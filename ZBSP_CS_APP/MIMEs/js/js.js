@@ -24,6 +24,8 @@ var soDetailCache      = {}; /* cache HTML fragmen detail ringan per vbeln */
 var soBomCache         = {}; /* cache HTML tab Item & BOM (berat) per vbeln */
 var bomInflight        = {}; /* XHR prefetch/muat BOM yang sedang berjalan per vbeln */
 var bomPrefetchTimer   = null; /* timer prefetch idle (dibatalkan saat pindah SO) */
+var soKirimCache       = {}; /* cache HTML tab Butuh Dikirim (mode=kirim) per vbeln */
+var kirimInflight      = {}; /* XHR muat Butuh Dikirim yang sedang berjalan per vbeln */
 
 /* ------------------------------------------------------------------
    Helper: kotak dengan sudut bulat semua sisi (canvas 2D)
@@ -624,6 +626,10 @@ function switchTab(tabId, btn) {
   if (tabId === 'tab-items' && pane && pane.getAttribute('data-loaded') === '0') {
     loadBOM(pane);
   }
+  /* Tab Butuh Dikirim: lazy dari endpoint yang sama dgn mode=kirim. */
+  if (tabId === 'tab-kirim' && pane && pane.getAttribute('data-loaded') === '0') {
+    loadKirim(pane);
+  }
 }
 
 /* ------------------------------------------------------------------
@@ -719,6 +725,81 @@ function loadBOM(pane) {
     '  <div class="skel-row" style="width:60%"></div>' +
     '</div>';
   fetchBOM(vbeln);
+}
+
+/* ------------------------------------------------------------------
+   Tab Butuh Dikirim (monitoring_bom.htm?mode=kirim) — cermin loadBOM,
+   tanpa prefetch idle (v1: dimuat saat tab diklik). Cache & pane terpisah
+   dari BOM agar jalur Item & BOM tidak terganggu.
+   ------------------------------------------------------------------ */
+
+/** Ambil fragmen Butuh Dikirim (1x per vbeln, dedup). Isi cache; render bila menunggu. */
+function fetchKirim(vbeln) {
+  if (!vbeln || soKirimCache[vbeln] || kirimInflight[vbeln]) return;
+  var xhr = new XMLHttpRequest();
+  kirimInflight[vbeln] = xhr;
+  xhr.open('GET', 'monitoring_bom.htm?vbeln=' + encodeURIComponent(vbeln) + '&mode=kirim', true);
+  xhr.onload = function() {
+    delete kirimInflight[vbeln];
+    if (xhr.status === 200) {
+      soKirimCache[vbeln] = xhr.responseText;
+      applyKirimIfWaiting(vbeln);
+    } else {
+      applyKirimError(vbeln, 'Gagal memuat Butuh Dikirim (HTTP ' + xhr.status + ').');
+    }
+  };
+  xhr.onerror = function() {
+    delete kirimInflight[vbeln];
+    applyKirimError(vbeln, 'Error koneksi ke server.');
+  };
+  xhr.send();
+}
+
+/** Render cache Butuh Dikirim ke pane tab-kirim. */
+function renderKirim(pane, vbeln) {
+  pane.innerHTML = soKirimCache[vbeln];
+  pane.setAttribute('data-loaded', '1');
+  pane.removeAttribute('data-awaiting');
+  formatNumbers(pane);
+  enhanceA11y(pane);
+}
+
+/** Bila pane tab-kirim sedang menunggu vbeln ini (skeleton), render sekarang. */
+function applyKirimIfWaiting(vbeln) {
+  var pane = document.getElementById('tab-kirim');
+  if (pane && pane.getAttribute('data-awaiting') === vbeln && soKirimCache[vbeln]) {
+    renderKirim(pane, vbeln);
+  }
+}
+
+/** Tampilkan pesan error bila pane tab-kirim sedang menunggu vbeln ini. */
+function applyKirimError(vbeln, msg) {
+  var pane = document.getElementById('tab-kirim');
+  if (pane && pane.getAttribute('data-awaiting') === vbeln) {
+    pane.removeAttribute('data-awaiting');
+    pane.innerHTML = '<div class="placeholder-ctx"><p style="color:#ef4444;">' + msg + '</p></div>';
+  }
+}
+
+/** Dipanggil saat tab Butuh Dikirim dibuka: sajikan cache, atau skeleton + fetch. */
+function loadKirim(pane) {
+  var vbeln = pane.getAttribute('data-vbeln');
+  if (!vbeln) return;
+
+  if (soKirimCache[vbeln]) {
+    renderKirim(pane, vbeln);
+    return;
+  }
+
+  pane.setAttribute('data-awaiting', vbeln);
+  pane.innerHTML =
+    '<div class="skel-table">' +
+    '  <div class="skel-thead"></div>' +
+    '  <div class="skel-row"></div>' +
+    '  <div class="skel-row" style="width:80%"></div>' +
+    '  <div class="skel-row" style="width:60%"></div>' +
+    '</div>';
+  fetchKirim(vbeln);
 }
 
 /* ------------------------------------------------------------------

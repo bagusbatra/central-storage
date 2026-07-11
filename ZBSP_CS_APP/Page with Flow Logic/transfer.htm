@@ -268,6 +268,13 @@ IF lv_use_cache = abap_false AND lv_skip = abap_false.
     "     POIN 1: tanggal disaring di DB (budat >= horizon) via INNER JOIN,
     "     bukan tarik seluruh histori MSEG lalu saring di ABAP.
     "     H = keluar (+), S = masuk/pembalikan (−) → reversal 302 ternetralkan.
+    "     TODO (BELUM DIVERIFIKASI — jangan ubah sebelum konfirmasi SE11):
+    "       WHERE ini hanya menyaring sisi KELUAR (werks=1000/lgort=1D00) tanpa
+    "       memverifikasi TUJUAN. Temuan MB51/MIGO Display 2026-07-11: mvt 301 dari
+    "       1D00 bisa menuju sloc lain di Plant 1000 (mis. 1E03 "Molding Input"),
+    "       BUKAN 2KCS → "Sudah Dikirim" bisa OVERCOUNT. Perlu filter receiving
+    "       plant/sloc (kandidat UMWRK='2000' AND UMLGO='2KCS') — nama field wajib
+    "       dikonfirmasi di SE11 dulu. Lihat reference.md (backlog transfer/kirim).
     SELECT m~mblnr m~matnr m~menge m~shkzg k~budat
       FROM mseg AS m INNER JOIN mkpf AS k
         ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr

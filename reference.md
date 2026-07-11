@@ -113,7 +113,7 @@ Sumber: `ZBSP_CS_APP/classes/ZCL_CS_UTIL.abap`. **Tidak** mengakses tabel DB (mu
 
 ---
 
-## 6. `monitoring_detail.htm` — Detail SO (AJAX fragment, tab Ringkasan/Info)
+## 6. `monitoring_detail.htm` — Detail SO (AJAX fragment, tab Ringkasan/Item/Butuh Dikirim)
 
 **Input:** `vbeln` (lewat ALPHA conversion).
 
@@ -124,7 +124,11 @@ Sumber: `ZBSP_CS_APP/classes/ZCL_CS_UTIL.abap`. **Tidak** mengakses tabel DB (mu
 | 3 | Item SO | **VBAP** | `vbeln, posnr, matnr, arktx, kwmeng, vrkme` | `vbeln=... AND werks=2000` | Daftar item + status ringkas. |
 | 4 | Produksi item | **AFPO** | `kdauf, kdpos, psmng, wemng` | FAE `lt_temp_vbap`, `kdauf=vbeln AND kdpos=posnr` | Progres & status item. |
 
-**Catatan:** Tab **"Item & BOM"** (rantai berat) dimuat **lazy** terpisah dari `monitoring_bom.htm`.
+**Catatan tab (3 tab):** **Ringkasan** kini **gabungan** Info Order (atas) + ringkasan status item
+(bawah) — tab "Info Order" terpisah dihapus (murni HTML, tanpa query baru di file ini). Tab
+**"Item & BOM"** (rantai berat) dimuat **lazy** dari `monitoring_bom.htm`. Tab **"Butuh Dikirim"**
+juga **lazy** dari `monitoring_bom.htm?mode=kirim` (js.js: `loadKirim/fetchKirim/renderKirim`,
+cache `soKirimCache`, pane `#tab-kirim`).
 
 ---
 
@@ -158,6 +162,36 @@ Bila material tersebar di >1 sloc, semua badge ditampilkan (qty terbesar dulu).
 
 > **Catatan:** `ZCL_CS_UTIL=>dot_stages`/`pipeline_slocs` + tipe `ty_qty`/`ty_dotbar` masih ada di class
 > namun **tidak dipakai lagi** (pendekatan dot-bar/pipeline diganti "Sloc Terkini"). Boleh dihapus.
+
+### 7b. `monitoring_bom.htm?mode=kirim` — Fragment "Butuh Dikirim" (di-scope per SO)
+
+Cabang `IF lv_mode = 'kirim'` pada file yang sama. Merender **tabel datar per material** komponen yang
+masih **perlu dikirim** `1000/1D00 → 2000/2KCS` untuk SO ini. Logika **di-lift dari `transfer.htm` §8b**
+(Model B, rekonsiliasi per material), bedanya **selalu di-scope** ke `aufnr` order milik SO (tanpa form
+filter/cache/pagination). Konstanta plant/sloc reuse `ZCL_CS_UTIL` (`gc_plant_1000/2000`, `gc_sloc_1d00/2kcs`).
+
+| # | Bagian | Tabel | Kolom diambil | Kunci / Filter | Dipakai untuk |
+|---|--------|-------|---------------|----------------|---------------|
+| 1 | Order milik SO | **AFPO** | `aufnr` | `kdauf = vbeln` → RANGE `lr_kaufnr` | Scope RESB ke order SO ini |
+| 2 | Kebutuhan (Butuh) | **RESB** | `matnr, meins, bdmng, enmng, aufnr, bdter` | `werks='2000' AND xloek=' ' AND kzear=' ' AND aufnr IN lr_kaufnr` (open di loop) | `Butuh = Σ(bdmng−enmng)` per material |
+| 3 | Nama material | **MAKT** | `matnr, maktx` | FAE, `spras=sy-langu` | Nama |
+| 4 | Stok tujuan/sumber | **MARD** | `matnr, werks, lgort, labst` | `(2000/2KCS)` & `(1000/1D00)` | Stok 2KCS & Stok 1D00 |
+| 5 | Sudah Dikirim | **MSEG** ⨝ **MKPF** | `mblnr, matnr, menge, shkzg, budat` | `bwart='301' AND werks='1000' AND lgort='1D00' AND budat >= sy-datum−90` | Terkirim aktual (net `SHKZG`) |
+
+**Diturunkan:** `Perlu Kirim = max(0, Butuh − Stok 2KCS)`; status `Tercukupi`/`Akan Dikirim`/`Kurang Stok 1D00`.
+**Filter tampilan:** hanya `perlu>0` — **tetap tampil walau Stok 1D00 = 0** (status "Kurang Stok 1D00" merah),
+agar kebutuhan paling kritis tidak tersembunyi (keputusan edge-case, selaras Action Center). Urut `perlu` DESC.
+Empty-state: `lr_kaufnr` kosong → "belum ada order produksi"; ada order tapi tak ada kekurangan → "Semua bahan telah dikirim".
+
+> ⚠️ **BACKLOG — overcounting "Sudah Dikirim" (UMWRK/UMLGO, BELUM DIVERIFIKASI):** query MSEG di `transfer.htm`
+> **dan** cabang `mode=kirim` hanya menyaring sisi **keluar** (`werks=1000/lgort=1D00 + bwart=301`) tanpa
+> memverifikasi **tujuan**. Temuan MB51/MIGO Display **2026-07-11**: mvt 301 dari `1D00` bisa menuju sloc lain
+> di **Plant 1000** (contoh nyata: `1E03` "Molding Input"), **bukan** `2KCS` → "Sudah Dikirim" dapat **over-count**
+> (angka transfer internal ikut terhitung). Kandidat perbaikan: tambah `UMWRK='2000' AND UMLGO='2KCS'` (receiving
+> plant/sloc) ke WHERE. **Status: nama field belum dikonfirmasi di SE11** — sengaja belum diubah agar angka tetap
+> konsisten dengan `transfer.htm` yang sudah berjalan. Perbaikan idealnya **terpusat** (mis. method di `ZCL_CS_UTIL`
+> yang dipakai kedua tempat). Validasi silang tambahan yang tersedia: MD04 (Special Procurement `40` di MM03 MRP2
+> menghasilkan Planned Order/PurReq dengan Supplying Plant eksplisit) — **cross-check**, bukan pengganti Model B.
 
 ---
 
@@ -230,7 +264,7 @@ Bila material tersebar di >1 sloc, semua badge ditampilkan (qty terbesar dulu).
 | `index_oldcard.htm` | VBAK, VBAP, AFPO |
 | `monitoring.htm` | KNA1, VBAK, VBAP, AFPO |
 | `monitoring_detail.htm` | VBAK, KNA1, VBAP, AFPO |
-| `monitoring_bom.htm` | VBAP, AFPO, AFKO, AUFK, JEST, RESB, T001L, MAST, STPO, MAKT, MARD, EKPO, EKET |
+| `monitoring_bom.htm` | VBAP, AFPO, AFKO, AUFK, JEST, RESB, T001L, MAST, STPO, MAKT, MARD, EKPO, EKET *(+ MSEG, MKPF di `mode=kirim`)* |
 | `riwayat.htm` | KNA1, VBAK, VBAP, AFPO |
 | `transfer.htm` | AFPO, RESB, MAKT, MARD, MSEG, MKPF |
 

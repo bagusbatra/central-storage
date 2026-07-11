@@ -197,13 +197,200 @@ DATA: lt_dot_drv  TYPE TABLE OF ty_mat,
       lv_cur_name TYPE string,
       lv_badge_cls TYPE string.
 
+" === Cabang "Butuh Dikirim" (mode=kirim) ===================================
+"     Rekonsiliasi per material, di-scope ke SO ini (bukan seluruh plant).
+"     Logika di-LIFT dari transfer.htm §5 (Model B). Jaga SINKRON dengan
+"     transfer.htm bila salah satu diubah (lihat plan §5-2 & backlog reference.md).
+"     Prefiks k*/lk* untuk hindari tabrakan nama dgn tipe Item&BOM di atas
+"     (mis. ty_resb sudah dipakai dgn struktur berbeda).
+DATA: lv_mode TYPE string.
+
+TYPES: BEGIN OF ty_kneed,
+         matnr    TYPE resb-matnr,
+         meins    TYPE resb-meins,
+         need     TYPE resb-bdmng,   " Σ sisa kebutuhan (bdmng−enmng), open
+         aufnr    TYPE resb-aufnr,
+         bdter    TYPE resb-bdter,   " tgl kebutuhan paling awal
+         stok_dst TYPE mard-labst,   " stok 2KCS
+         stok_src TYPE mard-labst,   " stok 1D00
+         sent     TYPE resb-bdmng,   " sudah dikirim aktual (MSEG, net SHKZG)
+         perlu    TYPE resb-bdmng,   " perlu kirim = max(0, need − stok_dst)
+         maktx    TYPE makt-maktx,
+         status   TYPE string,
+         st_cls   TYPE string,
+       END OF ty_kneed.
+TYPES: BEGIN OF ty_kresb,
+         matnr TYPE resb-matnr, meins TYPE resb-meins,
+         bdmng TYPE resb-bdmng, enmng TYPE resb-enmng,
+         aufnr TYPE resb-aufnr, bdter TYPE resb-bdter,
+       END OF ty_kresb,
+       BEGIN OF ty_kmakt,
+         matnr TYPE makt-matnr, maktx TYPE makt-maktx,
+       END OF ty_kmakt,
+       BEGIN OF ty_kmard,
+         matnr TYPE mard-matnr, werks TYPE mard-werks,
+         lgort TYPE mard-lgort, labst TYPE mard-labst,
+       END OF ty_kmard,
+       BEGIN OF ty_kmv,
+         mblnr TYPE mseg-mblnr, matnr TYPE mseg-matnr,
+         menge TYPE mseg-menge, shkzg TYPE mseg-shkzg,
+         budat TYPE mkpf-budat,
+       END OF ty_kmv,
+       BEGIN OF ty_ksoauf, aufnr TYPE afpo-aufnr, END OF ty_ksoauf.
+
+DATA: lt_kneed  TYPE SORTED TABLE OF ty_kneed WITH UNIQUE KEY matnr,
+      lt_kdisp  TYPE STANDARD TABLE OF ty_kneed,
+      ls_kneed  TYPE ty_kneed,
+      lt_kresb  TYPE TABLE OF ty_kresb,  ls_kresb  TYPE ty_kresb,
+      lt_kmakt  TYPE TABLE OF ty_kmakt,  ls_kmakt  TYPE ty_kmakt,
+      lt_kmard  TYPE TABLE OF ty_kmard,  ls_kmard  TYPE ty_kmard,
+      lt_kmv    TYPE TABLE OF ty_kmv,    ls_kmv    TYPE ty_kmv,
+      lt_ksoauf TYPE TABLE OF ty_ksoauf, ls_ksoauf TYPE ty_ksoauf,
+      lr_kaufnr TYPE RANGE OF afpo-aufnr,
+      ls_kr_auf LIKE LINE OF lr_kaufnr.
+DATA: lv_kopen    TYPE resb-bdmng,
+      lv_khz_from TYPE d,
+      lv_kbdter_s TYPE string,
+      lv_krow_bg  TYPE string.
+CONSTANTS: lc_mvt_out TYPE bwart VALUE '301',   " gerakan transfer (VERIFIKASI Fase 0)
+           lc_horizon TYPE i     VALUE 90.       " horizon histori "Sudah Dikirim" (hari)
+FIELD-SYMBOLS <kn> TYPE ty_kneed.
+
 lv_req_vb = request->get_form_field( 'vbeln' ).
+lv_mode   = request->get_form_field( 'mode' ).   " '' (Item & BOM) | 'kirim'
 
 IF lv_req_vb IS NOT INITIAL.
   CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
     EXPORTING input  = lv_req_vb
     IMPORTING output = lv_vbeln.
 
+  IF lv_mode = 'kirim'.
+  " ========================================================================
+  " ===== CABANG BUTUH DIKIRIM (mode=kirim) — rekonsiliasi per material =====
+  " ========================================================================
+    lv_khz_from = sy-datum - lc_horizon.
+
+    " K1. AFPO — order produksi milik SO ini → RANGE aufnr (scope per-SO)
+    SELECT aufnr FROM afpo INTO TABLE lt_ksoauf WHERE kdauf = lv_vbeln.
+    LOOP AT lt_ksoauf INTO ls_ksoauf.
+      ls_kr_auf-sign = 'I'. ls_kr_auf-option = 'EQ'.
+      ls_kr_auf-low  = ls_ksoauf-aufnr.
+      APPEND ls_kr_auf TO lr_kaufnr.
+    ENDLOOP.
+
+    IF lr_kaufnr IS NOT INITIAL.
+      " K2. RESB — kebutuhan komponen produksi Plant 2000 yang masih terbuka
+      "     (Model B). Filter open-qty (bdmng>enmng) di loop (Open SQL klasik
+      "     tak dukung banding kolom-ke-kolom). Sinkron transfer.htm langkah 1.
+      SELECT matnr meins bdmng enmng aufnr bdter
+        FROM resb INTO TABLE lt_kresb
+        WHERE werks = lc_plant
+          AND xloek = ' '
+          AND kzear = ' '
+          AND aufnr IN lr_kaufnr.
+      LOOP AT lt_kresb INTO ls_kresb.
+        lv_kopen = ls_kresb-bdmng - ls_kresb-enmng.
+        IF lv_kopen <= 0. CONTINUE. ENDIF.
+        READ TABLE lt_kneed ASSIGNING <kn> WITH KEY matnr = ls_kresb-matnr.
+        IF sy-subrc <> 0.
+          CLEAR ls_kneed.
+          ls_kneed-matnr = ls_kresb-matnr.
+          ls_kneed-meins = ls_kresb-meins.
+          ls_kneed-need  = lv_kopen.
+          ls_kneed-aufnr = ls_kresb-aufnr.
+          ls_kneed-bdter = ls_kresb-bdter.
+          INSERT ls_kneed INTO TABLE lt_kneed.
+        ELSE.
+          <kn>-need = <kn>-need + lv_kopen.
+          IF <kn>-bdter IS INITIAL
+             OR ( ls_kresb-bdter IS NOT INITIAL AND ls_kresb-bdter < <kn>-bdter ).
+            <kn>-bdter = ls_kresb-bdter.
+          ENDIF.
+        ENDIF.
+      ENDLOOP.
+
+      IF lt_kneed IS NOT INITIAL.
+        " K3. Nama material (MAKT)
+        SELECT matnr maktx FROM makt INTO TABLE lt_kmakt
+          FOR ALL ENTRIES IN lt_kneed
+          WHERE matnr = lt_kneed-matnr AND spras = sy-langu.
+        SORT lt_kmakt BY matnr.
+        LOOP AT lt_kneed ASSIGNING <kn>.
+          READ TABLE lt_kmakt INTO ls_kmakt WITH KEY matnr = <kn>-matnr BINARY SEARCH.
+          IF sy-subrc = 0. <kn>-maktx = ls_kmakt-maktx. ENDIF.
+        ENDLOOP.
+
+        " K4. Stok tujuan (2KCS) & sumber (1D00) — MARD. Konstanta plant/sloc
+        "     dari ZCL_CS_UTIL (satu sumber kebenaran, identik dot-bar).
+        SELECT matnr werks lgort labst
+          FROM mard INTO TABLE lt_kmard
+          FOR ALL ENTRIES IN lt_kneed
+          WHERE matnr = lt_kneed-matnr
+            AND ( ( werks = lc_plant AND lgort = zcl_cs_util=>gc_sloc_2kcs )
+               OR ( werks = zcl_cs_util=>gc_plant_1000 AND lgort = zcl_cs_util=>gc_sloc_1d00 ) ).
+        LOOP AT lt_kmard INTO ls_kmard.
+          READ TABLE lt_kneed ASSIGNING <kn> WITH KEY matnr = ls_kmard-matnr.
+          IF sy-subrc <> 0. CONTINUE. ENDIF.
+          IF ls_kmard-werks = lc_plant AND ls_kmard-lgort = zcl_cs_util=>gc_sloc_2kcs.
+            <kn>-stok_dst = <kn>-stok_dst + ls_kmard-labst.
+          ELSEIF ls_kmard-werks = zcl_cs_util=>gc_plant_1000
+             AND ls_kmard-lgort = zcl_cs_util=>gc_sloc_1d00.
+            <kn>-stok_src = <kn>-stok_src + ls_kmard-labst.
+          ENDIF.
+        ENDLOOP.
+
+        " K5. Sudah Dikirim aktual: MSEG ⨝ MKPF (mvt 301, keluar 1D00), net SHKZG.
+        "     *** SINKRON dengan transfer.htm §5 (query "Sudah Dikirim"). ***
+        "     TODO (BELUM DIVERIFIKASI — jangan ubah sebelum konfirmasi SE11):
+        "       tambah filter m~umwrk = '2000' AND m~umlgo = '2KCS' (receiving
+        "       plant/sloc) agar transfer 301 INTERNAL Plant 1000 (contoh nyata:
+        "       1D00 -> 1E03 "Molding Input") TIDAK ikut terhitung → cegah
+        "       OVERCOUNTING "Sudah Dikirim". Nama field (UMWRK/UMLGO) perlu
+        "       dikonfirmasi di SE11 dulu. Ref: temuan MB51/MIGO Display 2026-07-11
+        "       & reference.md (backlog). Sengaja dibiarkan apa-adanya agar angka
+        "       konsisten dengan transfer.htm yang sudah berjalan.
+        SELECT m~mblnr m~matnr m~menge m~shkzg k~budat
+          FROM mseg AS m INNER JOIN mkpf AS k
+            ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+          INTO TABLE lt_kmv
+          FOR ALL ENTRIES IN lt_kneed
+          WHERE m~matnr = lt_kneed-matnr
+            AND m~bwart = lc_mvt_out
+            AND m~werks = zcl_cs_util=>gc_plant_1000
+            AND m~lgort = zcl_cs_util=>gc_sloc_1d00
+            AND k~budat >= lv_khz_from.
+        LOOP AT lt_kmv INTO ls_kmv.
+          READ TABLE lt_kneed ASSIGNING <kn> WITH KEY matnr = ls_kmv-matnr.
+          IF sy-subrc <> 0. CONTINUE. ENDIF.
+          IF ls_kmv-shkzg = 'H'. <kn>-sent = <kn>-sent + ls_kmv-menge.
+          ELSE.                  <kn>-sent = <kn>-sent - ls_kmv-menge.
+          ENDIF.
+        ENDLOOP.
+
+        " K6. Perlu Kirim + status per material
+        LOOP AT lt_kneed ASSIGNING <kn>.
+          <kn>-perlu = <kn>-need - <kn>-stok_dst.
+          IF <kn>-perlu < 0. <kn>-perlu = 0. ENDIF.
+          IF <kn>-perlu = 0.
+            <kn>-status = 'Tercukupi'.        <kn>-st_cls = 'tf-ok'.
+          ELSEIF <kn>-stok_src >= <kn>-perlu.
+            <kn>-status = 'Akan Dikirim'.     <kn>-st_cls = 'tf-need'.
+          ELSE.
+            <kn>-status = 'Kurang Stok 1D00'. <kn>-st_cls = 'tf-short'.
+          ENDIF.
+        ENDLOOP.
+
+        " K7. Filter tampilan tab: hanya baris "butuh dikirim" (perlu>0).
+        "     KEPUTUSAN edge-case (plan §5-3): TETAP tampilkan walau stok_src=0
+        "     (status "Kurang Stok 1D00", merah) — agar kebutuhan paling kritis
+        "     tidak tersembunyi dari radar Admin (selaras filosofi Action Center).
+        lt_kdisp = lt_kneed.
+        DELETE lt_kdisp WHERE perlu <= 0.
+        SORT lt_kdisp BY perlu DESCENDING matnr ASCENDING.
+      ENDIF.
+    ENDIF.
+  ELSE.
+  " ===== CABANG DEFAULT: Item & BOM (tak berubah) — dot-bar mengedit di sini =====
   " 1. VBAP — kolom spesifik untuk SO ini
   SELECT vbeln posnr matnr arktx kwmeng vrkme FROM vbap
     INTO CORRESPONDING FIELDS OF TABLE lt_temp_vbap
@@ -454,6 +641,7 @@ IF lv_req_vb IS NOT INITIAL.
       ENDLOOP.
     ENDIF.
   ENDIF.
+  ENDIF.   " <-- tutup cabang lv_mode = 'kirim' ... ELSE (Item & BOM)
 ENDIF.
 %>
 <% IF lv_vbeln IS INITIAL. %>
@@ -461,6 +649,59 @@ ENDIF.
   <h3>Parameter Tidak Valid</h3>
   <p>Nomor Sales Order tidak ditemukan dalam request.</p>
 </div>
+<% ELSEIF lv_mode = 'kirim'. %>
+<!-- ===== FRAGMENT: Butuh Dikirim (mode=kirim) ===== -->
+<% IF lt_kdisp IS INITIAL. %>
+  <% IF lr_kaufnr IS INITIAL. %>
+  <div class="placeholder-ctx" style="text-align:center; color:#9ca3af; padding:32px;">
+    <p>Belum ada order produksi untuk Sales Order ini &#8212; belum ada kebutuhan transfer.</p>
+  </div>
+  <% ELSE. %>
+  <div class="placeholder-ctx" style="text-align:center; color:#16a34a; padding:32px;">
+    <p>&#10004; Semua bahan telah dikirim untuk SO ini.</p>
+  </div>
+  <% ENDIF. %>
+<% ELSE. %>
+<div class="bom-title">Butuh Dikirim &#8212; Rute 1000/1D00 &rarr; 2000/2KCS &bull; histori kirim <%= lc_horizon %> hari</div>
+<div style="overflow-x: auto;">
+  <table class="data-table" style="font-size:0.82rem;">
+    <thead>
+      <tr>
+        <th>Material</th>
+        <th>Nama</th>
+        <th style="text-align: right;">Butuh</th>
+        <th style="text-align: right;">Stok 2KCS</th>
+        <th style="text-align: right;">Perlu Kirim</th>
+        <th>Sat</th>
+        <th style="text-align: right;">Stok 1D00</th>
+        <th style="text-align: right;">Sudah Dikirim</th>
+        <th>Tgl Butuh</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% LOOP AT lt_kdisp INTO ls_kneed.
+           lv_kbdter_s = zcl_cs_util=>fmt_date( ls_kneed-bdter ).
+           CLEAR lv_krow_bg.
+           IF ls_kneed-st_cls = 'tf-short'. lv_krow_bg = 'background:#fef2f2;'. ENDIF.
+      %>
+      <tr style="<%= lv_krow_bg %>">
+        <td style="font-weight:700; color:#1e3a8a;"><%= ls_kneed-matnr %></td>
+        <td><%= ls_kneed-maktx %></td>
+        <td style="text-align: right;"><span class="num-fmt" data-val="<%= ls_kneed-need %>"><%= ls_kneed-need %></span></td>
+        <td style="text-align: right; color:#6b7280;"><span class="num-fmt" data-val="<%= ls_kneed-stok_dst %>"><%= ls_kneed-stok_dst %></span></td>
+        <td style="text-align: right; font-weight:700; color:#b45309;"><span class="num-fmt" data-val="<%= ls_kneed-perlu %>"><%= ls_kneed-perlu %></span></td>
+        <td style="color:#6b7280;"><%= ls_kneed-meins %></td>
+        <td style="text-align: right;"><span class="num-fmt" data-val="<%= ls_kneed-stok_src %>"><%= ls_kneed-stok_src %></span></td>
+        <td style="text-align: right; color:#6b7280;"><span class="num-fmt" data-val="<%= ls_kneed-sent %>"><%= ls_kneed-sent %></span></td>
+        <td style="color:#6b7280;"><%= lv_kbdter_s %></td>
+        <td><span class="badge <%= ls_kneed-st_cls %>"><%= ls_kneed-status %></span></td>
+      </tr>
+      <% ENDLOOP. %>
+    </tbody>
+  </table>
+</div>
+<% ENDIF. %>
 <% ELSE. %>
 <div class="bom-ctrl-row">
   <button class="bom-ctrl-btn" onclick="expandAllBOM()">&#43; Buka Semua BOM</button>
