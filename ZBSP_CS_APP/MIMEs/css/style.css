@@ -321,6 +321,26 @@ canvas { display: block; max-width: 100%; }
 .ord-crt  { background: #f3f4f6; color: #6b7280; }
 .ord-ftrmi { font-size: 0.68rem; color: #9ca3af; margin-top: 2px; }
 
+/* ===== LINE TAG (Unit Wood Furniture — badge per ITEM di monitoring_bom) =====
+   Struktur & metrik SAMA dengan .ord-status-tag (satu keluarga visual);
+   margin-top diganti margin-left karena badge ini tampil INLINE setelah arktx.
+   Warna reuse token yg sudah ada: ln-wf = biru .ord-rel, ln-other = abu .ord-crt. */
+.line-tag { display: inline-block; font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-left: 6px; letter-spacing: 0.02em; vertical-align: middle; }
+.ln-wf    { background: #dbeafe; color: #1d4ed8; }  /* Line/Section Wood Furniture (in-scope) */
+.ln-other { background: #f3f4f6; color: #6b7280; }  /* Unit lain / belum ada operasi */
+
+/* ===== ROUTE TAG ("Status SLoc Sederhana" — monitoring_bom, plan §11) =====
+   Tampil DI SAMPING .sloc-badge (tambahan, bukan pengganti kode SLoc mentah).
+   Warna reuse token yang sudah ada: rt-done = .ord-teco (hijau "beres"),
+   rt-proc = .ord-rel (biru), rt-out/rt-notin = .ord-crt (abu netral).
+   rt-notin sengaja class TERPISAH dari rt-out meski warnanya sama — semantik
+   beda: "belum masuk" (masih 1000/1D00) vs "di luar rute Wood Furniture". */
+.rt-tag   { display: inline-block; font-size: 0.66rem; font-weight: 700; padding: 1px 7px; border-radius: 9px; margin-left: 4px; letter-spacing: 0.02em; vertical-align: middle; }
+.rt-done  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }  /* 229K — sampai batas akhir */
+.rt-proc  { background: #dbeafe; color: #1d4ed8; }  /* sedang diproses di rute WF */
+.rt-out   { background: #f3f4f6; color: #6b7280; }  /* di luar rute Wood Furniture */
+.rt-notin { background: #f3f4f6; color: #6b7280; }  /* belum masuk Central Storage (1000/1D00) */
+
 /* ===== SKELETON LOADING (monitoring detail panel) ===== */
 .skel-line {
   border-radius: 4px;

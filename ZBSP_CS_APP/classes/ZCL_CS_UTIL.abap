@@ -56,6 +56,37 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
                gc_sloc_22f3  TYPE lgort_d VALUE '22F3',   " s4  80%
                gc_sloc_229k  TYPE lgort_d VALUE '229K'.   " s5  100% (akhir)
 
+    " SLoc proses lain di Plant 2000 (dipakai wf_route_status — "Status SLoc
+    " Sederhana", plan §11.2). Nama asli dari T001L.
+    CONSTANTS: gc_sloc_22e2 TYPE lgort_d VALUE '22E2',   " Banding D-IN
+               gc_sloc_22ek TYPE lgort_d VALUE '22EK',   " EBD Karantina
+               gc_sloc_2291 TYPE lgort_d VALUE '2291',   " Pre-Assy D-IN
+               gc_sloc_2292 TYPE lgort_d VALUE '2292',   " Sanding D-OUT
+               gc_sloc_2293 TYPE lgort_d VALUE '2293',   " Assembly D-IN
+               gc_sloc_2294 TYPE lgort_d VALUE '2294'.   " Assembly D-OUT
+
+    " Label status rute (dipusatkan agar pemanggil tak membandingkan literal).
+    CONSTANTS: gc_route_out   TYPE string VALUE 'Di Luar Rute Wood Furniture',
+               gc_route_notin TYPE string VALUE 'Belum Masuk Central Storage'.
+
+    " === Unit "WOOD FURNITURE" — filter scope Central Storage ===
+    " Cost Center menempel ke Work Center, bukan ke order:
+    "   AFKO-AUFPL → AFVC (operasi, field ARBID) → CRCO-OBJID → CRCO-KOSTL.
+    " WHITELIST TERTUTUP 10 kode (plan-checkpoint-wood-furniture-filter.md §2).
+    " Cost center di luar daftar ini (1111.. DRW/WE, 1133.. Metal SBY, 1134.. Chair)
+    " = DI LUAR SCOPE — bukan error: order tetap tampil, hanya diberi badge netral (§3).
+    CONSTANTS: gc_kokrs TYPE kokrs VALUE 'PC01'.   " controlling area (CRCO-KOKRS)
+    CONSTANTS: gc_cc_line_a   TYPE kostl VALUE '1131100001',   " Machining — Line A
+               gc_cc_line_b   TYPE kostl VALUE '1131100002',   " Machining — Line B
+               gc_cc_line_c   TYPE kostl VALUE '1131100003',   " Machining — Line C
+               gc_cc_edgeband TYPE kostl VALUE '1131200000',   " Edge Banding
+               gc_cc_preassy  TYPE kostl VALUE '1131300000',   " Pre Assembly
+               gc_cc_lifter_a TYPE kostl VALUE '1131400001',   " Assembly — Lifter A
+               gc_cc_lifter_b TYPE kostl VALUE '1131400002',   " Assembly — Lifter B
+               gc_cc_lifter_c TYPE kostl VALUE '1131400003',   " Assembly — Lifter C
+               gc_cc_cstorage TYPE kostl VALUE '1131500000',   " Central Storage
+               gc_cc_sample   TYPE kostl VALUE '1131600000'.   " Sample Maker
+
     "! Klasifikasi status item dari TOTAL target & TOTAL GR (sudah diagregasi
     "! per item SO — satu item bisa punya >1 order produksi). Pastikan
     "! iv_psmng/iv_wemng adalah JUMLAH seluruh order produksi item tsb.
@@ -135,6 +166,29 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
                 iv_q_229k     TYPE ty_qty
                 iv_at_1d00    TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(rs_dot) TYPE ty_dotbar.
+
+    "! Nama Line/Section Unit Wood Furniture dari Cost Center (whitelist §2).
+    "! Satu sumber kebenaran untuk filter scope Unit.
+    "! Cost center DI LUAR whitelist → mengembalikan string KOSONG; pemanggil
+    "! yang memutuskan tampilan (badge netral "Unit lain"), bukan method ini.
+    "! @parameter iv_kostl | Cost center dari CRCO-KOSTL (operasi pertama order)
+    "! @parameter rv_name  | 'Line A'/'Lifter B'/… atau '' bila di luar whitelist
+    CLASS-METHODS wf_line_name
+      IMPORTING iv_kostl       TYPE kostl
+      RETURNING VALUE(rv_name) TYPE string.
+
+    "! "Status SLoc Sederhana" (plan §11.2) — lookup STATIS SLoc → label status
+    "! posisi material di rute Wood Furniture. MURNI presentational: tidak ada
+    "! query; sumber lgort dari lt_curloc (MARD) yang sudah di-fetch.
+    "! SLoc di luar rute → gc_route_out (default aman).
+    "! CATATAN: kasus "belum masuk Plant 2000" (werks=1000/1D00) TIDAK ditangani
+    "! di sini — method ini hanya menerima lgort, tak tahu werks. Pemanggil yang
+    "! mengecek werks lebih dulu dan memakai gc_route_notin.
+    "! @parameter iv_lgort  | Storage location (MARD-LGORT)
+    "! @parameter rv_status | Label status; gc_route_out bila di luar rute
+    CLASS-METHODS wf_route_status
+      IMPORTING iv_lgort         TYPE lgort_d
+      RETURNING VALUE(rv_status) TYPE string.
 
 ENDCLASS.
 
@@ -268,6 +322,46 @@ CLASS zcl_cs_util IMPLEMENTATION.
     ELSEIF lv_r2261 > 0. rs_dot-pct = 20.  rs_dot-sloc_lbl = '2261'.
     ELSE.                rs_dot-pct = 0.   rs_dot-sloc_lbl = '2KCS'.
     ENDIF.
+  ENDMETHOD.
+
+  METHOD wf_line_name.
+    " Whitelist TERTUTUP — di luar 10 kode ini → '' (pemanggil beri badge netral).
+    CASE iv_kostl.
+      WHEN gc_cc_line_a.   rv_name = 'Line A'.
+      WHEN gc_cc_line_b.   rv_name = 'Line B'.
+      WHEN gc_cc_line_c.   rv_name = 'Line C'.
+      WHEN gc_cc_edgeband. rv_name = 'Edge Banding'.
+      WHEN gc_cc_preassy.  rv_name = 'Pre Assembly'.
+      WHEN gc_cc_lifter_a. rv_name = 'Lifter A'.
+      WHEN gc_cc_lifter_b. rv_name = 'Lifter B'.
+      WHEN gc_cc_lifter_c. rv_name = 'Lifter C'.
+      WHEN gc_cc_cstorage. rv_name = 'Central Storage'.
+      WHEN gc_cc_sample.   rv_name = 'Sample Maker'.
+      WHEN OTHERS.         CLEAR rv_name.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD wf_route_status.
+    " Lookup STATIS SLoc → status sederhana (plan §11.2). Tanpa query.
+    "
+    " ⚠️ SENGAJA TIDAK DIPETAKAN: gc_sloc_22f2 (Color Room) & gc_sloc_22f3
+    "    (CG Packing Area). BELUM diverifikasi apakah termasuk rute Wood
+    "    Furniture — keduanya muncul di BOM CAMPURAN (komponen WF *dan* Chair).
+    "    Dibiarkan jatuh ke WHEN OTHERS = gc_route_out (DEFAULT AMAN) agar tidak
+    "    salah klaim status. JANGAN tambahkan ke CASE ini tanpa verifikasi dulu.
+    CASE iv_lgort.
+      WHEN gc_sloc_2kcs. rv_status = 'Baru Masuk Central Storage'.
+      WHEN gc_sloc_2261. rv_status = 'Sedang di Machining'.
+      WHEN gc_sloc_2262. rv_status = 'Sedang di Machining'.
+      WHEN gc_sloc_22e2. rv_status = 'Sedang di Edge Banding'.
+      WHEN gc_sloc_22ek. rv_status = 'Sedang di Edge Banding'.
+      WHEN gc_sloc_2291. rv_status = 'Sedang di Sanding'.
+      WHEN gc_sloc_2292. rv_status = 'Sedang di Sanding'.
+      WHEN gc_sloc_2293. rv_status = 'Sedang di Assembly'.
+      WHEN gc_sloc_2294. rv_status = 'Sedang di Assembly'.
+      WHEN gc_sloc_229k. rv_status = 'Sampai Batas Akhir (229K)'.
+      WHEN OTHERS.       rv_status = gc_route_out.
+    ENDCASE.
   ENDMETHOD.
 
 ENDCLASS.

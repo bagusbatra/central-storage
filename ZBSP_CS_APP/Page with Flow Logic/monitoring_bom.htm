@@ -197,6 +197,55 @@ DATA: lt_dot_drv  TYPE TABLE OF ty_mat,
       lv_cur_name TYPE string,
       lv_badge_cls TYPE string.
 
+" Status SLoc Sederhana (plan §11) — label posisi material di rute Wood Furniture.
+" MURNI presentational: dipetakan dari ls_curloc-lgort yang SUDAH ada (MARD, 3e).
+" TIDAK ada query baru. Ditampilkan DI SAMPING badge SLoc mentah (bukan pengganti).
+DATA: lv_route_st  TYPE string,
+      lv_route_cls TYPE string.
+
+" === BADGE "LINE" (Unit Wood Furniture) — per ITEM, bukan per-komponen ======
+"     Rantai (plan-checkpoint-wood-furniture-filter.md §4, revisi kedua):
+"       AFKO-AUFPL → AFVC (operasi PERTAMA, field ARBID — bukan ARBPL!)
+"                  → CRCO (objid=arbid, kokrs, validitas begda/endda) → KOSTL
+"                  → whitelist 10 cost center (ZCL_CS_UTIL=>wf_line_name).
+"     CATATAN TEKNIS: sketsa plan memakai SELECT SINGLE + ORDER BY — itu BUKAN
+"     Open SQL yang valid (SELECT SINGLE tidak mengizinkan ORDER BY). Diganti
+"     FOR ALL ENTRIES + SORT di ABAP (juga jauh lebih murah drpd 3×N SELECT
+"     SINGLE di dalam loop item, konsisten pola FAE file ini).
+TYPES: BEGIN OF ty_aufpl,
+         aufpl TYPE afko-aufpl,
+       END OF ty_aufpl,
+       BEGIN OF ty_afvc,
+         aufpl TYPE afvc-aufpl,
+         vornr TYPE afvc-vornr,
+         arbid TYPE afvc-arbid,
+       END OF ty_afvc,
+       BEGIN OF ty_arbid,
+         arbid TYPE afvc-arbid,
+       END OF ty_arbid,
+       BEGIN OF ty_crco,
+         objid TYPE crco-objid,
+         kostl TYPE crco-kostl,
+       END OF ty_crco,
+       BEGIN OF ty_line,
+         aufnr TYPE afpo-aufnr,   " order wakil item
+         lbl   TYPE string,       " teks badge
+         cls   TYPE string,       " kelas CSS: ln-wf / ln-other
+         tip   TYPE string,       " tooltip (bedakan sebab, utk debugging)
+       END OF ty_line.
+
+DATA: lt_aufpl_drv TYPE TABLE OF ty_aufpl, ls_aufpl_drv TYPE ty_aufpl,
+      lt_afvc      TYPE TABLE OF ty_afvc,  ls_afvc      TYPE ty_afvc,
+      lt_arbid     TYPE TABLE OF ty_arbid, ls_arbid     TYPE ty_arbid,
+      lt_crco      TYPE TABLE OF ty_crco,  ls_crco      TYPE ty_crco,
+      lt_line      TYPE TABLE OF ty_line,  ls_line      TYPE ty_line.
+DATA: lv_prev_aufpl TYPE afko-aufpl,
+      lv_kostl      TYPE kostl,
+      lv_lname      TYPE string,
+      lv_line_lbl   TYPE string,
+      lv_line_cls   TYPE string,
+      lv_line_tip   TYPE string.
+
 " === Cabang "Butuh Dikirim" (mode=kirim) ===================================
 "     Rekonsiliasi per material, di-scope ke SO ini (bukan seluruh plant).
 "     Logika di-LIFT dari transfer.htm §5 (Model B). Jaga SINKRON dengan
@@ -409,8 +458,10 @@ IF lv_req_vb IS NOT INITIAL.
 
   " 3. AFKO — tanggal basic start (GSTRP), basic finish (GLTRP), actual finish
   "    (GETRI). Status sistem dibaca dari JEST (3b).
+  "    AUFPL ditambahkan (hanya field-list, WHERE/logic tak berubah) sebagai
+  "    basis rantai badge "Line" di 3f — hindari SELECT AFKO kedua.
   IF lt_afpo_pre IS NOT INITIAL.
-    SELECT aufnr gstrp gltrp getri FROM afko
+    SELECT aufnr aufpl gstrp gltrp getri FROM afko
       INTO CORRESPONDING FIELDS OF TABLE lt_afko_pre
       FOR ALL ENTRIES IN lt_afpo_pre
       WHERE aufnr = lt_afpo_pre-aufnr.
@@ -498,6 +549,98 @@ IF lv_req_vb IS NOT INITIAL.
         SORT lt_curloc BY matnr labst DESCENDING.
       ENDIF.
     ENDIF.
+
+    " === 3f. BADGE "LINE" (Unit Wood Furniture) — PER ITEM =================
+    "   AFKO-AUFPL → AFVC (operasi pertama, ARBID) → CRCO → KOSTL → whitelist.
+    "   Semua batched (FOR ALL ENTRIES), operasi pertama dipilih via SORT ABAP.
+    "   Tidak mengubah Sloc Terkini / progres / kolom lain — murni tambahan.
+    REFRESH lt_aufpl_drv.
+    LOOP AT lt_afko_pre INTO ls_afko_row.
+      IF ls_afko_row-aufpl IS INITIAL. CONTINUE. ENDIF.   " order tanpa routing
+      ls_aufpl_drv-aufpl = ls_afko_row-aufpl.
+      APPEND ls_aufpl_drv TO lt_aufpl_drv.
+    ENDLOOP.
+    SORT lt_aufpl_drv BY aufpl.
+    DELETE ADJACENT DUPLICATES FROM lt_aufpl_drv COMPARING aufpl.
+
+    IF lt_aufpl_drv IS NOT INITIAL.
+      SELECT aufpl vornr arbid FROM afvc
+        INTO TABLE lt_afvc
+        FOR ALL ENTRIES IN lt_aufpl_drv
+        WHERE aufpl = lt_aufpl_drv-aufpl.
+      " Operasi PERTAMA = vornr terkecil. VORNR CHAR(4) zero-padded
+      " ('0010','0020','0100') → urutan leksikografis = urutan numerik.
+      " RISIKO UJI: bila ada vornr TIDAK ter-pad (mis. '10' vs '100'), urutan
+      " bisa meleset. Belum diuji pada order >2 operasi — lapor bila janggal.
+      SORT lt_afvc BY aufpl ASCENDING vornr ASCENDING.
+
+      " Driver arbid unik — HANYA dari operasi pertama tiap aufpl
+      REFRESH lt_arbid.
+      CLEAR lv_prev_aufpl.
+      LOOP AT lt_afvc INTO ls_afvc.
+        IF ls_afvc-aufpl = lv_prev_aufpl. CONTINUE. ENDIF.   " bukan operasi pertama
+        lv_prev_aufpl = ls_afvc-aufpl.
+        IF ls_afvc-arbid IS INITIAL. CONTINUE. ENDIF.
+        ls_arbid-arbid = ls_afvc-arbid.
+        APPEND ls_arbid TO lt_arbid.
+      ENDLOOP.
+      SORT lt_arbid BY arbid.
+      DELETE ADJACENT DUPLICATES FROM lt_arbid COMPARING arbid.
+
+      IF lt_arbid IS NOT INITIAL.
+        " ARBID (CR_OBJID) = CRCO-OBJID → join LANGSUNG, CRHD tak perlu.
+        " Validitas CRCO time-dependent → filter begda DAN endda.
+        SELECT objid kostl FROM crco
+          INTO TABLE lt_crco
+          FOR ALL ENTRIES IN lt_arbid
+          WHERE objid = lt_arbid-arbid
+            AND kokrs = zcl_cs_util=>gc_kokrs
+            AND begda <= sy-datum
+            AND endda >= sy-datum.
+        SORT lt_crco BY objid.
+      ENDIF.
+    ENDIF.
+
+    " Peta per-order: aufnr → label/kelas/tooltip badge Line
+    REFRESH lt_line.
+    LOOP AT lt_afko_pre INTO ls_afko_row.
+      CLEAR: ls_line, ls_afvc, ls_crco, lv_kostl, lv_lname.
+      ls_line-aufnr = ls_afko_row-aufnr.
+      IF ls_afko_row-aufpl IS NOT INITIAL.
+        READ TABLE lt_afvc INTO ls_afvc
+          WITH KEY aufpl = ls_afko_row-aufpl BINARY SEARCH.   " = operasi pertama
+      ENDIF.
+      IF ls_afko_row-aufpl IS INITIAL OR sy-subrc <> 0 OR ls_afvc-arbid IS INITIAL.
+        " Order belum punya routing/operasi sama sekali
+        ls_line-lbl = 'Belum ada operasi'.
+        ls_line-cls = 'ln-other'.
+        ls_line-tip = 'Order belum punya routing/operasi (AFVC kosong).'.
+      ELSE.
+        READ TABLE lt_crco INTO ls_crco
+          WITH KEY objid = ls_afvc-arbid BINARY SEARCH.
+        IF sy-subrc <> 0.
+          " Work center ada, tapi tak ada cost center VALID untuk hari ini
+          ls_line-lbl = 'Unit lain'.
+          ls_line-cls = 'ln-other'.
+          ls_line-tip = 'Work center ada, tetapi tidak ada cost center valid untuk periode ini (CRCO begda/endda).'.
+        ELSE.
+          lv_kostl = ls_crco-kostl.
+          lv_lname = zcl_cs_util=>wf_line_name( lv_kostl ).
+          IF lv_lname IS INITIAL.
+            " Cost center ketemu, tapi DI LUAR whitelist Wood Furniture
+            ls_line-lbl = 'Unit lain'.
+            ls_line-cls = 'ln-other'.
+            ls_line-tip = 'Unit di luar Wood Furniture (Cost Center ' && lv_kostl && ').'.
+          ELSE.
+            ls_line-lbl = lv_lname.
+            ls_line-cls = 'ln-wf'.
+            ls_line-tip = 'Unit Wood Furniture — Cost Center ' && lv_kostl && '.'.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+      APPEND ls_line TO lt_line.
+    ENDLOOP.
+    SORT lt_line BY aufnr.
   ENDIF.
 
   " 4. Gabungkan VBAP + AFPO: psmng/wemng DIJUMLAH per item; AUFNR wakil =
@@ -734,7 +877,8 @@ ENDIF.
           ELSE.
             lv_has_prd = abap_false. lv_prog = 0.
           ENDIF.
-          CLEAR: ls_afko_row, ls_ord_st, lv_status_lbl, lv_status_cls, lv_ftrmi_str.
+          CLEAR: ls_afko_row, ls_ord_st, lv_status_lbl, lv_status_cls, lv_ftrmi_str,
+                 lv_line_lbl, lv_line_cls, lv_line_tip.
           IF ls_item_row-aufnr IS NOT INITIAL.
             " Status sistem order WAKIL dari JEST (A2)
             READ TABLE lt_ord_st INTO ls_ord_st
@@ -751,12 +895,21 @@ ENDIF.
             IF sy-subrc = 0.
               lv_ftrmi_str = zcl_cs_util=>fmt_date( ls_afko_row-gltrp ).
             ENDIF.
+            " Badge Line (Unit Wood Furniture) — item TANPA aufnr: tanpa badge
+            " (sudah ditandai "No Prod" di kolom Progres).
+            READ TABLE lt_line INTO ls_line
+              WITH KEY aufnr = ls_item_row-aufnr BINARY SEARCH.
+            IF sy-subrc = 0.
+              lv_line_lbl = ls_line-lbl.
+              lv_line_cls = ls_line-cls.
+              lv_line_tip = ls_line-tip.
+            ENDIF.
           ENDIF.
       %>
       <tr class="clickable-item-row" onclick="toggleBOMRow('<%= lv_vbeln %>-<%= ls_item_row-posnr %>')">
         <td><strong><%= ls_item_row-posnr %></strong></td>
         <td><%= ls_item_row-matnr %></td>
-        <td style="color:#2563eb; font-weight:600;"><%= ls_item_row-arktx %> <span style="font-size:0.75rem; color:#9ca3af;">(Klik BOM)</span></td>
+        <td style="color:#2563eb; font-weight:600;"><%= ls_item_row-arktx %><% IF lv_line_lbl IS NOT INITIAL. %><span class="line-tag <%= lv_line_cls %>" title="<%= lv_line_tip %>"><%= lv_line_lbl %></span><% ENDIF. %> <span style="font-size:0.75rem; color:#9ca3af;">(Klik BOM)</span></td>
         <td style="text-align: right;" data-val="<%= ls_item_row-kwmeng %>"><span class="num-fmt"><%= ls_item_row-kwmeng %></span> <%= ls_item_row-vrkme %></td>
         <td style="text-align: right;" data-val="<%= ls_item_row-psmng %>"><span class="num-fmt"><%= ls_item_row-psmng %></span> <%= ls_item_row-meins %></td>
         <td style="text-align: right; font-weight:700;" data-val="<%= ls_item_row-wemng %>"><span class="num-fmt"><%= ls_item_row-wemng %></span> <%= ls_item_row-meins %></td>
@@ -873,8 +1026,26 @@ ENDIF.
                           ELSE.
                             lv_badge_cls = 'sloc-cur'.
                           ENDIF.
+                          " --- Status SLoc Sederhana (plan §11) — TAMBAHAN, bukan pengganti ---
+                          " werks=1000 (belum masuk Plant 2000) dicek DULU: method
+                          " wf_route_status hanya terima lgort, tak tahu werks — tanpa
+                          " cek ini, 1D00 akan salah dilabeli "Di Luar Rute".
+                          CLEAR: lv_route_st, lv_route_cls.
+                          IF ls_curloc-werks = zcl_cs_util=>gc_plant_1000.
+                            lv_route_st  = zcl_cs_util=>gc_route_notin.  " 'Belum Masuk Central Storage'
+                            lv_route_cls = 'rt-notin'.
+                          ELSE.
+                            lv_route_st = zcl_cs_util=>wf_route_status( ls_curloc-lgort ).
+                            IF ls_curloc-lgort = zcl_cs_util=>gc_sloc_229k.
+                              lv_route_cls = 'rt-done'.   " hijau — beres dari sisi Central Storage
+                            ELSEIF lv_route_st = zcl_cs_util=>gc_route_out.
+                              lv_route_cls = 'rt-out'.    " abu — di luar rute WF
+                            ELSE.
+                              lv_route_cls = 'rt-proc'.   " biru — sedang diproses di rute WF
+                            ENDIF.
+                          ENDIF.
                     %>
-                    <span class="sloc-badge <%= lv_badge_cls %>" title="Stok: <%= ls_curloc-labst %>"><%= ls_curloc-lgort %><% IF lv_cur_name IS NOT INITIAL. %> &middot; <%= lv_cur_name %><% ENDIF. %></span>
+                    <span class="sloc-badge <%= lv_badge_cls %>" title="Stok: <%= ls_curloc-labst %>"><%= ls_curloc-lgort %><% IF lv_cur_name IS NOT INITIAL. %> &middot; <%= lv_cur_name %><% ENDIF. %></span><span class="rt-tag <%= lv_route_cls %>"><%= lv_route_st %></span>
                     <% ENDLOOP.
                        ENDIF.
                        IF lv_has_cur = abap_false. %>

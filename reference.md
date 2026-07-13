@@ -38,6 +38,10 @@ Sumber: `ZBSP_CS_APP/classes/ZCL_CS_UTIL.abap`. **Tidak** mengakses tabel DB (mu
 | `prog_txt_class( iv_pct )` | → `string` | Kelas warna teks persen. |
 | `fmt_date( iv_date )` | → `string` | `DATS` → `'DD/MM/YYYY'`. |
 | `gc_plant_2000/1000`, `gc_sloc_1d00` | konstanta | Plant/sloc dipakai `monitoring_bom.htm` (Sloc Terkini) & transfer. |
+| `gc_kokrs`, `gc_cc_line_a`…`gc_cc_sample` | konstanta | Controlling area `PC01` + **whitelist 10 cost center Unit Wood Furniture** (§7c). |
+| `wf_line_name( iv_kostl )` | `KOSTL` → `'Line A'`/`'Lifter B'`/… atau `''` bila di luar whitelist | Satu sumber kebenaran filter scope Unit (badge Line, §7c). |
+| `gc_sloc_22e2/22ek/2291/2292/2293/2294`, `gc_route_out`, `gc_route_notin` | konstanta | SLoc proses + label rute untuk "Status SLoc Sederhana" (§7d). |
+| `wf_route_status( iv_lgort )` | `LGORT` → label status rute (lookup statis, tanpa query) | "Status SLoc Sederhana" (§7d). `22F2`/`22F3` sengaja tak dipetakan. |
 | `ty_qty` / `ty_dotbar` / `ty_lgort_range`, `gc_sloc_2kcs…229k`, `pipeline_slocs( )`, `dot_stages( … )` | tipe/konstanta/method | **Tidak dipakai** (sisa pendekatan dot-bar/pipeline yang diganti "Sloc Terkini"). Boleh dihapus. |
 
 ---
@@ -153,6 +157,8 @@ cache `soKirimCache`, pane `#tab-kirim`).
 | 13 | Jadwal PO | **EKET** | `ebeln, ebelp, eindt, menge, wemng` | FAE `lt_ekpo_pre`, `ebeln=... AND ebelp=...` | Qty terbuka `Σ(menge−wemng)` + ETA `eindt` terawal. |
 | 14 | **Sloc Terkini** (stok) | **MARD** | `matnr, werks, lgort, labst` | FAE material komponen (RESB), `labst>0 AND (werks=2000 OR (werks=1000 AND lgort=1D00))` | Lokasi stok material kini (semua sloc Plant 2000; +1D00 bila belum masuk). |
 | 15 | Nama sloc terkini | **T001L** | `werks, lgort, lgobe` | FAE `lt_curloc`, `werks=... AND lgort=...` | Nama sloc untuk badge Sloc Terkini (bisa di luar sloc reservasi RESB). |
+| 16 | **Badge Line** — operasi | **AFVC** | `aufpl, vornr, arbid` | FAE `lt_afko_pre` (aufpl), `aufpl = ...` | Operasi order; **operasi pertama** (vornr terkecil) → `ARBID` (work center). |
+| 17 | **Badge Line** — cost center | **CRCO** | `objid, kostl` | FAE arbid, `objid=arbid AND kokrs='PC01' AND begda<=sy-datum AND endda>=sy-datum` | `KOSTL` → whitelist Unit Wood Furniture. |
 
 **Kolom "Sloc Terkini"** pada baris komponen (menggantikan progres GR/target lama): badge sloc tempat
 **stok material berada kini** (MARD `labst>0`) di Plant 2000, atau `1D00` (merah) bila belum masuk.
@@ -162,6 +168,87 @@ Bila material tersebar di >1 sloc, semua badge ditampilkan (qty terbesar dulu).
 
 > **Catatan:** `ZCL_CS_UTIL=>dot_stages`/`pipeline_slocs` + tipe `ty_qty`/`ty_dotbar` masih ada di class
 > namun **tidak dipakai lagi** (pendekatan dot-bar/pipeline diganti "Sloc Terkini"). Boleh dihapus.
+
+### 7c. Badge "Line" (Unit Wood Furniture) — per ITEM
+
+Badge di **baris item** (inline setelah `ARKTX`, terlihat tanpa expand), menunjukkan Line/Section Wood
+Furniture penanggung jawab. **Scope per-ITEM** (dari order wakil `ls_item_row-aufnr`), BUKAN per-komponen —
+beda dari "Sloc Terkini" yang per-komponen. Implementasi **Opsi 1** dari `plan-checkpoint-wood-furniture-filter.md`
+(§7.4): pertahankan snapshot "Sloc Terkini", perkaya dengan Line — **tanpa** dot-progress/checkpoint sequence
+(premis "1 sequence seragam" terbukti TIDAK valid, §7.1–7.3 plan).
+
+**Rantai:** `AFKO-AUFPL` → `AFVC` (operasi **pertama** = `vornr` terkecil; field **`ARBID`**, *bukan* `ARBPL`
+— `ARBPL` tidak ada di AFVC) → `CRCO` (`objid = arbid`, join **langsung**, `CRHD` tidak diperlukan karena
+`ARBID` sudah bertipe `CR_OBJID` = `CRCO-OBJID`) → `KOSTL` → whitelist `ZCL_CS_UTIL=>wf_line_name( )`.
+
+**Whitelist 10 cost center** (tertutup) ada di `ZCL_CS_UTIL` (`gc_cc_line_a`…`gc_cc_sample`, + `gc_kokrs='PC01'`).
+Di luar whitelist = **di luar scope, bukan error** → order tetap tampil, hanya badge netral.
+
+| Kondisi | Badge | Kelas |
+|---|---|---|
+| `KOSTL` masuk whitelist | `Line A` / `Lifter B` / … | `ln-wf` (biru) |
+| `KOSTL` ada, di luar whitelist | `Unit lain` | `ln-other` (abu) |
+| Ada work center, tak ada `CRCO` valid utk hari ini | `Unit lain` (tooltip **beda**) | `ln-other` |
+| Order tanpa routing/operasi | `Belum ada operasi` | `ln-other` |
+| Item tanpa `aufnr` | *(tanpa badge — sudah ada "No Prod")* | — |
+
+> Tooltip sengaja **dibedakan** antara "di luar Wood Furniture (CC xxx)" vs "tidak ada cost center valid untuk
+> periode ini (CRCO begda/endda)" agar masalah **data** mudah dibedakan dari masalah **scope** saat debugging.
+
+> ⚠️ **CATATAN TEKNIS (koreksi sketsa plan §4):** plan menulis `SELECT SINGLE … ORDER BY vornr` — itu **BUKAN
+> Open SQL yang valid** (`SELECT SINGLE` tidak mengizinkan `ORDER BY`; tidak akan aktif). Implementasi memakai
+> **`FOR ALL ENTRIES` + `SORT` di ABAP** (konsisten pola FAE file ini, dan jauh lebih murah daripada 3×N
+> `SELECT SINGLE` di dalam loop item pada endpoint yang sudah BERAT).
+>
+> ⚠️ **RISIKO UJI (belum diverifikasi):** operasi pertama dipilih via `SORT lt_afvc BY aufpl vornr ASCENDING`.
+> `VORNR` CHAR(4) **zero-padded** (`0010`,`0020`,`0100`) → urutan leksikografis = urutan numerik, jadi benar
+> juga untuk order dengan >2 operasi. **Bila** ada `VORNR` yang TIDAK ter-pad (mis. `10` vs `100`), urutan bisa
+> meleset. Belum diuji pada order >2 operasi — **laporkan bila janggal, jangan diam-diam ubah asumsi**.
+
+**CSS:** `.line-tag` + `.ln-wf`/`.ln-other` — metrik & warna **mengikuti keluarga `.ord-status-tag`**
+(`.ord-rel` biru / `.ord-crt` abu), `margin-top` → `margin-left` karena tampil inline. Bukan sistem badge baru.
+
+### 7d. "Status SLoc Sederhana" — label rute, menempel di Sloc Terkini
+
+Implementasi **PIVOT §11** `plan-checkpoint-wood-furniture-filter.md`. **TAMBAHAN** di samping badge SLoc
+mentah (poin 14–15) — **bukan pengganti**: kode SLoc + nama T001L tetap tampil, label status ditambahkan
+di sebelahnya. Juga **bukan pengganti** badge Line/Unit (§7c) — keduanya dipakai bersama.
+
+> **SUMBER DATA: reuse `MARD` yang sudah ada (`lt_curloc`, poin 14). TIDAK ADA TABEL/QUERY BARU
+> sama sekali.** Fitur ini **murni presentational** — hanya lapisan pemetaan `LGORT → label` di atas data
+> yang sudah di-fetch. (Bila suatu saat terasa perlu SELECT tambahan di sini, berarti ada yang meleset
+> dari desain — hentikan & tinjau ulang.)
+
+Method: `ZCL_CS_UTIL=>wf_route_status( iv_lgort )` — lookup statis (CASE), tanpa query.
+
+| SLoc | Nama (T001L) | Status | Kelas |
+|---|---|---|---|
+| `2KCS` | Central Storage | Baru Masuk Central Storage | `rt-proc` |
+| `2261` / `2262` | Machining D-IN / D-OUT | Sedang di Machining | `rt-proc` |
+| `22E2` / `22EK` | Banding D-IN / EBD Karantina | Sedang di Edge Banding | `rt-proc` |
+| `2291` / `2292` | Pre-Assy D-IN / Sanding D-OUT | Sedang di Sanding | `rt-proc` |
+| `2293` / `2294` | Assembly D-IN / D-OUT | Sedang di Assembly | `rt-proc` |
+| `229K` | Sanding D-IN | **Sampai Batas Akhir (229K)** | **`rt-done`** (hijau) |
+| *(lainnya)* | — | Di Luar Rute Wood Furniture | `rt-out` (abu) |
+| *(werks=1000/`1D00`)* | — | Belum Masuk Central Storage | `rt-notin` (abu) |
+| *(tak ada stok)* | — | *"Tidak ada stok"* (tidak berubah) | — |
+
+- **`1D00` (Plant 1000)** dicek **di call-site** (`ls_curloc-werks`) **SEBELUM** memanggil `wf_route_status`,
+  karena method hanya menerima `lgort` dan tidak tahu `werks`. Tanpa cek ini `1D00` akan salah dilabeli
+  "Di Luar Rute". Kelas `rt-notin` sengaja **terpisah** dari `rt-out` meski warnanya sama — semantiknya beda
+  ("belum masuk" vs "di luar rute"), agar jelas bagi developer berikutnya.
+- **CSS** reuse token yang ada: `rt-done` = `.ord-teco` (hijau "beres"), `rt-proc` = `.ord-rel`,
+  `rt-out`/`rt-notin` = `.ord-crt`.
+
+> ⚠️ **`22F2` (Color Room) & `22F3` (CG Packing Area) SENGAJA TIDAK DIPETAKAN** ke status proses manapun.
+> Belum diverifikasi apakah termasuk rute Wood Furniture — keduanya muncul di BOM **campuran** (komponen WF
+> *dan* Chair). Keduanya jatuh ke **default aman** "Di Luar Rute Wood Furniture" agar tidak salah klaim status.
+> Konstanta `gc_sloc_22f2`/`gc_sloc_22f3` **ada** di ZCL_CS_UTIL tapi **tidak dipakai** di `wf_route_status` —
+> ini disengaja. **JANGAN tambahkan ke CASE tanpa verifikasi SAP lebih dulu.**
+
+> ℹ️ **Keterbatasan yang diketahui:** `229K` dipakai sebagai "batas akhir" mengikuti definisi bisnis `ide.md`,
+> meski §7.2–7.3 plan membuktikan material bisa **dikonsumsi langsung** dari `229K` (jadi bukan titik akhir
+> sungguhan). Dicatat apa adanya, bukan bug.
 
 ### 7b. `monitoring_bom.htm?mode=kirim` — Fragment "Butuh Dikirim" (di-scope per SO)
 
@@ -272,7 +359,9 @@ banyak material berbeda menampilkan angka **Butuh yang sama (20)**, mirip qty SO
 | **VBAK** | SD Header | vbeln, erdat, kunnr, auart, netwr, waerk, gbstk, lfstk | vbeln |
 | **VBAP** | SD Item | vbeln, posnr, matnr, arktx, kwmeng, vrkme, werks | vbeln, posnr |
 | **AFPO** | Order Produksi (item) | kdauf, kdpos, psmng, wemng, meins, aufnr | aufnr, posnr |
-| **AFKO** | Order Produksi (header) | aufnr, gstrp, gltrp, getri | aufnr |
+| **AFKO** | Order Produksi (header) | aufnr, **aufpl**, gstrp, gltrp, getri | aufnr |
+| **AFVC** | Operasi Order | aufpl, vornr, **arbid** *(bukan ARBPL!)* | aufpl, aplzl |
+| **CRCO** | Work Center → Cost Center | objid *(= AFVC-arbid)*, kokrs, kostl, begda, endda | objid, kokrs, … |
 | **AUFK** | Order Master | aufnr, objnr | aufnr |
 | **JEST** | Status Objek | objnr, stat, inact | objnr, stat |
 | **RESB** | Reservasi/Komponen | aufnr, matnr, werks, lgort, bdmng, meins, xloek | rsnum, rspos, … |
@@ -298,7 +387,7 @@ banyak material berbeda menampilkan angka **Butuh yang sama (20)**, mirip qty SO
 | `index_oldcard.htm` | VBAK, VBAP, AFPO |
 | `monitoring.htm` | KNA1, VBAK, VBAP, AFPO |
 | `monitoring_detail.htm` | VBAK, KNA1, VBAP, AFPO |
-| `monitoring_bom.htm` | VBAP, AFPO, AFKO, AUFK, JEST, RESB, T001L, MAST, STPO, MAKT, MARD, EKPO, EKET *(+ MSEG, MKPF di `mode=kirim`)* |
+| `monitoring_bom.htm` | VBAP, AFPO, AFKO, AUFK, JEST, RESB, T001L, MAST, STPO, MAKT, MARD, EKPO, EKET, **AFVC, CRCO** *(badge Line)* *(+ MSEG, MKPF di `mode=kirim`)* |
 | `riwayat.htm` | KNA1, VBAK, VBAP, AFPO |
 | `transfer.htm` | AFPO, RESB, MAKT, MARD, MSEG, MKPF |
 
