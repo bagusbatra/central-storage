@@ -296,7 +296,7 @@ canvas { display: block; max-width: 100%; }
   transition: max-height 0.32s ease, opacity 0.25s ease, padding 0.25s ease, margin-top 0.25s ease;
 }
 .bom-section-wrapper.bom-open {
-  max-height: 1200px;
+  max-height: 20000px;
   opacity: 1;
   padding: 16px;
   margin-top: 15px;
