@@ -70,28 +70,36 @@ di-exclude dari checkpoint dashboard.
 
 ---
 
-## 3. Level Penerapan Filter (pertanyaan terbuka — perlu diputuskan)
+## 3. Level Penerapan Filter — KEPUTUSAN FINAL (2026-07-11)
 
 Cost Center menempel ke **Work Center**, dan Work Center menempel ke
 **operasi** (`AFVC`), bukan ke order secara keseluruhan. Satu production
 order bisa punya >1 operasi dengan Work Center berbeda (lihat order
-`181000028030` di riset sebelumnya: operasi `0010` di `WC107`, operasi
-`0020` di `WC110` — dua Work Center berbeda dalam 1 order).
+`181000028030` di riset sebelumnya: operasi `0010` di `WC107`/Drawer,
+operasi `0020` di `WC110` — dua unit berbeda dalam 1 order).
 
-**Perlu diputuskan sebelum coding**, dua opsi:
+**Keputusan: bukan Opsi A (operasi pertama) atau Opsi B (salah satu
+operasi) murni — melainkan pendekatan HYBRID:**
 
-- **Opsi A — Operasi pertama sebagai wakil.** Ambil Cost Center dari
-  operasi `0010` (pertama) saja untuk menentukan Unit order tsb. Simpel,
-  tapi berisiko salah kalau operasi pertama kebetulan di Unit lain
-  (subkontrak internal antar-unit).
-- **Opsi B — Order dianggap Wood Furniture kalau ADA MINIMAL SATU operasi**
-  dengan Cost Center whitelist. Lebih longgar, menangkap kasus campuran,
-  tapi bisa ikut menampilkan order yang mayoritas prosesnya sebenarnya
-  di unit lain.
+- **Inklusi order**: order tetap ditampilkan di dashboard selama **minimal
+  satu** operasinya masuk whitelist Wood Furniture (mirip semangat Opsi B —
+  tidak ada order relevan yang hilang dari radar).
+- **Kedalaman detail render bersifat PER-OPERASI, bukan per-order**:
+  - Operasi dengan Cost Center **masuk whitelist** → render detail penuh
+    (posisi checkpoint, Line A/B/C/Lifter, dot progress, dsb).
+  - Operasi dengan Cost Center **di luar whitelist** → render **status
+    ringkas saja** (mis. "Diproses di unit lain"), TANPA breakdown
+    checkpoint/line — karena itu bukan tanggung jawab Admin Central Storage.
 
-*(Rekomendasi sementara: Opsi A dulu untuk kesederhanaan, evaluasi ulang
-kalau ketemu kasus nyata yang butuh Opsi B. Perlu ⚠️ konfirmasi dari Anda
-sebelum masuk ke desain teknis final.)*
+**Alasan:** selaras filosofi `ide.md` ("apa yang harus dikerjakan Admin
+Central Storage saat ini") — Admin perlu tahu SEMUA material terkait SO
+ada di radar (tidak hilang), tapi detail teknis hanya relevan untuk tahap
+yang jadi tanggung jawabnya.
+
+**Konsekuensi desain:** klasifikasi whitelist tetap dihitung **per operasi**
+(query `AFVC` per order, bukan cuma operasi pertama), tapi hasilnya dipakai
+untuk **menentukan level detail tampilan**, bukan untuk exclude/include
+order secara keseluruhan.
 
 ---
 
@@ -146,9 +154,9 @@ langkah-langkah sebelumnya).
 
 ## 5. Fase 0 — Checklist Verifikasi Sebelum Coding
 
+- [x] ~~Putuskan Opsi A vs B (§3)~~ — **SELESAI**: keputusan hybrid, lihat §3
 - [ ] **Konfirmasi tabel penghubung Work Center ↔ Cost Center** via SE11
       (kandidat: `CRCO`, cek field persis + relasi ke `CRHD`/`ARBPL`)
-- [ ] **Putuskan Opsi A vs B** (§3) — operasi pertama vs "ada salah satu"
 - [ ] **Verifikasi ulang nama SLoc checkpoint** (`2261/2262/22F2/22F3/229K`)
       via `T001L` — ditemukan `22F3` = "CG Packing Area" di sistem nyata,
       BUKAN "Laminating OUT" seperti asumsi `ide.md`. Peta checkpoint perlu
