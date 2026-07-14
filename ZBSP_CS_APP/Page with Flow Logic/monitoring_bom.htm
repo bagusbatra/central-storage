@@ -191,45 +191,29 @@ TYPES: BEGIN OF ty_curloc,
 "     Berbasis HISTORI MSEG (bukan stok kini spt lt_curloc), jadi komponen yang sudah
 "     lewat 229K tetap 4 hijau walau stoknya sudah pindah. Definisi tiap checkpoint &
 "     arti warna: lihat header ZCL_CS_UTIL (dot_stages).
-"     Semua qty di-AGREGASI PER MATERIAL (bukan per baris RESB): satu material bisa
-"     muncul di >1 order produksi item ini — kalau di-per-baris, qty 229K yang sama
-"     akan diklaim dua kali. need = SUM(bdmng) seluruh baris RESB material tsb.
-TYPES: BEGIN OF ty_cp,
-         matnr  TYPE mseg-matnr,
-         need   TYPE zcl_cs_util=>ty_qty,   " SUM(RESB-BDMNG) — acuan "selesai"
-         q2kcs  TYPE zcl_cs_util=>ty_qty,   " CP1
-         q2261  TYPE zcl_cs_util=>ty_qty,   " CP2
-         q2262  TYPE zcl_cs_util=>ty_qty,   " CP3 (GR 101, order WF saja)
-         q229k  TYPE zcl_cs_util=>ty_qty,   " CP4
-         at1d00 TYPE abap_bool,             " stok masih menunggu di 1000/1D00
-       END OF ty_cp.
-
-TYPES: BEGIN OF ty_cpmv,
-         matnr TYPE mseg-matnr,
-         aufnr TYPE mseg-aufnr,
-         lgort TYPE mseg-lgort,
-         umlgo TYPE mseg-umlgo,
-         umwrk TYPE mseg-umwrk,   " plant tujuan — memisahkan retur ke 1000 dari maju ke hilir
-         bwart TYPE mseg-bwart,
-         shkzg TYPE mseg-shkzg,
-         menge TYPE mseg-menge,
-       END OF ty_cpmv.
-
-DATA: lt_cp     TYPE SORTED TABLE OF ty_cp WITH UNIQUE KEY matnr,
-      ls_cp     TYPE ty_cp,
-      lt_cpmv   TYPE TABLE OF ty_cpmv,
-      ls_cpmv   TYPE ty_cpmv,
-      lt_cpauf  TYPE zcl_cs_util=>ty_aufnr_tab,
-      ls_cpauf  TYPE zcl_cs_util=>ty_aufnr_line,
-      lt_cpwf   TYPE zcl_cs_util=>ty_aufnr_tab,
-      lr_cp_slo TYPE zcl_cs_util=>ty_lgort_range,
-      lr_cp_bw  TYPE zcl_cs_util=>ty_bwart_range,
-      ls_cp_bw  LIKE LINE OF lr_cp_bw,
-      lv_cpq    TYPE zcl_cs_util=>ty_qty,
+"
+"     REVISI FASE-2 — PRESISI PER SO+ITEM:
+"     Qty TIDAK lagi dihitung di halaman ini. Seluruh query pindah ke
+"     zcl_cs_util=>cp_qty( ), yang memfilter kdauf = SO ini, kdpos = item, sobkz='E'.
+"     Dulu kuncinya MATNR saja → satu material yang dipakai beberapa item/SO memakai
+"     angka yang SAMA (masalah "batas atas"). Sekarang kuncinya (KDPOS, MATNR):
+"     komponen yang sama di item 10 dan item 20 punya angka SENDIRI-SENDIRI.
+"     need = SUM(RESB-BDMNG) per (item, material) — satu material bisa muncul di >1
+"     order produksi item yang sama, jadi tetap dijumlah, bukan per baris RESB.
+"     Komponen ber-nodata (gerakan tanpa KDAUF/SOBKZ='E') → dot-bar ABU "Data Tidak
+"     Lengkap"; TIDAK ada fallback diam-diam ke angka global.
+DATA: lt_cpkey  TYPE zcl_cs_util=>ty_cpkey_tab,
+      ls_cpkey  TYPE zcl_cs_util=>ty_cpkey,
+      lt_cpomap TYPE zcl_cs_util=>ty_ordmap_tab,
+      ls_cpomap TYPE zcl_cs_util=>ty_ordmap,
+      lt_cpqty  TYPE zcl_cs_util=>ty_cpqty_tab,
+      ls_cpqty  TYPE zcl_cs_util=>ty_cpqty,
+      lv_cp_kdp TYPE afpo-kdpos,          " item SO pemilik baris RESB (via aufnr)
+      lv_at1d00 TYPE abap_bool,           " stok masih menunggu di 1000/1D00
       ls_dot    TYPE zcl_cs_util=>ty_dotbar,
       lv_dot_tt TYPE string.
 
-FIELD-SYMBOLS <cp> TYPE ty_cp.
+FIELD-SYMBOLS <cpk> TYPE zcl_cs_util=>ty_cpkey.
 
 DATA: lt_dot_drv  TYPE TABLE OF ty_mat,
       lt_curloc   TYPE TABLE OF ty_curloc,
@@ -631,98 +615,52 @@ IF lv_req_vb IS NOT INITIAL.
     "   3e (SLoc Terkini / wf_route_status) = STOK KINI. 3g = HISTORI GERAKAN.
     "   Keduanya tampil berdampingan; 3e tidak disentuh.
     "
-    "   CP1 2KCS  : lgort=2KCS, 301/311. 'S' menambah. 'H' HANYA dikurangi bila
-    "               umwrk=1000 (retur balik ke plant asal) — 'H' ke hilir (2261 dst)
-    "               TIDAK dikurangi, itu kemajuan, bukan pembatalan.
-    "   CP2 2261  : lgort=2261 DAN umlgo=2KCS, 301/311, net S−H.
-    "   CP3 2262  : GR bwart 101 di lgort=2262, net S−H, HANYA bila order-nya lolos
-    "               whitelist Wood Furniture (zcl_cs_util=>wf_order_filter).
-    "   CP4 229K  : lgort=229K, 301/311, net S−H, dari umlgo MANA PUN (229K menerima
-    "               dari 2262/22E2/2291/2292/2293/… — jangan dibatasi ke 2262 saja).
-    "   bwart 321 tak pernah ikut: range bwart hanya 301/311/101.
-    IF lt_resb IS NOT INITIAL AND lt_dot_drv IS NOT INITIAL.
-      " need per MATERIAL = SUM(bdmng) seluruh baris RESB (bisa >1 order per item)
+    "   REVISI FASE-2: seluruh perhitungan qty PINDAH ke zcl_cs_util=>cp_qty( ) —
+    "   halaman ini tidak lagi menyentuh MSEG. Yang disiapkan di sini hanya KUNCI:
+    "     (kdauf = SO ini, kdpos = item SO, matnr = komponen, need = Σ RESB-BDMNG)
+    "   plus peta order → item (utk baris GR 101 yang tak membawa KDAUF).
+    "
+    "   kdpos didapat dari aufnr baris RESB → lt_afpo_pre (order milik item mana).
+    "   Inilah yang membuat komponen sama di item 10 & item 20 punya angka SENDIRI.
+    IF lt_resb IS NOT INITIAL.
+      " Peta order → item SO. lt_afpo_pre sudah berisi SELURUH order item SO ini.
+      LOOP AT lt_afpo_pre INTO ls_afpo_row.
+        IF ls_afpo_row-aufnr IS INITIAL. CONTINUE. ENDIF.
+        CLEAR ls_cpomap.
+        ls_cpomap-aufnr = ls_afpo_row-aufnr.
+        ls_cpomap-kdauf = ls_afpo_row-kdauf.
+        ls_cpomap-kdpos = ls_afpo_row-kdpos.
+        INSERT ls_cpomap INTO TABLE lt_cpomap.   " sorted-unique
+      ENDLOOP.
+
+      " Kunci per (item, komponen). need dijumlah bila 1 material muncul di >1 order
+      " dari item yang SAMA.
       LOOP AT lt_resb INTO ls_resb.
-        READ TABLE lt_cp ASSIGNING <cp> WITH TABLE KEY matnr = ls_resb-matnr.
+        IF ls_resb-aufnr IS INITIAL. CONTINUE. ENDIF.
+        CLEAR: ls_cpomap, lv_cp_kdp.
+        READ TABLE lt_cpomap INTO ls_cpomap
+          WITH TABLE KEY aufnr = ls_resb-aufnr.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.   " order di luar SO ini
+        lv_cp_kdp = ls_cpomap-kdpos.
+
+        READ TABLE lt_cpkey ASSIGNING <cpk>
+          WITH TABLE KEY kdauf = lv_vbeln kdpos = lv_cp_kdp matnr = ls_resb-matnr.
         IF sy-subrc = 0.
-          <cp>-need = <cp>-need + ls_resb-bdmng.
+          <cpk>-need = <cpk>-need + ls_resb-bdmng.
         ELSE.
-          CLEAR ls_cp.
-          ls_cp-matnr = ls_resb-matnr.
-          ls_cp-need  = ls_resb-bdmng.
-          INSERT ls_cp INTO TABLE lt_cp.
+          CLEAR ls_cpkey.
+          ls_cpkey-kdauf = lv_vbeln.
+          ls_cpkey-kdpos = lv_cp_kdp.
+          ls_cpkey-matnr = ls_resb-matnr.
+          ls_cpkey-need  = ls_resb-bdmng.
+          INSERT ls_cpkey INTO TABLE lt_cpkey.
         ENDIF.
       ENDLOOP.
 
-      " Stok masih menunggu di 1000/1D00? → titik-1 MERAH (bukan abu) di dot_stages.
-      LOOP AT lt_curloc INTO ls_curloc.
-        IF ls_curloc-werks <> zcl_cs_util=>gc_plant_1000. CONTINUE. ENDIF.
-        READ TABLE lt_cp ASSIGNING <cp> WITH TABLE KEY matnr = ls_curloc-matnr.
-        IF sy-subrc = 0. <cp>-at1d00 = abap_true. ENDIF.
-      ENDLOOP.
-
-      lr_cp_slo = zcl_cs_util=>pipeline_slocs( ).      " 2KCS/2261/2262/229K
-      lr_cp_bw  = zcl_cs_util=>transfer_bwarts( ).     " 301/311
-      ls_cp_bw-sign = 'I'. ls_cp_bw-option = 'EQ'.
-      ls_cp_bw-low  = zcl_cs_util=>gc_bwart_gr.        " + 101 (CP3)
-      APPEND ls_cp_bw TO lr_cp_bw.
-
-      SELECT matnr aufnr lgort umlgo umwrk bwart shkzg menge FROM mseg
-        INTO CORRESPONDING FIELDS OF TABLE lt_cpmv
-        FOR ALL ENTRIES IN lt_dot_drv
-        WHERE matnr = lt_dot_drv-matnr
-          AND werks = lc_plant
-          AND lgort IN lr_cp_slo
-          AND bwart IN lr_cp_bw.
-
-      " Order mana yang GR-nya sah dihitung sbg CP3? → hanya yang Unit-nya WF.
-      LOOP AT lt_cpmv INTO ls_cpmv.
-        IF ls_cpmv-bwart <> zcl_cs_util=>gc_bwart_gr OR ls_cpmv-aufnr IS INITIAL.
-          CONTINUE.
-        ENDIF.
-        ls_cpauf-aufnr = ls_cpmv-aufnr.
-        INSERT ls_cpauf INTO TABLE lt_cpauf.   " sorted-unique → auto dedup
-      ENDLOOP.
-      IF lt_cpauf IS NOT INITIAL.
-        lt_cpwf = zcl_cs_util=>wf_order_filter( lt_cpauf ).
+      IF lt_cpkey IS NOT INITIAL.
+        lt_cpqty = zcl_cs_util=>cp_qty( it_key    = lt_cpkey
+                                        it_ordmap = lt_cpomap ).
       ENDIF.
-
-      LOOP AT lt_cpmv INTO ls_cpmv.
-        READ TABLE lt_cp ASSIGNING <cp> WITH TABLE KEY matnr = ls_cpmv-matnr.
-        IF sy-subrc <> 0. CONTINUE. ENDIF.
-
-        lv_cpq = ls_cpmv-menge.
-        IF ls_cpmv-shkzg = zcl_cs_util=>gc_shkzg_h.
-          lv_cpq = 0 - lv_cpq.
-        ENDIF.
-
-        IF ls_cpmv-bwart = zcl_cs_util=>gc_bwart_gr.
-          " --- CP3: GR 101 @2262, order harus lolos whitelist WF ---
-          IF ls_cpmv-lgort = zcl_cs_util=>gc_sloc_2262 AND ls_cpmv-aufnr IS NOT INITIAL.
-            READ TABLE lt_cpwf TRANSPORTING NO FIELDS
-              WITH TABLE KEY aufnr = ls_cpmv-aufnr.
-            IF sy-subrc = 0.
-              <cp>-q2262 = <cp>-q2262 + lv_cpq.
-            ENDIF.
-          ENDIF.
-        ELSE.
-          " --- CP1 / CP2 / CP4: transfer 301/311 ---
-          CASE ls_cpmv-lgort.
-            WHEN zcl_cs_util=>gc_sloc_2kcs.
-              IF ls_cpmv-shkzg = zcl_cs_util=>gc_shkzg_s.
-                <cp>-q2kcs = <cp>-q2kcs + lv_cpq.
-              ELSEIF ls_cpmv-umwrk = zcl_cs_util=>gc_plant_1000.
-                <cp>-q2kcs = <cp>-q2kcs + lv_cpq.   " retur balik ke Plant 1000 (lv_cpq negatif)
-              ENDIF.
-            WHEN zcl_cs_util=>gc_sloc_2261.
-              IF ls_cpmv-umlgo = zcl_cs_util=>gc_sloc_2kcs.
-                <cp>-q2261 = <cp>-q2261 + lv_cpq.
-              ENDIF.
-            WHEN zcl_cs_util=>gc_sloc_229k.
-              <cp>-q229k = <cp>-q229k + lv_cpq.
-          ENDCASE.
-        ENDIF.
-      ENDLOOP.
     ENDIF.
 
     " === 3f. BADGE "LINE" (Unit Wood Furniture) — PER ITEM =================
@@ -1230,22 +1168,40 @@ ENDIF.
                       " --- Dot-bar checkpoint (3g) — HISTORI, bukan stok kini. Sengaja
                       "     dirender DI LUAR blok lv_has_cur: komponen yang stoknya sudah
                       "     habis pindah tetap harus menunjukkan jejak 4 checkpoint-nya.
-                      CLEAR: ls_cp, ls_dot, lv_dot_tt.
-                      READ TABLE lt_cp INTO ls_cp WITH TABLE KEY matnr = ls_resb-matnr.
+                      "     Kunci (item SO ini, komponen ini) → angka MILIK item ini,
+                      "     bukan angka material yang dipakai bersama SO/item lain.
+                      CLEAR: ls_cpqty, ls_dot, lv_dot_tt, lv_at1d00.
+                      READ TABLE lt_cpqty INTO ls_cpqty
+                        WITH TABLE KEY kdauf = lv_vbeln
+                                       kdpos = ls_item_row-posnr
+                                       matnr = ls_resb-matnr.
                       IF sy-subrc = 0.
+                        " Stok masih menunggu di 1000/1D00? → titik-1 MERAH (bukan abu).
+                        READ TABLE lt_curloc TRANSPORTING NO FIELDS
+                          WITH KEY matnr = ls_resb-matnr
+                                   werks = zcl_cs_util=>gc_plant_1000.
+                        IF sy-subrc = 0. lv_at1d00 = abap_true. ENDIF.
+
                         ls_dot = zcl_cs_util=>dot_stages(
-                                   iv_q_2kcs    = ls_cp-q2kcs
-                                   iv_q_2261    = ls_cp-q2261
-                                   iv_q_2262_gr = ls_cp-q2262
-                                   iv_q_229k    = ls_cp-q229k
-                                   iv_q_need    = ls_cp-need
-                                   iv_at_1d00   = ls_cp-at1d00 ).
-                        lv_dot_tt = 'Butuh ' && ls_cp-need
-                                 && ' | 2KCS ' && ls_cp-q2kcs
-                                 && ' | 2261 ' && ls_cp-q2261
-                                 && ' | GR 2262 ' && ls_cp-q2262
-                                 && ' | 229K ' && ls_cp-q229k
-                                 && ' | terjauh: ' && ls_dot-sloc_lbl.
+                                   iv_q_2kcs    = ls_cpqty-q2kcs
+                                   iv_q_2261    = ls_cpqty-q2261
+                                   iv_q_2262_gr = ls_cpqty-q2262
+                                   iv_q_229k    = ls_cpqty-q229k
+                                   iv_q_need    = ls_cpqty-need
+                                   iv_at_1d00   = lv_at1d00
+                                   iv_nodata    = ls_cpqty-nodata ).
+
+                        IF ls_dot-nodata = abap_true.
+                          lv_dot_tt = ls_dot-note.
+                        ELSE.
+                          lv_dot_tt = 'SO ' && lv_vbeln && ' item ' && ls_item_row-posnr
+                                   && ' | Butuh ' && ls_cpqty-need
+                                   && ' | 2KCS ' && ls_cpqty-q2kcs
+                                   && ' | 2261 ' && ls_cpqty-q2261
+                                   && ' | GR 2262 ' && ls_cpqty-q2262
+                                   && ' | 229K ' && ls_cpqty-q229k
+                                   && ' | terjauh: ' && ls_dot-sloc_lbl.
+                        ENDIF.
                       ENDIF.
                     %>
                     <div class="dot-bar" title="<%= lv_dot_tt %>">
@@ -1253,7 +1209,11 @@ ENDIF.
                       <span class="dot <%= ls_dot-d2 %>"></span><span class="dot-link"></span>
                       <span class="dot <%= ls_dot-d3 %>"></span><span class="dot-link"></span>
                       <span class="dot <%= ls_dot-d4 %>"></span>
+                      <% IF ls_dot-nodata = abap_true. %>
+                      <span class="dot-cap" style="color:#b45309;">&#9888; Data Tidak Lengkap</span>
+                      <% ELSE. %>
                       <span class="dot-cap"><%= ls_dot-pct %>%</span>
+                      <% ENDIF. %>
                     </div>
                   </td>
                 </tr>

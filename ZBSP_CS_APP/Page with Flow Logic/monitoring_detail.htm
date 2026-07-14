@@ -53,6 +53,7 @@ DATA: ls_vbak_hdr   TYPE vbak,
       lv_tot_done   TYPE i,
       lv_tot_inprg  TYPE i,
       lv_tot_noprd  TYPE i,
+      lv_tot_nodat  TYPE i,   " item ber-"Data Tidak Lengkap" (gc_st_nodata)
       lv_ovr_pct    TYPE zcl_cs_util=>ty_pct,
       lv_ovr_cls    TYPE string,
       lv_sum_pct    TYPE zcl_cs_util=>ty_pct,
@@ -154,6 +155,9 @@ IF lv_req_vb IS NOT INITIAL.
     CASE ls_itmcp-code.
       WHEN zcl_cs_util=>gc_st_done.   lv_tot_done  = lv_tot_done  + 1.
       WHEN zcl_cs_util=>gc_st_inprog. lv_tot_inprg = lv_tot_inprg + 1.
+      WHEN zcl_cs_util=>gc_st_nodata.
+        " Ditangani eksplisit — jangan tertelan WHEN OTHERS (= "Belum Produksi").
+        lv_tot_nodat = lv_tot_nodat + 1.
       WHEN OTHERS.                    lv_tot_noprd = lv_tot_noprd + 1.
     ENDCASE.
   ENDLOOP.
@@ -242,6 +246,12 @@ ENDIF.
         <div class="sum-kpi-num"><%= lv_tot_noprd %></div>
         <div class="sum-kpi-lbl">Belum Produksi</div>
       </div>
+      <% IF lv_tot_nodat > 0. %>
+      <div class="sum-kpi-card sum-kpi-noprod" style="border-color:#f59e0b;" title="Item ini punya komponen dengan gerakan pipeline tanpa KDAUF/SOBKZ='E'. Qty-nya tidak bisa dipastikan milik SO ini, jadi statusnya sengaja TIDAK ditentukan — bukan 'selesai', bukan pula 'belum produksi'.">
+        <div class="sum-kpi-num" style="color:#b45309;"><%= lv_tot_nodat %></div>
+        <div class="sum-kpi-lbl" style="color:#b45309;">&#9888; Data Tidak Lengkap</div>
+      </div>
+      <% ENDIF. %>
     </div>
 
     <div class="ovr-prog-wrap">
@@ -268,7 +278,9 @@ ENDIF.
         <div class="sum-item-right">
           <div class="sum-item-bar"><div class="sum-item-fill <%= lv_sum_cls %>" style="width:<%= zcl_cs_util=>css_pct( lv_sum_prog ) %>%;"></div></div>
           <div class="sum-item-pct">
-            <% IF ls_itmcp-tot_cmp > 0. %>
+            <% IF ls_itmcp-code = zcl_cs_util=>gc_st_nodata. %>
+            <span class="sum-item-sub" style="color:#b45309; font-weight:700;" title="<%= ls_itmcp-nodat_cmp %> dari <%= ls_itmcp-tot_cmp %> komponen punya gerakan pipeline tanpa KDAUF/SOBKZ='E'. Persentase sengaja TIDAK ditampilkan daripada menampilkan angka yang mungkin milik SO lain.">&#9888; Data Tidak Lengkap</span>
+            <% ELSEIF ls_itmcp-tot_cmp > 0. %>
             <b><%= lv_sum_prog %>%</b>&nbsp;<span class="sum-item-sub" title="Komponen yang sudah sampai SLoc 229K sebanyak yang dibutuhkan"><%= ls_itmcp-done_cmp %>&nbsp;/&nbsp;<%= ls_itmcp-tot_cmp %> komp.</span>
             <% ELSEIF ls_item_row-psmng > 0. %>
             <span class="sum-item-sub" style="font-style:italic;">Order tanpa komponen (RESB kosong)</span>

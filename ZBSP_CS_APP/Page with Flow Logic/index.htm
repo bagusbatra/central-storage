@@ -63,6 +63,10 @@ TYPES: BEGIN OF ty_so_prog,
          done   TYPE i,
          inprog TYPE i,
          noprod TYPE i,
+         " Item yang qty pipeline-nya TIDAK bisa dipilah per SO (gerakan tanpa
+         " KDAUF/SOBKZ='E'). Bucket TERPISAH — sengaja TIDAK dilebur ke noprod:
+         " "belum produksi" dan "datanya bermasalah" adalah dua hal yang berbeda.
+         nodata TYPE i,
        END OF ty_so_prog.
 
 TYPES: BEGIN OF ty_card,
@@ -73,6 +77,7 @@ TYPES: BEGIN OF ty_card,
          done    TYPE i,
          inprog  TYPE i,
          noprod  TYPE i,
+         nodata  TYPE i,
          kunnr   TYPE vbak-kunnr,
          auart   TYPE vbak-auart,
        END OF ty_card.
@@ -89,6 +94,7 @@ DATA: lv_user         TYPE string,
       lv_done         TYPE i,
       lv_inprog       TYPE i,
       lv_noprod       TYPE i,
+      lv_nodata       TYPE i,   " item ber-"Data Tidak Lengkap" (lihat gc_st_nodata)
       lv_dfrom        TYPE d,
       lv_dto          TYPE d,
       lv_mm           TYPE string,
@@ -296,6 +302,11 @@ IF lt_vbak IS NOT INITIAL.
       WHEN zcl_cs_util=>gc_st_inprog.
         lv_inprog  = lv_inprog + 1.
         lv_is_done = 2.
+      WHEN zcl_cs_util=>gc_st_nodata.
+        " DITANGANI EKSPLISIT — bukan dibiarkan jatuh ke WHEN OTHERS. Item ini
+        " datanya tak bisa dipilah per SO; menyebutnya "Belum Produksi" = bohong.
+        lv_nodata  = lv_nodata + 1.
+        lv_is_done = 4.
       WHEN OTHERS.
         lv_noprod  = lv_noprod + 1.
         lv_is_done = 3.
@@ -307,6 +318,8 @@ IF lt_vbak IS NOT INITIAL.
       ls_so_prog-done   = ls_so_prog-done + 1.
     ELSEIF lv_is_done = 2.
       ls_so_prog-inprog = ls_so_prog-inprog + 1.
+    ELSEIF lv_is_done = 4.
+      ls_so_prog-nodata = ls_so_prog-nodata + 1.
     ELSE.
       ls_so_prog-noprod = ls_so_prog-noprod + 1.
     ENDIF.
@@ -393,6 +406,7 @@ IF lt_vbak IS NOT INITIAL.
     ls_card-done    = ls_so_prog-done.
     ls_card-inprog  = ls_so_prog-inprog.
     ls_card-noprod  = ls_so_prog-noprod.
+    ls_card-nodata  = ls_so_prog-nodata.
     ls_card-kunnr   = ls_so_prog-kunnr.
     ls_card-auart   = ls_so_prog-auart.
     ls_card-erdat_s = ls_so_prog-erdat.
@@ -607,11 +621,14 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:33.33%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Item Selesai (sampai 229K) <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang SELURUH komponennya sudah sampai SLoc 229K sebanyak yang dibutuhkan (net qty masuk 229K &gt;= BDMNG). Satu komponen saja kurang, item masih dihitung Proses. Definisi ini menggantikan basis lama 'Goods Receipt 100%' (wemng &gt;= psmng) — angkanya wajar lebih kecil. Sub-teks menunjukkan jumlah item yang masih dalam proses.">i</button></span>
+            <span class="stat-label">Item Selesai (sampai 229K) <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang SELURUH komponennya sudah sampai SLoc 229K sebanyak yang dibutuhkan (net qty masuk 229K &gt;= BDMNG), dihitung PER SO+ITEM lewat KDAUF/KDPOS/SOBKZ='E' — bukan angka material yang dipakai bersama SO lain. Satu komponen saja kurang, item masih dihitung Proses. Item yang komponennya punya gerakan tanpa KDAUF tidak dihitung selesai maupun belum-produksi, tapi masuk kategori 'Data Tidak Lengkap'.">i</button></span>
             <span class="stat-icon"><span class="ic-green">&#10003;</span></span>
           </div>
           <div class="stat-value"><%= lv_done %></div>
           <div class="stat-sub"><%= lv_inprog %> masih dalam proses produksi</div>
+          <% IF lv_nodata > 0. %>
+          <div class="stat-sub" style="color:#b45309; font-weight:700;" title="Item ini punya komponen dengan gerakan pipeline tanpa KDAUF/SOBKZ='E', sehingga qty-nya tidak bisa dipastikan milik SO ini. Sengaja TIDAK dihitung sebagai selesai maupun belum produksi.">&#9888; <%= lv_nodata %> item: Data Tidak Lengkap</div>
+          <% ENDIF. %>
         </div>
       </div>
     </div>
@@ -750,6 +767,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                 <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Item Selesai</span><span style="font-weight:600; color:#374151;"><%= ls_card-done %> / <%= ls_card-items %></span></div>
                 <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Dalam Proses</span><span style="font-weight:600; color:#374151;"><%= ls_card-inprog %></span></div>
                 <div style="display:flex; justify-content:space-between;"><span>Belum Produksi</span><span style="font-weight:600; color:#374151;"><%= ls_card-noprod %></span></div>
+                <% IF ls_card-nodata > 0. %>
+                <div style="display:flex; justify-content:space-between; margin-top:4px;" title="Komponen item ini punya gerakan pipeline tanpa KDAUF/SOBKZ='E' — qty-nya tidak bisa dipastikan milik SO ini, jadi statusnya sengaja tidak ditentukan."><span style="color:#b45309;">&#9888; Data Tidak Lengkap</span><span style="font-weight:700; color:#b45309;"><%= ls_card-nodata %></span></div>
+                <% ENDIF. %>
               </div>
             </div>
             <% ENDLOOP. %>

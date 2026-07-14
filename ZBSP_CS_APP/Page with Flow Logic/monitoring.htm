@@ -27,6 +27,7 @@ TYPES: BEGIN OF ty_so_stat,
          done    TYPE i,
          inprog  TYPE i,
          noprod  TYPE i,
+         nodata  TYPE i,   " item ber-"Data Tidak Lengkap" (gc_st_nodata)
          sum_pct TYPE zcl_cs_util=>ty_pct,  " Σ persentase per item → utk rata-rata
        END OF ty_so_stat.
 
@@ -285,6 +286,10 @@ lv_is_srch = abap_true.
         CASE ls_itmcp-code.
           WHEN zcl_cs_util=>gc_st_done.   ls_so_stat-done   = 1.
           WHEN zcl_cs_util=>gc_st_inprog. ls_so_stat-inprog = 1.
+          WHEN zcl_cs_util=>gc_st_nodata.
+            " Data Tidak Lengkap — DITANGANI EKSPLISIT. Bukan "belum produksi":
+            " itemnya bisa saja sudah jalan, kita yang tak bisa memastikan qty-nya.
+            ls_so_stat-nodata = 1.
           WHEN OTHERS.                    ls_so_stat-noprod = 1.
         ENDCASE.
         COLLECT ls_so_stat INTO lt_so_stat.
@@ -421,8 +426,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               IF ls_so_stat_r-total > 0.
                 " Persentase SO = RATA-RATA progres item (Σ pct / jumlah item)
                 lv_done_pct = ls_so_stat_r-sum_pct / ls_so_stat_r-total.
-                " Chip label status tetap by kategori (Selesai/Proses/Belum)
-                IF ls_so_stat_r-done = ls_so_stat_r-total.
+                " Chip label status tetap by kategori (Selesai/Proses/Belum).
+                " "Data Tidak Lengkap" dicek DULU: SO yang punya item bermasalah
+                " tidak boleh diklaim Selesai hanya karena sisa itemnya selesai.
+                IF ls_so_stat_r-nodata > 0.
+                  lv_stat_cls   = 'so-sl-noprod'.
+                  lv_stat_label = 'Data Tidak Lengkap'.
+                ELSEIF ls_so_stat_r-done = ls_so_stat_r-total.
                   lv_stat_cls   = 'so-sl-done'.
                   lv_stat_label = 'Selesai'.
                 ELSEIF ls_so_stat_r-inprog > 0 OR ls_so_stat_r-done > 0.
@@ -465,6 +475,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                 <span class="so-ic-done">&#10003; <%= ls_so_stat_r-done %></span>
                 <span class="so-ic-prog">&#8635; <%= ls_so_stat_r-inprog %></span>
                 <span class="so-ic-none">&#9675; <%= ls_so_stat_r-noprod %></span>
+                <% IF ls_so_stat_r-nodata > 0. %>
+                <span style="color:#b45309; font-weight:700;" title="Item dengan gerakan pipeline tanpa KDAUF/SOBKZ='E' — qty tak bisa dipastikan milik SO ini, jadi statusnya tidak ditentukan.">&#9888; <%= ls_so_stat_r-nodata %></span>
+                <% ENDIF. %>
               </div>
               <% ENDIF. %>
             </div>

@@ -38,10 +38,29 @@
 *& Mesinnya: item_cp_status( ) — dipanggil index/monitoring/riwayat/monitoring_detail.
 *& item_status( )/item_pct( ) yang lama SUDAH DIHAPUS agar tak ada definisi ganda.
 *&
-*& ⚠️ BATAS MODEL: qty 229K bersifat PER MATERIAL & GLOBAL — gerakan transfer MSEG
-*& tidak membawa nomor SO/order, jadi tak bisa dipilah per SO. Bila SATU material
-*& dipakai BEBERAPA SO, tiap SO melihat qty 229K yang SAMA → bisa sama-sama disebut
-*& selesai walau stok fisik hanya cukup untuk satu. Angka = BATAS ATAS, bukan presisi.
+*&---------------------------------------------------------------------*
+*& REVISI FASE-2 — QTY PIPELINE DIPILAH PER SO+ITEM (bukan lagi per material)
+*&---------------------------------------------------------------------*
+*& Batas lama ("qty 229K per material & global → angka = BATAS ATAS") SUDAH TIDAK
+*& BERLAKU. Diagnostik diag_movement section E membuktikan: 99.9% baris transfer
+*& pipeline (301/311) membawa KDAUF + KDPOS + SOBKZ='E' (sales-order stock /
+*& make-to-order). Artinya tiap gerakan TAHU miliknya SO+item mana.
+*&
+*& Seluruh qty checkpoint kini dihitung oleh SATU mesin: cp_qty( ), yang memfilter
+*&   kdauf = SO, kdpos = item SO, sobkz = 'E'
+*& pada keempat checkpoint. Tidak ada lagi angka "milik material" yang dipakai
+*& bersama beberapa SO.
+*&
+*& 0.1% SISANYA (baris tanpa KDAUF / bukan SOBKZ 'E' = stok anonim) TIDAK
+*& di-fallback diam-diam ke perhitungan global lama — itu akan mengembalikan
+*& masalah "batas atas" tanpa disadari pemakai. Material seperti itu ditandai
+*& nodata → dot-bar ABU-ABU "Data Tidak Lengkap", dan itemnya berstatus
+*& gc_st_nodata (BUKAN done, BUKAN diam-diam "belum produksi").
+*&
+*& ⚠️ KONSEKUENSI YANG BELUM DIKERJAKAN: SOBKZ='E' berarti stok fisiknya ada di
+*& MSKA (per SO+item), BUKAN MARD. Semua pembacaan stok di app ini (SLoc Terkini,
+*& Stok 2KCS/1D00 di transfer.htm, flag iv_at_1d00) masih memakai MARD → berpotensi
+*& nol/tak lengkap. BELUM diverifikasi & BELUM diperbaiki — jangan anggap benar.
 *&---------------------------------------------------------------------*
 CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
 
@@ -63,6 +82,11 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
              pct      TYPE i,            " persen tahap frontier (0/25/50/75/100)
              sloc_lbl TYPE string,       " checkpoint terjauh yang dicapai (tooltip)
              all_done TYPE abap_bool,    " abap_true bila qty acuan penuh sampai 229K
+             " DATA TIDAK LENGKAP: material ini punya gerakan pipeline TANPA
+             " KDAUF/SOBKZ='E' → qty-nya tak bisa dipilah per SO. 4 titik ABU,
+             " pct 0. SENGAJA tidak jatuh balik ke angka global (lihat header).
+             nodata   TYPE abap_bool,
+             note     TYPE string,       " alasan, untuk tooltip
            END OF ty_dotbar.
 
     " Range sloc untuk WHERE lgort IN ( … ) — dipakai halaman saat baca MSEG.
@@ -87,14 +111,53 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
            END OF ty_itm_line.
     TYPES ty_itm_tab TYPE TABLE OF ty_itm_line.
 
+    " === MESIN QTY CHECKPOINT (cp_qty) — per SO+ITEM+MATERIAL ===
+    " INPUT: satu baris per (item SO, komponen). need = SUM(RESB-BDMNG) komponen itu.
+    TYPES: BEGIN OF ty_cpkey,
+             kdauf TYPE afpo-kdauf,
+             kdpos TYPE afpo-kdpos,
+             matnr TYPE resb-matnr,
+             need  TYPE ty_qty,
+           END OF ty_cpkey.
+    TYPES ty_cpkey_tab TYPE SORTED TABLE OF ty_cpkey
+                       WITH UNIQUE KEY kdauf kdpos matnr.
+
+    " INPUT tambahan: peta order → item SO. Dipakai HANYA untuk baris GR 101 yang
+    " KDAUF-nya kosong — baris itu masih bisa diikat ke item lewat AUFNR (cara lama).
+    TYPES: BEGIN OF ty_ordmap,
+             aufnr TYPE afpo-aufnr,
+             kdauf TYPE afpo-kdauf,
+             kdpos TYPE afpo-kdpos,
+           END OF ty_ordmap.
+    TYPES ty_ordmap_tab TYPE SORTED TABLE OF ty_ordmap WITH UNIQUE KEY aufnr.
+
+    " OUTPUT cp_qty: qty NET tiap checkpoint, sudah ter-scope ke SO+item ini.
+    TYPES: BEGIN OF ty_cpqty,
+             kdauf   TYPE afpo-kdauf,
+             kdpos   TYPE afpo-kdpos,
+             matnr   TYPE resb-matnr,
+             need    TYPE ty_qty,
+             q2kcs   TYPE ty_qty,    " CP1
+             q2261   TYPE ty_qty,    " CP2
+             q2262   TYPE ty_qty,    " CP3 (GR 101)
+             q229k   TYPE ty_qty,    " CP4
+             last_in TYPE d,         " budat TERAKHIR masuk 229K ('S') — utk fin_date
+             " abap_true bila material ini punya gerakan pipeline TANPA kdauf atau
+             " bukan SOBKZ='E' → qty tak bisa dipilah per SO → JANGAN dipercaya.
+             nodata  TYPE abap_bool,
+           END OF ty_cpqty.
+    TYPES ty_cpqty_tab TYPE SORTED TABLE OF ty_cpqty
+                       WITH UNIQUE KEY kdauf kdpos matnr.
+
     " OUTPUT item_cp_status: status "selesai" per item SO, basis checkpoint 229K.
     TYPES: BEGIN OF ty_itmcp_line,
              kdauf    TYPE afpo-kdauf,
              kdpos    TYPE afpo-kdpos,
-             code     TYPE i,        " gc_st_done / gc_st_inprog / gc_st_noprod
+             code     TYPE i,        " gc_st_done/inprog/noprod/nodata
              pct      TYPE ty_pct,   " rata-rata progres komponen (0..100)
              tot_cmp  TYPE i,        " jumlah komponen (material unik) item ini
              done_cmp TYPE i,        " komponen yang sudah terpenuhi di 229K
+             nodat_cmp TYPE i,       " komponen yang datanya tak bisa dipilah per SO
              " TANGGAL SELESAI AKTUAL (MKPF-BUDAT) = saat komponen TERAKHIR sampai
              " 229K → dipakai OTD & lead time, MENGGANTIKAN "tanggal GR 101 terakhir".
              " Hanya diisi bila code = gc_st_done. Item belum selesai → kosong.
@@ -103,9 +166,14 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
     TYPES ty_itmcp_tab TYPE SORTED TABLE OF ty_itmcp_line WITH UNIQUE KEY kdauf kdpos.
 
     " Kode status item produksi — satu sumber kebenaran untuk klasifikasi.
-    CONSTANTS: gc_st_done   TYPE i VALUE 1,   " Selesai (GR >= target)
-               gc_st_inprog TYPE i VALUE 2,   " Proses  (ada target, GR < target)
-               gc_st_noprod TYPE i VALUE 3.   " Belum Produksi (tanpa order / target 0)
+    " ⚠️ gc_st_nodata WAJIB ditangani EKSPLISIT oleh pemanggil. Kalau dibiarkan
+    " jatuh ke "WHEN OTHERS" (= Belum Produksi), item yang datanya bermasalah akan
+    " terlihat seperti item normal yang belum mulai — persis penyesatan yang mau
+    " dihindari. Tampilkan sebagai "Data Tidak Lengkap" (abu-abu).
+    CONSTANTS: gc_st_done   TYPE i VALUE 1,   " Selesai (semua komponen sampai 229K)
+               gc_st_inprog TYPE i VALUE 2,   " Proses  (ada kebutuhan, belum penuh)
+               gc_st_noprod TYPE i VALUE 3,   " Belum Produksi (tanpa order/komponen)
+               gc_st_nodata TYPE i VALUE 4.   " Data Tidak Lengkap (gerakan tanpa KDAUF/SOBKZ E)
 
     " Pipeline sloc perjalanan material di Plant 2000 (URUT) + sumber 1000/1D00.
     " Satu sumber kebenaran untuk dot-bar & tab transfer/butuh-dikirim.
@@ -145,6 +213,11 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
                gc_bwart_qi  TYPE bwart  VALUE '321',   " QI release — EXCLUDE selalu
                gc_shkzg_s   TYPE shkzg  VALUE 'S',     " debit  = MASUK
                gc_shkzg_h   TYPE shkzg  VALUE 'H'.     " kredit = KELUAR
+
+    " Special stock indicator 'E' = SALES-ORDER STOCK (make-to-order). Baris MSEG
+    " ber-SOBKZ 'E' membawa KDAUF/KDPOS → gerakan TAHU miliknya SO+item mana.
+    " Inilah yang memungkinkan qty pipeline dipilah per SO (verifikasi: 99.9%).
+    CONSTANTS: gc_sobkz_e TYPE sobkz VALUE 'E'.
 
     " Label status rute (dipusatkan agar pemanggil tak membandingkan literal).
     CONSTANTS: gc_route_out   TYPE string VALUE 'Di Luar Rute Wood Furniture',
@@ -255,13 +328,20 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
     "! PENTING: pemanggil menghitung iv_q_* = qty NET tiap checkpoint sesuai definisi
     "! CP1..CP4 di header file (301/311 vs GR 101, net SHKZG, exclude 321).
     "!
-    "! @parameter iv_q_2kcs    | CP1 net masuk 2KCS
+    "! Qty iv_q_* WAJIB berasal dari cp_qty( ) — sudah ter-scope ke SO+item.
+    "! JANGAN hitung sendiri dari MSEG per material: itu mengembalikan angka global
+    "! yang dipakai bersama beberapa SO (masalah "batas atas" yang sudah dibuang).
+    "!
+    "! @parameter iv_q_2kcs    | CP1 net masuk 2KCS (SO+item ini)
     "! @parameter iv_q_2261    | CP2 net masuk 2261 (umlgo=2KCS)
-    "! @parameter iv_q_2262_gr | CP3 qty GR 101 di 2262 (order lolos whitelist WF)
+    "! @parameter iv_q_2262_gr | CP3 qty GR 101 di 2262
     "! @parameter iv_q_229k    | CP4 net masuk 229K (sumber mana pun)
     "! @parameter iv_q_need    | Qty dibutuhkan (RESB-BDMNG). 0 = pakai fallback.
     "! @parameter iv_at_1d00   | abap_true bila material masih ada di 1000/1D00
     "!                           (menentukan titik-1 MERAH saat belum masuk 2KCS)
+    "! @parameter iv_nodata    | abap_true (dari cp_qty) bila qty TAK BISA dipilah
+    "!                           per SO → 4 titik ABU + note. TIDAK ada fallback
+    "!                           diam-diam ke angka global.
     "! @parameter rs_dot       | Kelas warna 4 titik + info tampilan (ty_dotbar)
     CLASS-METHODS dot_stages
       IMPORTING iv_q_2kcs     TYPE ty_qty
@@ -270,7 +350,40 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
                 iv_q_229k     TYPE ty_qty
                 iv_q_need     TYPE ty_qty  DEFAULT 0
                 iv_at_1d00    TYPE abap_bool DEFAULT abap_false
+                iv_nodata     TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(rs_dot) TYPE ty_dotbar.
+
+    "! ⭐ MESIN QTY CHECKPOINT — satu-satunya tempat qty CP1..CP4 dihitung.
+    "! Menggantikan perhitungan per-material yang dulu tersebar di halaman.
+    "!
+    "! SCOPE PRESISI: tiap baris MSEG difilter kdauf = SO, kdpos = item, sobkz = 'E'
+    "! (sales-order stock). Jadi qty yang dikembalikan MILIK item SO itu saja —
+    "! bukan angka material yang dipakai bersama beberapa SO.
+    "!
+    "! Definisi checkpoint (identik dgn header file; 321 tak pernah ikut):
+    "!   CP1 2KCS : lgort=2KCS. 'S' menambah. 'H' HANYA mengurangi bila umwrk=1000
+    "!              (retur ke plant asal). 'H' ke hilir = kemajuan → diabaikan.
+    "!   CP2 2261 : lgort=2261 DAN umlgo=2KCS, net S−H.
+    "!   CP3 2262 : GR bwart 101 di lgort=2262. Baris ber-KDAUF → dipakai filter
+    "!              kdauf/kdpos (sama seperti 3 titik lain). Baris TANPA kdauf →
+    "!              masih diikat ke item lewat AUFNR (it_ordmap) + whitelist WF
+    "!              (cara lama, DIPERTAHANKAN sebagai tambahan, bukan pengganti).
+    "!   CP4 229K : lgort=229K, umlgo mana pun, net S−H.
+    "!
+    "! NODATA (0.1%): bila material punya baris pipeline TANPA kdauf atau bukan
+    "! sobkz 'E', key-nya ditandai nodata = abap_true. Pemanggil WAJIB menampilkan
+    "! "Data Tidak Lengkap" — DILARANG jatuh balik ke perhitungan global.
+    "!
+    "! Batched: satu SELECT MSEG⨝MKPF untuk SELURUH key (FOR ALL ENTRIES) — aman
+    "! dipanggil dari halaman daftar (index/monitoring) yang memuat ratusan item.
+    "!
+    "! @parameter it_key    | (kdauf, kdpos, matnr, need) per komponen item SO
+    "! @parameter it_ordmap | order → item SO; hanya utk baris GR 101 tanpa KDAUF
+    "! @parameter rt_qty    | qty CP1..CP4 + last_in + flag nodata, per key
+    CLASS-METHODS cp_qty
+      IMPORTING it_key        TYPE ty_cpkey_tab
+                it_ordmap     TYPE ty_ordmap_tab OPTIONAL
+      RETURNING VALUE(rt_qty) TYPE ty_cpqty_tab.
 
     "! Filter order produksi → hanya yang UNIT-nya Wood Furniture (whitelist §2).
     "! Rantai: AFKO-AUFPL → AFVC (operasi PERTAMA, ARBID) → CRCO (objid=arbid,
@@ -299,15 +412,17 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
     "! masih PROSES. Item tanpa order / tanpa komponen → BELUM PRODUKSI.
     "! Progres item = RATA-RATA item_pct_cp tiap komponen (bukan rasio done/total).
     "!
-    "! Query di dalam (semua batched): RESB (komponen per order) → MSEG (net 229K per
-    "! material: lgort=229K, bwart 301/311, 'S' − 'H'; 321 tak pernah ikut).
+    "! Query di dalam (semua batched): RESB (komponen per order) → cp_qty( ) (qty
+    "! CP1..CP4 ter-scope kdauf/kdpos/sobkz='E').
     "!
-    "! ⚠️ BATAS YANG HARUS DISADARI: qty 229K bersifat PER MATERIAL & GLOBAL — gerakan
-    "! transfer di MSEG tidak membawa nomor SO/order, jadi tak bisa dipilah per SO.
-    "! Bila SATU material dipakai BEBERAPA SO, tiap SO melihat qty 229K yang SAMA →
-    "! keduanya bisa sama-sama dinyatakan selesai walau stok fisiknya hanya cukup
-    "! untuk satu. Ini konsekuensi model checkpoint, bukan bug. Untuk material yang
-    "! dipakai lintas-SO, angka ini adalah BATAS ATAS.
+    "! PRESISI PER SO (revisi Fase-2): qty TIDAK lagi per material & global. Batas
+    "! lama ("angka = BATAS ATAS, satu material dipakai beberapa SO melihat angka
+    "! yang sama") SUDAH TIDAK BERLAKU — tiap gerakan kini diklaim oleh SO+item
+    "! pemiliknya lewat KDAUF/KDPOS.
+    "!
+    "! ⚠️ Item yang punya komponen ber-nodata (gerakan tanpa KDAUF/SOBKZ='E') →
+    "! code = gc_st_nodata. Pemanggil WAJIB menampilkannya sebagai "Data Tidak
+    "! Lengkap", JANGAN biarkan jatuh ke WHEN OTHERS (= "Belum Produksi").
     "!
     "! @parameter it_item | Baris AFPO mentah (kdauf, kdpos, aufnr) — boleh duplikat item
     "! @parameter rt_item | Status per item SO (sorted by kdauf/kdpos, unique)
@@ -442,6 +557,16 @@ CLASS zcl_cs_util IMPLEMENTATION.
     rs_dot-d3 = 'dot-grey'. rs_dot-d4 = 'dot-grey'.
     rs_dot-pct = 0.
 
+    " DATA TIDAK LENGKAP → berhenti di sini: 4 titik abu, TANPA angka.
+    " Sengaja TIDAK jatuh balik ke perhitungan global per-material: itu akan
+    " menampilkan angka "batas atas" yang tampak sah padahal bisa milik SO lain.
+    IF iv_nodata = abap_true.
+      rs_dot-nodata   = abap_true.
+      rs_dot-sloc_lbl = '?'.
+      rs_dot-note     = 'Data Tidak Lengkap — material ini punya gerakan pipeline tanpa KDAUF/SOBKZ=E, jadi qty-nya tidak bisa dipastikan milik SO+item ini. Angka sengaja TIDAK ditampilkan daripada menampilkan angka yang mungkin milik SO lain.'.
+      RETURN.
+    ENDIF.
+
     " Belum pernah masuk pipeline sama sekali → titik-1 MERAH bila stok masih
     " menunggu di 1D00 (Plant 1000), sisanya abu.
     IF lv_r <= 0 OR lv_r2kcs <= 0.
@@ -477,6 +602,184 @@ CLASS zcl_cs_util IMPLEMENTATION.
     ELSEIF lv_r2262 > 0. rs_dot-pct = 75.  rs_dot-sloc_lbl = gc_sloc_2262.
     ELSEIF lv_r2261 > 0. rs_dot-pct = 50.  rs_dot-sloc_lbl = gc_sloc_2261.
     ELSE.                rs_dot-pct = 25.  rs_dot-sloc_lbl = gc_sloc_2kcs.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD cp_qty.
+    " Satu-satunya tempat qty CP1..CP4 dihitung. Dokumentasi lengkap di deklarasi.
+    TYPES: BEGIN OF lty_mat,
+             matnr TYPE resb-matnr,
+           END OF lty_mat,
+           BEGIN OF lty_mv,
+             matnr TYPE mseg-matnr,
+             aufnr TYPE mseg-aufnr,
+             lgort TYPE mseg-lgort,
+             umlgo TYPE mseg-umlgo,
+             umwrk TYPE mseg-umwrk,
+             bwart TYPE mseg-bwart,
+             shkzg TYPE mseg-shkzg,
+             menge TYPE mseg-menge,
+             kdauf TYPE mseg-kdauf,
+             kdpos TYPE mseg-kdpos,
+             sobkz TYPE mseg-sobkz,
+             budat TYPE mkpf-budat,
+           END OF lty_mv,
+           BEGIN OF lty_bad,          " material yang punya baris "anonim"
+             matnr TYPE mseg-matnr,
+           END OF lty_bad.
+
+    DATA: lt_mat  TYPE TABLE OF lty_mat, ls_mat TYPE lty_mat,
+          lt_mv   TYPE TABLE OF lty_mv,  ls_mv  TYPE lty_mv,
+          lt_bad  TYPE SORTED TABLE OF lty_bad WITH UNIQUE KEY matnr,
+          ls_bad  TYPE lty_bad,
+          lt_ord  TYPE ty_aufnr_tab,
+          ls_ord  TYPE ty_aufnr_line,
+          lt_wf   TYPE ty_aufnr_tab,
+          ls_key  TYPE ty_cpkey,
+          ls_out  TYPE ty_cpqty,
+          ls_omap TYPE ty_ordmap,
+          lr_bw   TYPE ty_bwart_range,
+          lr_slo  TYPE ty_lgort_range,
+          ls_bw   LIKE LINE OF lr_bw,
+          lv_q    TYPE ty_qty,
+          lv_kdauf TYPE afpo-kdauf,
+          lv_kdpos TYPE afpo-kdpos.
+
+    FIELD-SYMBOLS <o> TYPE ty_cpqty.
+
+    IF it_key IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Kerangka hasil (semua key ikut, walau nanti qty-nya 0).
+    LOOP AT it_key INTO ls_key.
+      CLEAR ls_out.
+      ls_out-kdauf = ls_key-kdauf.
+      ls_out-kdpos = ls_key-kdpos.
+      ls_out-matnr = ls_key-matnr.
+      ls_out-need  = ls_key-need.
+      INSERT ls_out INTO TABLE rt_qty.
+
+      ls_mat-matnr = ls_key-matnr.
+      APPEND ls_mat TO lt_mat.
+    ENDLOOP.
+    SORT lt_mat BY matnr.
+    DELETE ADJACENT DUPLICATES FROM lt_mat COMPARING matnr.
+
+    " SATU query untuk seluruh key. Sengaja di-FAE atas MATNR saja (bukan
+    " matnr+kdauf+kdpos): baris "anonim" (kdauf kosong) harus IKUT tertarik supaya
+    " bisa DIDETEKSI — kalau kdauf ikut di WHERE, baris itu hilang tanpa jejak dan
+    " kita akan menyangka datanya bersih.
+    lr_slo = pipeline_slocs( ).                 " 2KCS/2261/2262/229K
+    lr_bw  = transfer_bwarts( ).                " 301/311
+    ls_bw-sign = 'I'. ls_bw-option = 'EQ'.
+    ls_bw-low  = gc_bwart_gr.                   " + 101 (CP3)
+    APPEND ls_bw TO lr_bw.
+
+    SELECT m~matnr m~aufnr m~lgort m~umlgo m~umwrk m~bwart m~shkzg m~menge
+           m~kdauf m~kdpos m~sobkz k~budat
+      FROM mseg AS m INNER JOIN mkpf AS k
+        ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+      INTO TABLE lt_mv
+      FOR ALL ENTRIES IN lt_mat
+      WHERE m~matnr = lt_mat-matnr
+        AND m~werks = gc_plant_2000
+        AND m~lgort IN lr_slo
+        AND m~bwart IN lr_bw.
+    IF lt_mv IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Order WF — hanya dipakai untuk baris GR 101 yang TIDAK membawa kdauf.
+    LOOP AT lt_mv INTO ls_mv.
+      IF ls_mv-bwart <> gc_bwart_gr OR ls_mv-aufnr IS INITIAL. CONTINUE. ENDIF.
+      IF ls_mv-kdauf IS NOT INITIAL. CONTINUE. ENDIF.   " sudah bisa dipetakan langsung
+      ls_ord-aufnr = ls_mv-aufnr.
+      INSERT ls_ord INTO TABLE lt_ord.
+    ENDLOOP.
+    IF lt_ord IS NOT INITIAL.
+      lt_wf = wf_order_filter( lt_ord ).
+    ENDIF.
+
+    LOOP AT lt_mv INTO ls_mv.
+
+      " --- 1. DETEKSI ANONIM (0.1%) -------------------------------------------
+      " Baris TRANSFER tanpa kdauf / bukan sobkz 'E' → material ini tidak bisa
+      " dipilah per SO. Ditandai, BUKAN diabaikan diam-diam.
+      " GR 101 dikecualikan dari deteksi: ia punya AUFNR, jadi tetap bisa diikat
+      " ke item lewat it_ordmap walau kdauf-nya kosong.
+      IF ls_mv-bwart <> gc_bwart_gr.
+        IF ls_mv-kdauf IS INITIAL OR ls_mv-sobkz <> gc_sobkz_e.
+          ls_bad-matnr = ls_mv-matnr.
+          INSERT ls_bad INTO TABLE lt_bad.
+          CONTINUE.       " tak boleh diakui ke SO mana pun
+        ENDIF.
+      ENDIF.
+
+      " --- 2. TENTUKAN PEMILIK BARIS (SO + item) ------------------------------
+      CLEAR: lv_kdauf, lv_kdpos.
+      IF ls_mv-kdauf IS NOT INITIAL.
+        lv_kdauf = ls_mv-kdauf.
+        lv_kdpos = ls_mv-kdpos.
+      ELSEIF ls_mv-bwart = gc_bwart_gr AND ls_mv-aufnr IS NOT INITIAL.
+        " GR 101 tanpa kdauf → cara lama: AUFNR harus lolos whitelist WF, lalu
+        " dipetakan ke item SO lewat it_ordmap.
+        READ TABLE lt_wf TRANSPORTING NO FIELDS WITH TABLE KEY aufnr = ls_mv-aufnr.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.            " order non-WF
+        READ TABLE it_ordmap INTO ls_omap WITH TABLE KEY aufnr = ls_mv-aufnr.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.            " order di luar cakupan
+        lv_kdauf = ls_omap-kdauf.
+        lv_kdpos = ls_omap-kdpos.
+      ELSE.
+        CONTINUE.
+      ENDIF.
+
+      READ TABLE rt_qty ASSIGNING <o>
+        WITH TABLE KEY kdauf = lv_kdauf kdpos = lv_kdpos matnr = ls_mv-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.   " baris milik item lain → bukan urusan kita
+
+      " --- 3. AKUMULASI PER CHECKPOINT ----------------------------------------
+      lv_q = ls_mv-menge.
+      IF ls_mv-shkzg = gc_shkzg_h.
+        lv_q = 0 - lv_q.
+      ENDIF.
+
+      IF ls_mv-bwart = gc_bwart_gr.
+        " CP3 — GR keluar Machining
+        IF ls_mv-lgort = gc_sloc_2262.
+          <o>-q2262 = <o>-q2262 + lv_q.
+        ENDIF.
+      ELSE.
+        CASE ls_mv-lgort.
+          WHEN gc_sloc_2kcs.
+            " CP1 — 'H' hanya dikurangi bila retur balik ke Plant 1000.
+            IF ls_mv-shkzg = gc_shkzg_s.
+              <o>-q2kcs = <o>-q2kcs + lv_q.
+            ELSEIF ls_mv-umwrk = gc_plant_1000.
+              <o>-q2kcs = <o>-q2kcs + lv_q.       " lv_q sudah negatif
+            ENDIF.
+          WHEN gc_sloc_2261.
+            IF ls_mv-umlgo = gc_sloc_2kcs.
+              <o>-q2261 = <o>-q2261 + lv_q.
+            ENDIF.
+          WHEN gc_sloc_229k.
+            <o>-q229k = <o>-q229k + lv_q.
+            IF ls_mv-shkzg = gc_shkzg_s AND ls_mv-budat > <o>-last_in.
+              <o>-last_in = ls_mv-budat.
+            ENDIF.
+        ENDCASE.
+      ENDIF.
+    ENDLOOP.
+
+    " --- 4. Tandai key yang materialnya punya baris anonim -----------------------
+    IF lt_bad IS NOT INITIAL.
+      LOOP AT rt_qty ASSIGNING <o>.
+        READ TABLE lt_bad TRANSPORTING NO FIELDS
+          WITH TABLE KEY matnr = <o>-matnr.
+        IF sy-subrc = 0.
+          <o>-nodata = abap_true.
+        ENDIF.
+      ENDLOOP.
     ENDIF.
   ENDMETHOD.
 
@@ -589,45 +892,21 @@ CLASS zcl_cs_util IMPLEMENTATION.
            END OF lty_resb,
            BEGIN OF lty_mat,
              matnr TYPE resb-matnr,
-           END OF lty_mat,
-           BEGIN OF lty_q229k,
-             matnr   TYPE mseg-matnr,
-             qty     TYPE ty_qty,
-             last_in TYPE d,        " budat TERAKHIR material ini masuk 229K ('S')
-           END OF lty_q229k,
-           BEGIN OF lty_mv,
-             matnr TYPE mseg-matnr,
-             shkzg TYPE mseg-shkzg,
-             menge TYPE mseg-menge,
-             budat TYPE mkpf-budat,
-           END OF lty_mv,
-           " kebutuhan per (item SO, komponen)
-           BEGIN OF lty_need,
-             kdauf TYPE afpo-kdauf,
-             kdpos TYPE afpo-kdpos,
-             matnr TYPE resb-matnr,
-             need  TYPE ty_qty,
-           END OF lty_need.
+           END OF lty_mat.
 
     DATA: lt_ord   TYPE ty_aufnr_tab,
           ls_ord   TYPE ty_aufnr_line,
           lt_resb  TYPE TABLE OF lty_resb,  ls_resb  TYPE lty_resb,
-          lt_mat   TYPE TABLE OF lty_mat,   ls_mat   TYPE lty_mat,
-          lt_mv    TYPE TABLE OF lty_mv,    ls_mv    TYPE lty_mv,
-          lt_q229k TYPE SORTED TABLE OF lty_q229k WITH UNIQUE KEY matnr,
-          ls_q229k TYPE lty_q229k,
-          lt_need  TYPE SORTED TABLE OF lty_need WITH UNIQUE KEY kdauf kdpos matnr,
-          ls_need  TYPE lty_need,
+          lt_key   TYPE ty_cpkey_tab,       ls_key   TYPE ty_cpkey,
+          lt_omap  TYPE ty_ordmap_tab,      ls_omap  TYPE ty_ordmap,
+          lt_qty   TYPE ty_cpqty_tab,       ls_qty   TYPE ty_cpqty,
           ls_itm   TYPE ty_itm_line,
           ls_out   TYPE ty_itmcp_line,
-          lr_bw    TYPE ty_bwart_range,
-          lv_q     TYPE ty_qty,
           lv_code  TYPE i,
           lv_idx   TYPE i,
           lv_sum   TYPE ty_pct.
 
-    FIELD-SYMBOLS: <q>   TYPE lty_q229k,
-                   <n>   TYPE lty_need,
+    FIELD-SYMBOLS: <n>   TYPE ty_cpkey,
                    <o>   TYPE ty_itmcp_line.
 
     IF it_item IS INITIAL.
@@ -648,6 +927,13 @@ CLASS zcl_cs_util IMPLEMENTATION.
       IF ls_itm-aufnr IS NOT INITIAL.
         ls_ord-aufnr = ls_itm-aufnr.
         INSERT ls_ord INTO TABLE lt_ord.   " sorted-unique
+
+        " Peta order → item SO (dipakai cp_qty utk baris GR 101 tanpa KDAUF).
+        CLEAR ls_omap.
+        ls_omap-aufnr = ls_itm-aufnr.
+        ls_omap-kdauf = ls_itm-kdauf.
+        ls_omap-kdpos = ls_itm-kdpos.
+        INSERT ls_omap INTO TABLE lt_omap.
       ENDIF.
     ENDLOOP.
 
@@ -681,84 +967,56 @@ CLASS zcl_cs_util IMPLEMENTATION.
 
       LOOP AT lt_resb INTO ls_resb FROM lv_idx.
         IF ls_resb-aufnr <> ls_itm-aufnr. EXIT. ENDIF.   " keluar begitu ganti order
-        READ TABLE lt_need ASSIGNING <n>
+        READ TABLE lt_key ASSIGNING <n>
           WITH TABLE KEY kdauf = ls_itm-kdauf
                          kdpos = ls_itm-kdpos
                          matnr = ls_resb-matnr.
         IF sy-subrc = 0.
           <n>-need = <n>-need + ls_resb-bdmng.
         ELSE.
-          CLEAR ls_need.
-          ls_need-kdauf = ls_itm-kdauf.
-          ls_need-kdpos = ls_itm-kdpos.
-          ls_need-matnr = ls_resb-matnr.
-          ls_need-need  = ls_resb-bdmng.
-          INSERT ls_need INTO TABLE lt_need.
+          CLEAR ls_key.
+          ls_key-kdauf = ls_itm-kdauf.
+          ls_key-kdpos = ls_itm-kdpos.
+          ls_key-matnr = ls_resb-matnr.
+          ls_key-need  = ls_resb-bdmng.
+          INSERT ls_key INTO TABLE lt_key.
         ENDIF.
-        ls_mat-matnr = ls_resb-matnr.
-        APPEND ls_mat TO lt_mat.
       ENDLOOP.
     ENDLOOP.
-    SORT lt_mat BY matnr.
-    DELETE ADJACENT DUPLICATES FROM lt_mat COMPARING matnr.
-    IF lt_mat IS INITIAL.
+    IF lt_key IS INITIAL.
       RETURN.
     ENDIF.
 
-    " 3. CP4: net qty masuk 229K per material (sumber mana pun; 'S' − 'H').
-    "    bwart dibatasi 301/311 → 321 (QI release) otomatis tidak pernah ikut.
-    "    MKPF di-join untuk BUDAT: dipakai sbg tanggal selesai aktual (fin_date).
-    lr_bw = transfer_bwarts( ).
-    SELECT m~matnr m~shkzg m~menge k~budat
-      FROM mseg AS m INNER JOIN mkpf AS k
-        ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
-      INTO TABLE lt_mv
-      FOR ALL ENTRIES IN lt_mat
-      WHERE m~matnr = lt_mat-matnr
-        AND m~werks = gc_plant_2000
-        AND m~lgort = gc_sloc_229k
-        AND m~bwart IN lr_bw.
-
-    LOOP AT lt_mv INTO ls_mv.
-      lv_q = ls_mv-menge.
-      IF ls_mv-shkzg = gc_shkzg_h.
-        lv_q = 0 - lv_q.
-      ENDIF.
-      READ TABLE lt_q229k ASSIGNING <q> WITH TABLE KEY matnr = ls_mv-matnr.
-      IF sy-subrc <> 0.
-        CLEAR ls_q229k.
-        ls_q229k-matnr = ls_mv-matnr.
-        INSERT ls_q229k INTO TABLE lt_q229k ASSIGNING <q>.
-      ENDIF.
-      <q>-qty = <q>-qty + lv_q.
-      " Tanggal MASUK terakhir ('S' saja — retur 'H' bukan "selesai").
-      IF ls_mv-shkzg = gc_shkzg_s AND ls_mv-budat > <q>-last_in.
-        <q>-last_in = ls_mv-budat.
-      ENDIF.
-    ENDLOOP.
+    " 3. QTY CHECKPOINT — per SO+ITEM+MATERIAL (bukan lagi per material global).
+    "    Seluruh query MSEG ada di cp_qty( ); di sinilah presisi per-SO didapat.
+    lt_qty = cp_qty( it_key = lt_key it_ordmap = lt_omap ).
 
     " 4. Nilai tiap komponen, lalu AND-kan ke itemnya.
-    LOOP AT lt_need INTO ls_need.
-      CLEAR: lv_q, ls_q229k.
-      READ TABLE lt_q229k INTO ls_q229k WITH TABLE KEY matnr = ls_need-matnr.
-      IF sy-subrc = 0. lv_q = ls_q229k-qty. ENDIF.
-
+    LOOP AT lt_qty INTO ls_qty.
       READ TABLE rt_item ASSIGNING <o>
-        WITH TABLE KEY kdauf = ls_need-kdauf kdpos = ls_need-kdpos.
+        WITH TABLE KEY kdauf = ls_qty-kdauf kdpos = ls_qty-kdpos.
       IF sy-subrc <> 0. CONTINUE. ENDIF.
 
-      lv_code = item_status_cp( iv_need = ls_need-need iv_q_229k = lv_q ).
       <o>-tot_cmp = <o>-tot_cmp + 1.
+
+      " Komponen yang qty-nya TIDAK bisa dipilah per SO: jangan dinilai sama sekali.
+      " Tidak dihitung "selesai", tidak pula diberi persentase palsu dari angka global.
+      IF ls_qty-nodata = abap_true.
+        <o>-nodat_cmp = <o>-nodat_cmp + 1.
+        CONTINUE.
+      ENDIF.
+
+      lv_code = item_status_cp( iv_need = ls_qty-need iv_q_229k = ls_qty-q229k ).
       IF lv_code = gc_st_done.
         <o>-done_cmp = <o>-done_cmp + 1.
       ENDIF.
       " pct disimpan sementara sbg TOTAL; dibagi jumlah komponen di langkah 5.
-      <o>-pct = <o>-pct + item_pct_cp( iv_need = ls_need-need iv_q_229k = lv_q ).
+      <o>-pct = <o>-pct + item_pct_cp( iv_need = ls_qty-need iv_q_229k = ls_qty-q229k ).
 
       " Tanggal selesai item = saat komponen TERAKHIR sampai 229K → ambil budat
       " TERBESAR di antara komponen. (Hanya dipertahankan bila item benar selesai.)
-      IF ls_q229k-last_in > <o>-fin_date.
-        <o>-fin_date = ls_q229k-last_in.
+      IF ls_qty-last_in > <o>-fin_date.
+        <o>-fin_date = ls_qty-last_in.
       ENDIF.
     ENDLOOP.
 
@@ -770,6 +1028,16 @@ CLASS zcl_cs_util IMPLEMENTATION.
         CLEAR <o>-fin_date.
         CONTINUE.
       ENDIF.
+
+      " Ada komponen yang datanya tak bisa dipilah per SO → status item TIDAK BISA
+      " ditentukan. Sengaja BUKAN "belum produksi" (menyesatkan) & BUKAN "selesai".
+      IF <o>-nodat_cmp > 0.
+        <o>-code = gc_st_nodata.
+        <o>-pct  = 0.
+        CLEAR <o>-fin_date.
+        CONTINUE.
+      ENDIF.
+
       lv_sum = <o>-pct.
       <o>-pct = lv_sum / <o>-tot_cmp.
       IF <o>-done_cmp >= <o>-tot_cmp.

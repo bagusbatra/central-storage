@@ -24,6 +24,7 @@ TYPES: BEGIN OF ty_so_stat,
          vbeln   TYPE vbap-vbeln,
          total   TYPE i,
          done    TYPE i,
+         nodata  TYPE i,   " item ber-"Data Tidak Lengkap" → SO TIDAK boleh dianggap tuntas
          sum_pct TYPE zcl_cs_util=>ty_pct,  " Σ persentase per item → utk rata-rata
        END OF ty_so_stat.
 
@@ -237,6 +238,11 @@ IF lv_name_no_match = abap_false.
         ls_so_stat-sum_pct = ls_itmcp-pct.
         IF ls_itmcp-code = zcl_cs_util=>gc_st_done.
           ls_so_stat-done = 1.
+        ELSEIF ls_itmcp-code = zcl_cs_util=>gc_st_nodata.
+          " Item yang qty-nya tak bisa dipastikan milik SO ini JANGAN dihitung
+          " selesai — kalau tidak, SO-nya bisa lolos ke Riwayat (dianggap tuntas)
+          " padahal kita sebenarnya tidak tahu. Ditandai agar bisa dijelaskan.
+          ls_so_stat-nodata = 1.
         ENDIF.
       ENDIF.
       COLLECT ls_so_stat INTO lt_so_stat.
@@ -418,6 +424,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               <div class="so-icon-row">
                 <span class="so-ic-done">&#10003; <%= ls_so_stat_r-done %> selesai</span>
                 <span class="so-ic-none">&#9675; <%= lv_not_done %> belum</span>
+                <% IF ls_so_stat_r-nodata > 0. %>
+                <span style="color:#b45309; font-weight:700;" title="Item ini punya komponen dengan gerakan pipeline tanpa KDAUF/SOBKZ='E'. Qty-nya tidak bisa dipastikan milik SO ini, jadi SO sengaja TIDAK diklaim selesai — bukan berarti pasti belum selesai.">&#9888; <%= ls_so_stat_r-nodata %> data tidak lengkap</span>
+                <% ENDIF. %>
               </div>
               <div class="so-date" style="color:#2563eb; font-weight:600; margin-top:4px;">&#8594; Buka di Monitoring</div>
             </div>
