@@ -6,17 +6,52 @@
 *& agar asumsi movement type / arah SHKZG / rute sloc untuk Checkpoint
 *& Engine (Logic 2) bisa DIVERIFIKASI sebelum ditulis. Lihat result.md.
 *&
-*& Input: 1 material (wajib) + rentang tanggal (default 180 hari).
+*& Input: rentang tanggal (default 180 hari) + material (wajib utk A/B/C,
+*&        OPSIONAL utk B2 — lihat di bawah).
 *& Output:
 *&   A. Snapshot STOK (MARD) material di Plant 1000 & 2000 — lihat 1D00 vs 2KCS..229K
 *&   B. Ringkasan MOVEMENT TYPE yang muncul (bwart → berapa kali, contoh rute)
+*&   B2. Ringkasan FREKUENSI MOVEMENT PER RUTE SLOC — agregasi MSEG⨝MKPF per
+*&       kombinasi (lgort asal, umlgo tujuan, bwart, SHKZG): berapa baris & total
+*&       qty, HANYA baris yang menyentuh sloc pipeline (2KCS/2261/2262/22F2/22F3/
+*&       229K) sebagai ASAL atau TUJUAN. Diurutkan dari yang paling sering.
+*&       Ditambahkan (Fase 0) untuk MENDUKUNG KEPUTUSAN FINAL movement type +
+*&       arah SHKZG pipeline: B hanya melihat 1 material, B2 melihat POPULASI
+*&       (matnr kosong = semua material) sehingga rute yang benar-benar dominan
+*&       terlihat, bukan kebetulan 1 material. Output B2 inilah yang dikunci
+*&       sebagai asumsi Checkpoint Engine (Logic 2).
 *&   C. Daftar GERAKAN mentah (MSEG⨝MKPF): tgl, bwart, dari→ke sloc, SHKZG, qty
+*&   C2. KAMUS NAMA SLOC — semua kode lgort/umlgo yang muncul di B2, dinamai dari
+*&       T001L (Plant 2000 & 1000; 1D00 ada di Plant 1000). Tabel referensi agar
+*&       B2/D bisa dibaca tanpa menebak arti kode sloc.
+*&   D. Ringkasan movement KHUSUS WOOD FURNITURE — agregasi seperti B2, tapi
+*&      di-scope lewat whitelist cost center (AFKO-AUFPL→AFVC→CRCO-KOSTL, pola
+*&      sama dgn monitoring_bom.htm §3f). Menjawab: dari rute/movement type yang
+*&      terlihat di B2, mana yang benar-benar milik Wood Furniture — bukan Chair
+*&      / Metal / unit lain yang kebetulan lewat sloc yang sama.
+*&      ⚠️ Baris transfer antar-sloc TIDAK punya aufnr → lihat catatan scope di
+*&      blok D (over-include material campuran; D = batas ATAS populasi WF).
+*&   E. KETERIKATAN BARIS MSEG KE SALES ORDER (KDAUF / SOBKZ='E') — 30 hari.
+*&      Ditambahkan untuk MEMUTUSKAN satu hal: bisakah qty pipeline dipilah PER SO?
+*&      Scope WF & aturan penyaringan sama persis dgn D. Menghitung: total baris,
+*&      yang ber-KDAUF, yang SOBKZ='E', yang anonim — DAN yang paling menentukan:
+*&      berapa baris TRANSFER (301/311) yang ber-KDAUF (CP1/CP2/CP4 dibangun dari
+*&      gerakan itu; GR 101 sudah punya AUFNR jadi bukan penentu). Plus 25 contoh
+*&      baris ber-KDAUF agar polanya bisa dilihat langsung.
+*&      MURNI PENGECEKAN — tidak ada logic produksi yang bergantung padanya.
 *&
 *& CATATAN: halaman ini TIDAK ditautkan di navbar (alat diagnosa). Hapus/blok
 *& setelah asumsi terkunci.
+*& CATATAN B2: agregasi dilakukan di DB (GROUP BY + COUNT/SUM), tidak menarik
+*& baris mentah. Tanpa material, query menyapu seluruh MSEG pada rentang tgl —
+*& persempit rentang bila terasa lambat.
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_p1000 TYPE werks_d VALUE '1000',
            lc_p2000 TYPE werks_d VALUE '2000'.
+
+" Batas aman baris MSEG mentah yang ditarik untuk section D (agregasi di ABAP,
+" bukan di DB). Bila tercapai, halaman MEMBERI PERINGATAN — angka D jadi parsial.
+CONSTANTS: lc_cap TYPE i VALUE 200000.
 
 TYPES: BEGIN OF ty_mv,
          mblnr TYPE mseg-mblnr,
@@ -53,12 +88,115 @@ TYPES: BEGIN OF ty_sum,
          shk   TYPE mseg-shkzg,
        END OF ty_sum.
 
+" B2 — satu baris = satu kombinasi rute (lgort asal, umlgo tujuan, bwart, shkzg).
+" Urutan komponen HARUS sama dgn urutan field di SELECT ... GROUP BY (Open SQL klasik).
+TYPES: BEGIN OF ty_rt,
+         lgort TYPE mseg-lgort,
+         umlgo TYPE mseg-umlgo,
+         bwart TYPE mseg-bwart,
+         shkzg TYPE mseg-shkzg,
+         cnt   TYPE i,
+         qty   TYPE p LENGTH 15 DECIMALS 3,   " SUM(menge): lebih lebar dari MENGE_D
+       END OF ty_rt.
+
+" D — baris MSEG mentah (hanya field yang dipakai) untuk agregasi ber-scope WF.
+" Perlu matnr & aufnr, yang TIDAK ada di ty_rt (B2 agregasi di DB).
+TYPES: BEGIN OF ty_raw,
+         matnr TYPE mseg-matnr,
+         aufnr TYPE mseg-aufnr,
+         lgort TYPE mseg-lgort,
+         umlgo TYPE mseg-umlgo,
+         bwart TYPE mseg-bwart,
+         shkzg TYPE mseg-shkzg,
+         menge TYPE mseg-menge,
+       END OF ty_raw.
+
+" D — rantai order → cost center (pola SAMA dgn monitoring_bom.htm §3f):
+" AFKO-AUFPL → AFVC (operasi PERTAMA, ARBID) → CRCO-KOSTL → whitelist ZCL_CS_UTIL.
+TYPES: BEGIN OF ty_auf,
+         aufnr TYPE afko-aufnr,
+         aufpl TYPE afko-aufpl,
+       END OF ty_auf,
+       BEGIN OF ty_aufpl,
+         aufpl TYPE afko-aufpl,
+       END OF ty_aufpl,
+       BEGIN OF ty_afvc,
+         aufpl TYPE afvc-aufpl,
+         vornr TYPE afvc-vornr,
+         arbid TYPE afvc-arbid,
+       END OF ty_afvc,
+       BEGIN OF ty_arbid,
+         arbid TYPE afvc-arbid,
+       END OF ty_arbid,
+       BEGIN OF ty_crco,
+         objid TYPE crco-objid,
+         kostl TYPE crco-kostl,
+       END OF ty_crco,
+       BEGIN OF ty_wfauf,          " order yang LOLOS whitelist WF
+         aufnr TYPE mseg-aufnr,
+       END OF ty_wfauf,
+       BEGIN OF ty_wfmat,          " material yang PERNAH muncul di order WF
+         matnr TYPE mseg-matnr,
+       END OF ty_wfmat.
+
+" E — cek keterikatan baris MSEG ke SALES ORDER (make-to-order / stok khusus 'E').
+" Menjawab SATU pertanyaan: bisakah qty pipeline dipilah per SO? Bisa HANYA bila
+" MSEG-KDAUF terisi (dan/atau SOBKZ='E'). Bila mayoritas kosong → stok anonim →
+" pemilahan per-SO TIDAK MUNGKIN dari MSEG, titik.
+TYPES: BEGIN OF ty_so,
+         mblnr TYPE mseg-mblnr,
+         zeile TYPE mseg-zeile,
+         budat TYPE mkpf-budat,
+         matnr TYPE mseg-matnr,
+         aufnr TYPE mseg-aufnr,
+         lgort TYPE mseg-lgort,
+         umlgo TYPE mseg-umlgo,
+         bwart TYPE mseg-bwart,
+         shkzg TYPE mseg-shkzg,
+         menge TYPE mseg-menge,
+         kdauf TYPE mseg-kdauf,   " sales order pada baris gerakan
+         kdpos TYPE mseg-kdpos,   " item SO
+         sobkz TYPE mseg-sobkz,   " special stock: 'E' = sales-order stock
+       END OF ty_so.
+
 DATA: lt_mv    TYPE TABLE OF ty_mv,   ls_mv   TYPE ty_mv,
       lt_mard  TYPE TABLE OF ty_mard, ls_mard TYPE ty_mard,
       lt_sloc  TYPE TABLE OF ty_sloc, ls_sloc TYPE ty_sloc,
-      lt_sum   TYPE TABLE OF ty_sum,  ls_sum  TYPE ty_sum.
+      lt_sum   TYPE TABLE OF ty_sum,  ls_sum  TYPE ty_sum,
+      lt_rt    TYPE TABLE OF ty_rt,   ls_rt   TYPE ty_rt.
 
-FIELD-SYMBOLS <s> TYPE ty_sum.
+" E — baris mentah 30 hari + contoh baris ber-KDAUF
+DATA: lt_so     TYPE TABLE OF ty_so, ls_so    TYPE ty_so,
+      lt_e_samp TYPE TABLE OF ty_so, ls_e_samp TYPE ty_so,
+      lt_ewfin  TYPE zcl_cs_util=>ty_aufnr_tab,
+      ls_ewfin  TYPE zcl_cs_util=>ty_aufnr_line,
+      lt_ewfok  TYPE zcl_cs_util=>ty_aufnr_tab,
+      lt_ewfmat TYPE TABLE OF ty_wfmat, ls_ewfmat TYPE ty_wfmat.
+
+" C2 — daftar sloc unik dari B2 + nama resmi T001L
+DATA: lt_refk TYPE TABLE OF ty_sloc, ls_refk TYPE ty_sloc,
+      lt_ref  TYPE TABLE OF ty_sloc, ls_ref  TYPE ty_sloc,
+      lt_c2   TYPE TABLE OF ty_sloc, ls_c2   TYPE ty_sloc.
+
+" D — data mentah + rantai cost center + hasil agregasi (format sama dgn B2)
+DATA: lt_raw   TYPE TABLE OF ty_raw,   ls_raw   TYPE ty_raw,
+      lt_auf   TYPE TABLE OF ty_auf,   ls_auf   TYPE ty_auf,
+      lt_aufd  TYPE TABLE OF ty_wfauf, ls_aufd  TYPE ty_wfauf,
+      lt_aufpl TYPE TABLE OF ty_aufpl, ls_aufpl TYPE ty_aufpl,
+      lt_afvc  TYPE TABLE OF ty_afvc,  ls_afvc  TYPE ty_afvc,
+      lt_arbid TYPE TABLE OF ty_arbid, ls_arbid TYPE ty_arbid,
+      lt_crco  TYPE TABLE OF ty_crco,  ls_crco  TYPE ty_crco,
+      lt_wfauf TYPE TABLE OF ty_wfauf, ls_wfauf TYPE ty_wfauf,
+      lt_wfmat TYPE TABLE OF ty_wfmat, ls_wfmat TYPE ty_wfmat,
+      lt_rd    TYPE TABLE OF ty_rt,    ls_rd    TYPE ty_rt.
+
+" Range 6 sloc pipeline (2KCS..229K) — satu sumber kebenaran di ZCL_CS_UTIL.
+DATA: lr_pipe  TYPE zcl_cs_util=>ty_lgort_range,
+      lr_matnr TYPE RANGE OF matnr,
+      ls_rmat  LIKE LINE OF lr_matnr.
+
+FIELD-SYMBOLS: <s> TYPE ty_sum,
+               <d> TYPE ty_rt.
 
 DATA: lv_user     TYPE string,
       lv_in_matnr TYPE string,
@@ -73,6 +211,34 @@ DATA: lv_user     TYPE string,
       lv_um_nm    TYPE string,
       lv_dt       TYPE string,
       lv_cnt_mv   TYPE i,
+      lv_cnt_rt   TYPE i,   " jumlah kombinasi rute (baris tabel B2)
+      lv_cnt_c2   TYPE i,   " jumlah kode sloc unik (baris tabel C2)
+      lv_cnt_rd   TYPE i,   " jumlah kombinasi rute WF  (baris tabel D)
+      lv_e_tot    TYPE i,   " E: total baris WF menyentuh pipeline (30 hari)
+      lv_e_kdauf  TYPE i,   " E: baris dgn KDAUF terisi
+      lv_e_sobkz  TYPE i,   " E: baris dgn SOBKZ = 'E'
+      lv_e_both   TYPE i,   " E: baris dgn KDAUF terisi DAN SOBKZ = 'E'
+      lv_e_anon   TYPE i,   " E: baris anonim (KDAUF kosong DAN SOBKZ kosong)
+      lv_e_trf    TYPE i,   " E: dari total, yang berupa transfer (301/311)
+      lv_e_trfkd  TYPE i,   " E: transfer yang KDAUF-nya terisi  ← ANGKA PENENTU
+      lv_e_from   TYPE d,   " E: awal jendela 30 hari
+      lv_p_kdauf  TYPE p DECIMALS 1,
+      lv_p_sobkz  TYPE p DECIMALS 1,
+      lv_p_anon   TYPE p DECIMALS 1,
+      lv_p_trfkd  TYPE p DECIMALS 1,
+      lv_e_verdict TYPE string,
+      lv_e_vcls   TYPE string,
+      lv_cnt_raw  TYPE i,   " jumlah baris MSEG mentah yang di-scan utk D
+      lv_cnt_auf  TYPE i,   " order unik yang ditemukan di baris pipeline
+      lv_cnt_wfa  TYPE i,   " order yang LOLOS whitelist WF
+      lv_cnt_wfm  TYPE i,   " material WF turunan dari order WF
+      lv_capped   TYPE abap_bool,   " abap_true bila hasil D dipotong batas baris
+      lv_kostl    TYPE kostl,
+      lv_lname    TYPE string,
+      lv_prev_afp TYPE afko-aufpl,
+      lv_go       TYPE string,   " '1' = form sudah di-submit (guard query B2)
+      lv_arah     TYPE string,
+      lv_c3       TYPE string,
       lv_hl       TYPE string,   " highlight style bila sloc di pipeline/1D00
       lv_pipe     TYPE string,   " daftar sloc pipeline utk cek highlight
       lv_tok      TYPE string,   " token '/SLOC/' utk cek keanggotaan pipeline
@@ -85,6 +251,7 @@ lv_pipe = '/1D00/2KCS/2261/2262/22F2/22F3/229K/'.   " penanda highlight
 lv_in_matnr = request->get_form_field( 'matnr' ).
 lv_in_from  = request->get_form_field( 'date_from' ).
 lv_in_to    = request->get_form_field( 'date_to' ).
+lv_go       = request->get_form_field( 'go' ).      " hidden field: '1' bila form disubmit
 
 " Rentang tanggal (default 180 hari terakhir)
 IF lv_in_from IS NOT INITIAL AND strlen( lv_in_from ) = 10.
@@ -167,6 +334,382 @@ IF lv_in_matnr IS NOT INITIAL.
   ENDLOOP.
   SORT lt_sum BY cnt DESCENDING bwart ASCENDING.
 ENDIF.
+
+*&---------------------------------------------------------------------*
+*& B2. Frekuensi movement PER RUTE SLOC (tidak butuh material)
+*& Kunci agregasi: (lgort asal, umlgo tujuan, bwart, shkzg).
+*& Cakupan: baris MSEG yang MENYENTUH pipeline — lgort ASAL di pipeline ATAU
+*& umlgo TUJUAN di pipeline. Werks dibatasi 1000/2000 supaya sisi PENGIRIM
+*& transfer antar-plant (werks 1000 / lgort 1D00 → umlgo 2KCS) ikut tertangkap.
+*& Material OPSIONAL: lr_matnr kosong = seluruh material (populasi).
+*& Agregasi di DB (COUNT/SUM + GROUP BY) — sengaja TIDAK menarik baris mentah.
+*&
+*& GUARD: tanpa material, query ini menyapu MSEG seluruh rentang tgl. Karena itu
+*& hanya dijalankan bila form BENAR-BENAR di-submit (hidden field go=1) — supaya
+*& sekadar membuka halaman tidak memicu scan berat.
+*&---------------------------------------------------------------------*
+IF lv_go = '1' OR lv_matnr IS NOT INITIAL.
+  lr_pipe = zcl_cs_util=>pipeline_slocs( ).
+
+  IF lv_matnr IS NOT INITIAL.
+    ls_rmat-sign = 'I'. ls_rmat-option = 'EQ'. ls_rmat-low = lv_matnr.
+    APPEND ls_rmat TO lr_matnr.
+  ENDIF.
+
+  SELECT m~lgort m~umlgo m~bwart m~shkzg COUNT(*) AS cnt SUM( m~menge ) AS qty
+    FROM mseg AS m INNER JOIN mkpf AS k
+      ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+    INTO TABLE lt_rt
+    WHERE k~budat BETWEEN lv_from AND lv_to
+      AND ( m~werks = lc_p1000 OR m~werks = lc_p2000 )
+      AND ( m~lgort IN lr_pipe OR m~umlgo IN lr_pipe )
+      AND m~matnr IN lr_matnr
+    GROUP BY m~lgort m~umlgo m~bwart m~shkzg.
+
+  " Paling sering muncul di atas; qty sbg tie-breaker.
+  SORT lt_rt BY cnt DESCENDING qty DESCENDING.
+  lv_cnt_rt = lines( lt_rt ).
+
+*&---------------------------------------------------------------------*
+*& C2. Nama resmi SEMUA sloc yang muncul di B2 (referensi baca tabel)
+*& Sumber kode: kolom "Dari SLoc" (lgort) DAN "Ke SLoc" (umlgo) dari lt_rt.
+*& T001L dibaca untuk Plant 2000 DAN 1000 — 1D00 milik Plant 1000, kalau
+*& dibatasi werks='2000' saja namanya akan kosong. Bila satu kode ada di kedua
+*& plant, versi Plant 2000 yang dipakai (SORT werks DESCENDING lalu dedup).
+*&---------------------------------------------------------------------*
+  REFRESH lt_refk.
+  LOOP AT lt_rt INTO ls_rt.
+    IF ls_rt-lgort IS NOT INITIAL.
+      CLEAR ls_refk. ls_refk-lgort = ls_rt-lgort. APPEND ls_refk TO lt_refk.
+    ENDIF.
+    IF ls_rt-umlgo IS NOT INITIAL.
+      CLEAR ls_refk. ls_refk-lgort = ls_rt-umlgo. APPEND ls_refk TO lt_refk.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_refk BY lgort.
+  DELETE ADJACENT DUPLICATES FROM lt_refk COMPARING lgort.
+
+  IF lt_refk IS NOT INITIAL.
+    SELECT werks lgort lgobe FROM t001l INTO TABLE lt_ref
+      FOR ALL ENTRIES IN lt_refk
+      WHERE lgort = lt_refk-lgort
+        AND ( werks = lc_p2000 OR werks = lc_p1000 ).
+    " Plant 2000 menang bila kode sloc ada di kedua plant.
+    SORT lt_ref BY lgort ASCENDING werks DESCENDING.
+
+    " Hasil final C2 = SEMUA kode dari B2 (walau T001L tak punya namanya).
+    REFRESH lt_c2.
+    LOOP AT lt_refk INTO ls_refk.
+      CLEAR ls_c2.
+      ls_c2-lgort = ls_refk-lgort.
+      READ TABLE lt_ref INTO ls_ref WITH KEY lgort = ls_refk-lgort BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_c2-werks = ls_ref-werks.
+        ls_c2-lgobe = ls_ref-lgobe.
+      ENDIF.
+      APPEND ls_c2 TO lt_c2.
+    ENDLOOP.
+    lv_cnt_c2 = lines( lt_c2 ).
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*& D. Frekuensi movement KHUSUS WOOD FURNITURE (scoped cost center)
+*& Kunci & format agregasi PERSIS sama dgn B2 (lgort, umlgo, bwart, shkzg).
+*&
+*& KENAPA TIDAK bisa filter "m~aufnr IN order WF" saja: baris transfer antar-sloc
+*& (311/313/315 — justru INTI pipeline) TIDAK membawa aufnr. Filter aufnr murni
+*& akan membuang seluruh baris transfer & menyisakan 101/261 → tak bisa dipakai
+*& memutuskan movement type pipeline. Karena itu scope-nya 2 aturan:
+*&   (1) baris PUNYA aufnr  → masuk HANYA bila order-nya lolos whitelist WF.
+*&                            aufnr bersifat OTORITATIF: baris ber-order Chair
+*&                            tetap dibuang walau materialnya juga dipakai WF.
+*&   (2) baris TANPA aufnr  → masuk bila matnr-nya termasuk "material WF", yaitu
+*&       (transfer sloc!)     material yang PERNAH muncul di baris ber-order WF.
+*& Aturan (2)-lah yang menarik baris transfer (aufnr blank) ikut tersaring masuk.
+*&
+*& ⚠️ KONSEKUENSI (tertulis juga di legenda halaman): aturan (2) OVER-INCLUDE —
+*& material CAMPURAN yang dipakai order WF *dan* non-WF (mis. komponen di
+*& 22F2/22F3 yang juga dipakai Chair — lihat catatan wf_route_status di
+*& ZCL_CS_UTIL) akan ikut terhitung pada baris transfernya, karena baris itu tak
+*& membawa aufnr untuk membedakannya. D = batas ATAS populasi WF, bukan angka
+*& presisi. Bandingkan D dengan B2 untuk melihat seberapa besar porsinya.
+*&
+*& Rantai cost center = pola SAMA persis dgn monitoring_bom.htm §3f:
+*&   AFKO-AUFPL → AFVC (operasi PERTAMA per aufpl, ARBID) → CRCO (objid=arbid,
+*&   kokrs=gc_kokrs, begda/endda valid hari ini) → KOSTL → wf_line_name().
+*& wf_line_name() mengembalikan '' bila cost center DI LUAR whitelist 10 kode.
+*&
+*& Agregasi D dilakukan di ABAP (bukan GROUP BY di DB) karena scope WF baru bisa
+*& diputuskan SETELAH rantai order→cost center diketahui.
+*&---------------------------------------------------------------------*
+  SELECT m~matnr m~aufnr m~lgort m~umlgo m~bwart m~shkzg m~menge
+    FROM mseg AS m INNER JOIN mkpf AS k
+      ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+    INTO TABLE lt_raw
+    UP TO lc_cap ROWS
+    WHERE k~budat BETWEEN lv_from AND lv_to
+      AND ( m~werks = lc_p1000 OR m~werks = lc_p2000 )
+      AND ( m~lgort IN lr_pipe OR m~umlgo IN lr_pipe )
+      AND m~matnr IN lr_matnr.
+  lv_cnt_raw = lines( lt_raw ).
+  IF lv_cnt_raw >= lc_cap.
+    lv_capped = abap_true.
+  ENDIF.
+
+  " 1. Order unik yang menyentuh baris pipeline (baris transfer: aufnr blank → skip)
+  REFRESH lt_aufd.
+  LOOP AT lt_raw INTO ls_raw.
+    IF ls_raw-aufnr IS INITIAL. CONTINUE. ENDIF.
+    ls_aufd-aufnr = ls_raw-aufnr.
+    APPEND ls_aufd TO lt_aufd.
+  ENDLOOP.
+  SORT lt_aufd BY aufnr.
+  DELETE ADJACENT DUPLICATES FROM lt_aufd COMPARING aufnr.
+  lv_cnt_auf = lines( lt_aufd ).
+
+  IF lt_aufd IS NOT INITIAL.
+    " 2. Order → AUFPL (routing). Order tanpa routing tak bisa dinilai → bukan WF.
+    SELECT aufnr aufpl FROM afko INTO TABLE lt_auf
+      FOR ALL ENTRIES IN lt_aufd
+      WHERE aufnr = lt_aufd-aufnr.
+    SORT lt_auf BY aufnr.
+
+    REFRESH lt_aufpl.
+    LOOP AT lt_auf INTO ls_auf.
+      IF ls_auf-aufpl IS INITIAL. CONTINUE. ENDIF.
+      ls_aufpl-aufpl = ls_auf-aufpl.
+      APPEND ls_aufpl TO lt_aufpl.
+    ENDLOOP.
+    SORT lt_aufpl BY aufpl.
+    DELETE ADJACENT DUPLICATES FROM lt_aufpl COMPARING aufpl.
+
+    IF lt_aufpl IS NOT INITIAL.
+      " 3. AUFPL → operasi. Operasi PERTAMA = vornr terkecil (VORNR zero-padded).
+      SELECT aufpl vornr arbid FROM afvc INTO TABLE lt_afvc
+        FOR ALL ENTRIES IN lt_aufpl
+        WHERE aufpl = lt_aufpl-aufpl.
+      SORT lt_afvc BY aufpl ASCENDING vornr ASCENDING.
+
+      REFRESH lt_arbid.
+      CLEAR lv_prev_afp.
+      LOOP AT lt_afvc INTO ls_afvc.
+        IF ls_afvc-aufpl = lv_prev_afp. CONTINUE. ENDIF.   " bukan operasi pertama
+        lv_prev_afp = ls_afvc-aufpl.
+        IF ls_afvc-arbid IS INITIAL. CONTINUE. ENDIF.
+        ls_arbid-arbid = ls_afvc-arbid.
+        APPEND ls_arbid TO lt_arbid.
+      ENDLOOP.
+      SORT lt_arbid BY arbid.
+      DELETE ADJACENT DUPLICATES FROM lt_arbid COMPARING arbid.
+
+      IF lt_arbid IS NOT INITIAL.
+        " 4. ARBID (= CRCO-OBJID) → cost center yang valid HARI INI.
+        SELECT objid kostl FROM crco INTO TABLE lt_crco
+          FOR ALL ENTRIES IN lt_arbid
+          WHERE objid = lt_arbid-arbid
+            AND kokrs = zcl_cs_util=>gc_kokrs
+            AND begda <= sy-datum
+            AND endda >= sy-datum.
+        SORT lt_crco BY objid.
+      ENDIF.
+    ENDIF.
+
+    " 5. Order → WF? (kostl ada di whitelist ⇒ wf_line_name <> '')
+    REFRESH lt_wfauf.
+    LOOP AT lt_auf INTO ls_auf.
+      IF ls_auf-aufpl IS INITIAL. CONTINUE. ENDIF.
+      READ TABLE lt_afvc INTO ls_afvc
+        WITH KEY aufpl = ls_auf-aufpl BINARY SEARCH.   " = operasi pertama
+      IF sy-subrc <> 0 OR ls_afvc-arbid IS INITIAL. CONTINUE. ENDIF.
+      READ TABLE lt_crco INTO ls_crco
+        WITH KEY objid = ls_afvc-arbid BINARY SEARCH.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      lv_kostl = ls_crco-kostl.
+      lv_lname = zcl_cs_util=>wf_line_name( lv_kostl ).
+      IF lv_lname IS INITIAL. CONTINUE. ENDIF.          " di luar whitelist WF
+      ls_wfauf-aufnr = ls_auf-aufnr.
+      APPEND ls_wfauf TO lt_wfauf.
+    ENDLOOP.
+    SORT lt_wfauf BY aufnr.
+    DELETE ADJACENT DUPLICATES FROM lt_wfauf COMPARING aufnr.
+    lv_cnt_wfa = lines( lt_wfauf ).
+
+    " 6. Material WF = material yang muncul di baris ber-order WF (aturan (2)).
+    REFRESH lt_wfmat.
+    LOOP AT lt_raw INTO ls_raw.
+      IF ls_raw-aufnr IS INITIAL. CONTINUE. ENDIF.
+      READ TABLE lt_wfauf TRANSPORTING NO FIELDS
+        WITH KEY aufnr = ls_raw-aufnr BINARY SEARCH.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      ls_wfmat-matnr = ls_raw-matnr.
+      APPEND ls_wfmat TO lt_wfmat.
+    ENDLOOP.
+    SORT lt_wfmat BY matnr.
+    DELETE ADJACENT DUPLICATES FROM lt_wfmat COMPARING matnr.
+    lv_cnt_wfm = lines( lt_wfmat ).
+
+    " 7. Agregasi D — hanya baris yang lolos UNION (1) atau (2).
+    LOOP AT lt_raw INTO ls_raw.
+      IF ls_raw-aufnr IS NOT INITIAL.
+        READ TABLE lt_wfauf TRANSPORTING NO FIELDS
+          WITH KEY aufnr = ls_raw-aufnr BINARY SEARCH.
+        IF sy-subrc <> 0.
+          " order NON-WF → baris ini bukan WF, walau materialnya WF
+          CONTINUE.
+        ENDIF.
+      ELSE.
+        READ TABLE lt_wfmat TRANSPORTING NO FIELDS
+          WITH KEY matnr = ls_raw-matnr BINARY SEARCH.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.   " transfer material non-WF
+      ENDIF.
+
+      READ TABLE lt_rd ASSIGNING <d> WITH KEY lgort = ls_raw-lgort
+                                              umlgo = ls_raw-umlgo
+                                              bwart = ls_raw-bwart
+                                              shkzg = ls_raw-shkzg.
+      IF sy-subrc = 0.
+        <d>-cnt = <d>-cnt + 1.
+        <d>-qty = <d>-qty + ls_raw-menge.
+      ELSE.
+        CLEAR ls_rd.
+        ls_rd-lgort = ls_raw-lgort.
+        ls_rd-umlgo = ls_raw-umlgo.
+        ls_rd-bwart = ls_raw-bwart.
+        ls_rd-shkzg = ls_raw-shkzg.
+        ls_rd-cnt   = 1.
+        ls_rd-qty   = ls_raw-menge.
+        APPEND ls_rd TO lt_rd.
+      ENDIF.
+    ENDLOOP.
+    SORT lt_rd BY cnt DESCENDING qty DESCENDING.
+    lv_cnt_rd = lines( lt_rd ).
+  ENDIF.
+
+*&---------------------------------------------------------------------*
+*& E. APAKAH BARIS MSEG TERIKAT KE SALES ORDER? (read-only, murni hitung)
+*&---------------------------------------------------------------------*
+*& PERTANYAAN YANG DIJAWAB: bisakah qty pipeline (2KCS/2261/2262/229K) dipilah
+*& PER SO? Itu hanya mungkin bila baris gerakannya membawa nomor SO sendiri:
+*&   MSEG-KDAUF / KDPOS terisi, dan/atau MSEG-SOBKZ = 'E' (sales-order stock,
+*&   yaitu produksi make-to-order dgn stok khusus per SO — stoknya di MSKA,
+*&   bukan MARD).
+*& Bila mayoritas baris KOSONG (stok anonim) → pemilahan per-SO TIDAK MUNGKIN
+*& dari MSEG, dan angka checkpoint selamanya bersifat per-material.
+*&
+*& YANG PALING MENENTUKAN adalah baris TRANSFER (301/311) — itulah yang mengisi
+*& CP1/CP2/CP4. Baris GR 101 sudah punya AUFNR (bisa diikat ke order/SO lewat
+*& AFPO), jadi tinggi-rendahnya KDAUF di baris 101 TIDAK menyelesaikan masalah.
+*& Karena itu lv_e_trfkd (transfer yang ber-KDAUF) dipisah sebagai angka penentu.
+*&
+*& Scope: SAMA dengan section D (Wood Furniture: aufnr order WF, atau — untuk
+*& baris tanpa aufnr — material yang pernah muncul di order WF), MSEG ⨝ MKPF,
+*& sloc pipeline sebagai asal ATAU tujuan.
+*& Rentang: 30 HARI TERAKHIR (tetap, TIDAK ikut filter tanggal di atas) — cukup
+*& untuk melihat pola, dan menjaga query tetap ringan.
+*&---------------------------------------------------------------------*
+  lv_e_from = sy-datum - 30.
+
+  SELECT m~mblnr m~zeile k~budat m~matnr m~aufnr m~lgort m~umlgo
+         m~bwart m~shkzg m~menge m~kdauf m~kdpos m~sobkz
+    FROM mseg AS m INNER JOIN mkpf AS k
+      ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+    INTO TABLE lt_so
+    UP TO lc_cap ROWS
+    WHERE k~budat BETWEEN lv_e_from AND sy-datum
+      AND ( m~werks = lc_p1000 OR m~werks = lc_p2000 )
+      AND ( m~lgort IN lr_pipe OR m~umlgo IN lr_pipe )
+      AND m~matnr IN lr_matnr.
+
+  IF lt_so IS NOT INITIAL.
+    " Scope WF — pakai helper terpusat (rantai AFKO→AFVC→CRCO→whitelist).
+    REFRESH lt_ewfin.
+    LOOP AT lt_so INTO ls_so.
+      IF ls_so-aufnr IS INITIAL. CONTINUE. ENDIF.
+      ls_ewfin-aufnr = ls_so-aufnr.
+      INSERT ls_ewfin INTO TABLE lt_ewfin.
+    ENDLOOP.
+    IF lt_ewfin IS NOT INITIAL.
+      lt_ewfok = zcl_cs_util=>wf_order_filter( lt_ewfin ).
+    ENDIF.
+
+    " Material WF = material yang muncul di baris ber-order WF (aturan (2) sect. D)
+    REFRESH lt_ewfmat.
+    LOOP AT lt_so INTO ls_so.
+      IF ls_so-aufnr IS INITIAL. CONTINUE. ENDIF.
+      READ TABLE lt_ewfok TRANSPORTING NO FIELDS
+        WITH TABLE KEY aufnr = ls_so-aufnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      ls_ewfmat-matnr = ls_so-matnr.
+      APPEND ls_ewfmat TO lt_ewfmat.
+    ENDLOOP.
+    SORT lt_ewfmat BY matnr.
+    DELETE ADJACENT DUPLICATES FROM lt_ewfmat COMPARING matnr.
+
+    " Hitung — hanya baris yang lolos scope WF (aturan sama persis dgn section D).
+    LOOP AT lt_so INTO ls_so.
+      IF ls_so-aufnr IS NOT INITIAL.
+        READ TABLE lt_ewfok TRANSPORTING NO FIELDS
+          WITH TABLE KEY aufnr = ls_so-aufnr.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.          " order non-WF
+      ELSE.
+        READ TABLE lt_ewfmat TRANSPORTING NO FIELDS
+          WITH KEY matnr = ls_so-matnr BINARY SEARCH.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.          " material non-WF
+      ENDIF.
+
+      lv_e_tot = lv_e_tot + 1.
+
+      IF ls_so-kdauf IS NOT INITIAL. lv_e_kdauf = lv_e_kdauf + 1. ENDIF.
+      IF ls_so-sobkz = 'E'.          lv_e_sobkz = lv_e_sobkz + 1. ENDIF.
+      IF ls_so-kdauf IS NOT INITIAL AND ls_so-sobkz = 'E'.
+        lv_e_both = lv_e_both + 1.
+      ENDIF.
+      IF ls_so-kdauf IS INITIAL AND ls_so-sobkz IS INITIAL.
+        lv_e_anon = lv_e_anon + 1.
+      ENDIF.
+
+      " Baris TRANSFER (301/311) — inilah yang menentukan bisa/tidaknya CP1/2/4
+      " dipilah per SO. GR 101 tak dihitung di sini (sudah punya AUFNR).
+      IF ls_so-bwart = zcl_cs_util=>gc_bwart_301
+      OR ls_so-bwart = zcl_cs_util=>gc_bwart_311.
+        lv_e_trf = lv_e_trf + 1.
+        IF ls_so-kdauf IS NOT INITIAL.
+          lv_e_trfkd = lv_e_trfkd + 1.
+        ENDIF.
+      ENDIF.
+
+      " Contoh baris ber-KDAUF (maks 25) — supaya polanya bisa dilihat langsung.
+      IF ls_so-kdauf IS NOT INITIAL AND lines( lt_e_samp ) < 25.
+        APPEND ls_so TO lt_e_samp.
+      ENDIF.
+    ENDLOOP.
+
+    " Persentase
+    IF lv_e_tot > 0.
+      lv_p_kdauf = lv_e_kdauf * 100 / lv_e_tot.
+      lv_p_sobkz = lv_e_sobkz * 100 / lv_e_tot.
+      lv_p_anon  = lv_e_anon  * 100 / lv_e_tot.
+    ENDIF.
+    IF lv_e_trf > 0.
+      lv_p_trfkd = lv_e_trfkd * 100 / lv_e_trf.
+    ENDIF.
+
+    " Vonis — dibaca dari baris TRANSFER, bukan dari total.
+    IF lv_e_trf = 0.
+      lv_e_verdict = 'Tidak ada baris transfer (301/311) pada 30 hari ini — rentang terlalu sempit / belum ada gerakan. Belum bisa disimpulkan.'.
+      lv_e_vcls    = 'dg-warn'.
+    ELSEIF lv_e_trfkd = 0.
+      lv_e_verdict = 'STOK ANONIM. TIDAK ADA satu pun baris transfer yang membawa KDAUF → qty pipeline TIDAK BISA dipilah per SO dari MSEG. Opsi 2 (scoping penuh per SO) GUGUR; yang tersisa hanya Opsi 1 (ikat CP3/GR-101 lewat AUFNR).'.
+      lv_e_vcls    = 'dg-bad'.
+    ELSEIF lv_p_trfkd >= 95.
+      lv_e_verdict = 'SALES-ORDER STOCK. Hampir semua baris transfer membawa KDAUF → qty pipeline BISA dipilah per SO (Opsi 2 layak dikerjakan).'.
+      lv_e_vcls    = 'dg-good'.
+    ELSE.
+      lv_e_verdict = 'CAMPURAN. Sebagian baris transfer ber-KDAUF, sebagian anonim → pemilahan per-SO hanya benar untuk sebagian material. Perlu diputuskan cara menangani sisanya SEBELUM implementasi.'.
+      lv_e_vcls    = 'dg-warn'.
+    ENDIF.
+  ENDIF.
+ENDIF.
 %>
 <!DOCTYPE html>
 <html lang="id">
@@ -174,7 +717,7 @@ ENDIF.
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Diagnostik Gerakan Material (Fase 0)</title>
-  <link rel="stylesheet" href="css/style.css?r=11">
+  <link rel="stylesheet" href="css/style.css?r=12">
   <style>
     .dg-wrap { max-width:1200px; margin:0 auto; padding:20px; }
     .dg-tbl { width:100%; border-collapse:collapse; font-size:0.8rem; background:#fff; }
@@ -187,6 +730,15 @@ ENDIF.
     .dg-out{ background:#fef2f2; }  /* SHKZG H = keluar */
     .dg-code { font-family:monospace; font-weight:700; }
     .dg-legend { font-size:0.75rem; color:#6b7280; margin:6px 0 0; }
+    /* Vonis section E */
+    .dg-vd  { padding:12px 14px; font-size:0.85rem; font-weight:700; line-height:1.5; }
+    .dg-good{ background:#ecfdf5; color:#065f46; border-left:5px solid #10b981; }
+    .dg-bad { background:#fef2f2; color:#991b1b; border-left:5px solid #ef4444; }
+    .dg-warn{ background:#fffbeb; color:#92400e; border-left:5px solid #f59e0b; }
+    .dg-kpi { display:flex; gap:14px; flex-wrap:wrap; padding:12px 14px; }
+    .dg-kpi div { background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:8px 12px; min-width:150px; }
+    .dg-kpi .k-lbl { font-size:0.7rem; color:#6b7280; display:block; }
+    .dg-kpi .k-val { font-size:1.05rem; font-weight:700; color:#1e3a8a; }
   </style>
 </head>
 <body>
@@ -202,7 +754,8 @@ ENDIF.
     <div class="dg-card">
       <div class="dg-hd">Parameter</div>
       <form method="get" action="diag_movement.htm" style="padding:14px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
-        <div class="form-group" style="width:280px;"><label>Material (wajib)</label><input type="text" name="matnr" value="<%= lv_in_matnr %>" placeholder="kode material"></div>
+        <input type="hidden" name="go" value="1">
+        <div class="form-group" style="width:280px;"><label>Material (wajib utk A/B/C, opsional utk B2)</label><input type="text" name="matnr" value="<%= lv_in_matnr %>" placeholder="kosongkan = semua material (B2)"></div>
         <div class="form-group" style="width:170px;"><label>Dari Tanggal</label><input type="date" name="date_from" value="<%= lv_in_from %>"></div>
         <div class="form-group" style="width:170px;"><label>Sampai Tanggal</label><input type="date" name="date_to" value="<%= lv_in_to %>"></div>
         <div class="btn-submit"><button type="submit" value="X">TAMPILKAN</button></div>
@@ -212,7 +765,7 @@ ENDIF.
     </div>
 
     <% IF lv_in_matnr IS INITIAL. %>
-    <div class="dg-card"><div style="padding:28px; text-align:center; color:#9ca3af;">Masukkan kode material lalu klik TAMPILKAN.</div></div>
+    <div class="dg-card"><div style="padding:28px; text-align:center; color:#9ca3af;">Masukkan kode material lalu klik TAMPILKAN untuk section A, B &amp; C.<br><span style="font-size:0.8rem;">Section B2 di bawah TIDAK butuh material &#8212; ia meringkas seluruh material pada rentang tanggal.</span></div></div>
     <% ELSE. %>
 
     <div style="font-size:0.95rem; font-weight:700; color:#1e3a8a; margin-bottom:12px;">Material: <%= lv_matnr %> &#8212; <%= lv_maktx %></div>
@@ -266,6 +819,71 @@ ENDIF.
       <p class="dg-legend" style="padding:8px 14px 12px;">Legenda umum: 101=GR produksi/PO, 261=konsumsi ke order, 311/313/315=transfer antar-sloc, 301=transfer antar-plant, 309=transfer material. <strong>Perhatikan bwart mana yang rutenya menyentuh 2KCS/2261/2262/22F2/22F3/229K</strong> &mdash; itulah gerakan checkpoint yang akan dipakai engine.</p>
     </div>
 
+    <% ENDIF. %>
+
+    <!-- B2. FREKUENSI PER RUTE SLOC (tidak butuh material) -->
+    <div class="dg-card">
+      <div class="dg-hd">B2. Ringkasan Frekuensi Movement per Rute SLoc &#8212; <%= lv_cnt_rt %> kombinasi rute</div>
+      <p class="dg-legend" style="padding:10px 14px 0;">
+        Agregasi MSEG &#8901; MKPF pada rentang tanggal filter, <strong>hanya baris yang menyentuh sloc pipeline</strong>
+        (2KCS / 2261 / 2262 / 22F2 / 22F3 / 229K) sebagai <em>asal</em> (lgort) <strong>atau</strong> <em>tujuan</em> (umlgo).
+        <% IF lv_matnr IS INITIAL. %>
+        Material kosong &rarr; <strong>seluruh material</strong> (populasi &#8212; inilah yang dipakai untuk keputusan final movement type).
+        <% ELSE. %>
+        Dipersempit ke material <strong><%= lv_matnr %></strong> saja &#8212; kosongkan field material untuk melihat populasi penuh.
+        <% ENDIF. %>
+      </p>
+      <div style="overflow-x:auto;">
+      <table class="dg-tbl">
+        <thead><tr>
+          <th>Dari SLoc</th><th>Ke SLoc (umlgo)</th><th>Bwart</th><th>Arah (SHKZG)</th>
+          <th style="text-align:right;">Jumlah Baris</th><th style="text-align:right;">Total Qty</th>
+        </tr></thead>
+        <tbody>
+          <% IF lv_go <> '1' AND lv_matnr IS INITIAL. %>
+          <tr><td colspan="6" style="text-align:center; color:#9ca3af; padding:16px;">Klik <strong>TAMPILKAN</strong> untuk menjalankan agregasi. Biarkan field Material KOSONG untuk melihat seluruh material (populasi).</td></tr>
+          <% ELSEIF lt_rt IS INITIAL. %>
+          <tr><td colspan="6" style="text-align:center; color:#9ca3af; padding:16px;">Tidak ada gerakan menyentuh sloc pipeline pada rentang ini.</td></tr>
+          <% ELSE.
+             LOOP AT lt_rt INTO ls_rt.
+               " warna baris = arah gerakan
+               IF ls_rt-shkzg = 'S'. lv_hl = 'dg-in'.  lv_arah = 'S - masuk (debit)'.
+               ELSE.                 lv_hl = 'dg-out'. lv_arah = 'H - keluar (kredit)'.
+               ENDIF.
+               " highlight sel sloc bila anggota pipeline
+               CLEAR: lv_c1, lv_c2, lv_c3.
+               lv_tok = '/' && ls_rt-lgort && '/'.
+               IF lv_pipe CS lv_tok. lv_c1 = 'dg-hl'. ENDIF.
+               IF ls_rt-umlgo IS INITIAL.
+                 lv_c3 = '-'.
+               ELSE.
+                 lv_c3 = ls_rt-umlgo.
+                 lv_tok = '/' && ls_rt-umlgo && '/'.
+                 IF lv_pipe CS lv_tok. lv_c2 = 'dg-hl'. ENDIF.
+               ENDIF.
+          %>
+          <tr class="<%= lv_hl %>">
+            <td class="dg-code <%= lv_c1 %>"><%= ls_rt-lgort %></td>
+            <td class="dg-code <%= lv_c2 %>"><%= lv_c3 %></td>
+            <td class="dg-code" style="font-size:0.95rem; color:#1e3a8a;"><%= ls_rt-bwart %></td>
+            <td><%= lv_arah %></td>
+            <td style="text-align:right; font-weight:700;"><%= ls_rt-cnt %></td>
+            <td style="text-align:right;"><span class="num-fmt"><%= ls_rt-qty %></span></td>
+          </tr>
+          <% ENDLOOP. ENDIF. %>
+        </tbody>
+      </table>
+      </div>
+      <p class="dg-legend" style="padding:8px 14px 12px;">
+        Diurutkan dari kombinasi yang <strong>paling sering muncul</strong>. Baris teratas = rute + movement type + arah yang
+        DOMINAN di pipeline &rarr; itulah yang dikunci sebagai asumsi Checkpoint Engine (Logic 2).
+        Baris dengan <em>Ke SLoc</em> kosong (&mdash;) = gerakan tanpa sloc tujuan (mis. 101 GR / 261 konsumsi), bukan transfer antar-sloc.
+        Catatan: <strong>Total Qty menjumlahkan seluruh satuan (meins) apa adanya</strong> &#8212; pakai kolom Jumlah Baris sebagai patokan frekuensi.
+      </p>
+    </div>
+
+    <% IF lv_in_matnr IS NOT INITIAL. %>
+
     <!-- C. GERAKAN MENTAH -->
     <div class="dg-card">
       <div class="dg-hd">C. Daftar Gerakan Mentah (MSEG &#8901; MKPF) &#8212; <%= lv_cnt_mv %> baris</div>
@@ -312,6 +930,189 @@ ENDIF.
     </div>
 
     <% ENDIF. %>
+
+    <!-- C2. KAMUS NAMA SLOC (referensi baca B2 & D) -->
+    <div class="dg-card">
+      <div class="dg-hd">C2. Nama Resmi Semua SLoc yang Muncul (T001L) &#8212; <%= lv_cnt_c2 %> kode</div>
+      <table class="dg-tbl">
+        <thead><tr><th style="width:140px;">Kode SLoc</th><th>Nama Resmi (lgobe)</th></tr></thead>
+        <tbody>
+          <% IF lt_c2 IS INITIAL. %>
+          <tr><td colspan="2" style="text-align:center; color:#9ca3af; padding:16px;">Belum ada kode SLoc &#8212; jalankan section B2 dulu (klik TAMPILKAN).</td></tr>
+          <% ELSE.
+             LOOP AT lt_c2 INTO ls_c2.
+               CLEAR lv_c1.
+               lv_tok = '/' && ls_c2-lgort && '/'.
+               IF lv_pipe CS lv_tok. lv_c1 = 'dg-hl'. ENDIF.
+               IF ls_c2-lgobe IS INITIAL.
+                 lv_sloc_nm = '(tidak ada di T001L Plant 1000/2000)'.
+               ELSE.
+                 lv_sloc_nm = ls_c2-lgobe.
+               ENDIF.
+          %>
+          <tr>
+            <td class="dg-code <%= lv_c1 %>"><%= ls_c2-lgort %></td>
+            <td><%= lv_sloc_nm %></td>
+          </tr>
+          <% ENDLOOP. ENDIF. %>
+        </tbody>
+      </table>
+      <p class="dg-legend" style="padding:8px 14px 12px;">
+        Semua kode SLoc yang muncul di B2 (sebagai <em>Dari</em> maupun <em>Ke</em>), dinamai dari T001L.
+        Dibaca untuk Plant 2000 <strong>dan</strong> 1000 &#8212; 1D00 milik Plant 1000, kalau dibatasi Plant 2000 saja namanya kosong.
+        Kode ber-<span class="dg-hl">latar hijau</span> = anggota pipeline.
+      </p>
+    </div>
+
+    <!-- D. MOVEMENT KHUSUS WOOD FURNITURE -->
+    <div class="dg-card">
+      <div class="dg-hd">
+        <span style="background:#065f46; color:#d1fae5; padding:2px 8px; border-radius:6px; font-size:0.75rem; letter-spacing:0.5px; margin-right:8px;">WF</span>
+        D. Ringkasan Movement KHUSUS Wood Furniture &#8212; <%= lv_cnt_rd %> kombinasi rute
+      </div>
+      <p class="dg-legend" style="padding:10px 14px 0;">
+        Sama seperti B2, tetapi <strong>hanya baris Wood Furniture</strong>. Scope ditentukan lewat rantai
+        <span class="dg-code">AFKO-AUFPL &rarr; AFVC (operasi pertama, ARBID) &rarr; CRCO-KOSTL &rarr; whitelist ZCL_CS_UTIL</span>
+        &#8212; pola yang sama dengan badge Line di monitoring_bom.
+        <% IF lv_capped = abap_true. %>
+        <br><span style="color:#b91c1c; font-weight:700;">&#9888; PERINGATAN: baris MSEG mentah mencapai batas <%= lc_cap %> &mdash; angka D di bawah PARSIAL. Persempit rentang tanggal.</span>
+        <% ENDIF. %>
+      </p>
+      <div style="overflow-x:auto;">
+      <table class="dg-tbl">
+        <thead><tr>
+          <th>Dari SLoc</th><th>Ke SLoc (umlgo)</th><th>Bwart</th><th>Arah (SHKZG)</th>
+          <th style="text-align:right;">Jumlah Baris</th><th style="text-align:right;">Total Qty</th>
+        </tr></thead>
+        <tbody>
+          <% IF lv_go <> '1' AND lv_matnr IS INITIAL. %>
+          <tr><td colspan="6" style="text-align:center; color:#9ca3af; padding:16px;">Klik <strong>TAMPILKAN</strong> untuk menjalankan agregasi ber-scope Wood Furniture.</td></tr>
+          <% ELSEIF lt_rd IS INITIAL. %>
+          <tr><td colspan="6" style="text-align:center; color:#9ca3af; padding:16px;">Tidak ada gerakan Wood Furniture menyentuh sloc pipeline pada rentang ini.</td></tr>
+          <% ELSE.
+             LOOP AT lt_rd INTO ls_rd.
+               IF ls_rd-shkzg = 'S'. lv_hl = 'dg-in'.  lv_arah = 'S - masuk (debit)'.
+               ELSE.                 lv_hl = 'dg-out'. lv_arah = 'H - keluar (kredit)'.
+               ENDIF.
+               CLEAR: lv_c1, lv_c2, lv_c3.
+               lv_tok = '/' && ls_rd-lgort && '/'.
+               IF lv_pipe CS lv_tok. lv_c1 = 'dg-hl'. ENDIF.
+               IF ls_rd-umlgo IS INITIAL.
+                 lv_c3 = '-'.
+               ELSE.
+                 lv_c3 = ls_rd-umlgo.
+                 lv_tok = '/' && ls_rd-umlgo && '/'.
+                 IF lv_pipe CS lv_tok. lv_c2 = 'dg-hl'. ENDIF.
+               ENDIF.
+          %>
+          <tr class="<%= lv_hl %>">
+            <td class="dg-code <%= lv_c1 %>"><%= ls_rd-lgort %></td>
+            <td class="dg-code <%= lv_c2 %>"><%= lv_c3 %></td>
+            <td class="dg-code" style="font-size:0.95rem; color:#1e3a8a;"><%= ls_rd-bwart %></td>
+            <td><%= lv_arah %></td>
+            <td style="text-align:right; font-weight:700;"><%= ls_rd-cnt %></td>
+            <td style="text-align:right;"><span class="num-fmt"><%= ls_rd-qty %></span></td>
+          </tr>
+          <% ENDLOOP. ENDIF. %>
+        </tbody>
+      </table>
+      </div>
+      <p class="dg-legend" style="padding:8px 14px 12px;">
+        <strong>Cara D menyaring</strong> (baris transfer antar-sloc TIDAK membawa aufnr, jadi filter aufnr saja akan membuang seluruh transfer):<br>
+        &bull; Baris <strong>punya aufnr</strong> &rarr; masuk hanya bila order-nya lolos whitelist WF. aufnr OTORITATIF: baris ber-order non-WF (mis. Chair) dibuang walau materialnya juga dipakai WF.<br>
+        &bull; Baris <strong>tanpa aufnr</strong> (= transfer antar-sloc) &rarr; masuk bila materialnya pernah muncul di baris ber-order WF.<br>
+        <span style="color:#b45309;">&#9888; Aturan kedua OVER-INCLUDE: material CAMPURAN (dipakai WF <em>dan</em> Chair, mis. di 22F2/22F3) ikut terhitung pada baris transfernya &mdash; baris itu tak punya aufnr untuk membedakan. <strong>D = batas ATAS populasi WF, bukan angka presisi.</strong> Bandingkan dengan B2 untuk melihat porsinya.</span><br>
+        Basis scope: <strong><%= lv_cnt_raw %></strong> baris MSEG pipeline di-scan &rarr; <strong><%= lv_cnt_auf %></strong> order unik ditemukan &rarr; <strong><%= lv_cnt_wfa %></strong> lolos whitelist WF &rarr; <strong><%= lv_cnt_wfm %></strong> material WF turunan.
+        Order tanpa routing (AFVC kosong) atau tanpa cost center valid hari ini (CRCO begda/endda) TIDAK dihitung WF.
+      </p>
+    </div>
+
+    <!-- E. APAKAH BARIS MSEG TERIKAT KE SALES ORDER? -->
+    <div class="dg-card">
+      <div class="dg-hd">E. Keterikatan Baris MSEG ke Sales Order (KDAUF / SOBKZ='E') &#8212; 30 hari terakhir</div>
+
+      <p class="dg-legend" style="padding:10px 14px 0;">
+        Menjawab satu pertanyaan: <strong>bisakah qty pipeline dipilah PER SO?</strong> Itu hanya mungkin bila baris gerakannya
+        sendiri membawa nomor SO (<span class="dg-code">MSEG-KDAUF</span>) atau ditandai stok khusus sales order
+        (<span class="dg-code">MSEG-SOBKZ = 'E'</span>, produksi make-to-order &mdash; stoknya di MSKA, bukan MARD).
+        Scope &amp; aturan penyaringan Wood Furniture <strong>sama persis dengan section D</strong>; rentangnya <strong>tetap 30 hari terakhir</strong>
+        (tidak ikut filter tanggal di atas). Jendela: <%= zcl_cs_util=>fmt_date( lv_e_from ) %> &ndash; <%= zcl_cs_util=>fmt_date( sy-datum ) %>.
+      </p>
+
+      <% IF lv_go <> '1' AND lv_matnr IS INITIAL. %>
+      <div style="padding:24px; text-align:center; color:#9ca3af;">Klik <strong>TAMPILKAN</strong> untuk menjalankan pengecekan.</div>
+      <% ELSEIF lv_e_tot = 0. %>
+      <div style="padding:24px; text-align:center; color:#9ca3af;">Tidak ada baris Wood Furniture yang menyentuh sloc pipeline pada 30 hari terakhir.</div>
+      <% ELSE. %>
+
+      <div class="dg-vd <%= lv_e_vcls %>" style="margin:12px 14px;">VONIS: <%= lv_e_verdict %></div>
+
+      <div class="dg-kpi">
+        <div><span class="k-lbl">Total baris (WF, pipeline)</span><span class="k-val"><%= lv_e_tot %></span></div>
+        <div><span class="k-lbl">Punya KDAUF</span><span class="k-val"><%= lv_e_kdauf %></span> <span style="font-size:0.75rem; color:#6b7280;">(<%= lv_p_kdauf %>%)</span></div>
+        <div><span class="k-lbl">SOBKZ = 'E'</span><span class="k-val"><%= lv_e_sobkz %></span> <span style="font-size:0.75rem; color:#6b7280;">(<%= lv_p_sobkz %>%)</span></div>
+        <div><span class="k-lbl">KDAUF &amp; SOBKZ='E'</span><span class="k-val"><%= lv_e_both %></span></div>
+        <div><span class="k-lbl">Anonim (dua-duanya kosong)</span><span class="k-val"><%= lv_e_anon %></span> <span style="font-size:0.75rem; color:#6b7280;">(<%= lv_p_anon %>%)</span></div>
+      </div>
+
+      <div class="dg-kpi" style="padding-top:0;">
+        <div style="border-color:#1e3a8a; background:#eff6ff; min-width:340px;">
+          <span class="k-lbl">&#9733; ANGKA PENENTU &#8212; baris TRANSFER (301/311) yang punya KDAUF</span>
+          <span class="k-val"><%= lv_e_trfkd %></span>
+          <span style="font-size:0.8rem; color:#374151;">dari <strong><%= lv_e_trf %></strong> baris transfer (<%= lv_p_trfkd %>%)</span>
+        </div>
+      </div>
+
+      <p class="dg-legend" style="padding:0 14px 12px;">
+        Kenapa baris transfer yang menentukan: <strong>CP1/CP2/CP4 seluruhnya dibangun dari gerakan 301/311.</strong>
+        Baris GR 101 sudah membawa <span class="dg-code">AUFNR</span> (bisa diikat ke SO lewat AFPO), jadi seberapa pun tinggi
+        KDAUF di baris 101, itu <strong>tidak</strong> menyelesaikan masalah pemilahan per-SO. Kalau kolom di atas <strong>0</strong>,
+        Opsi 2 (scoping penuh per SO) gugur secara data &mdash; bukan soal cara menulis query.
+      </p>
+
+      <div style="overflow-x:auto;">
+      <table class="dg-tbl">
+        <thead><tr>
+          <th>Tgl Posting</th><th>Dokumen</th><th>Zeile</th><th>Material</th><th>Bwart</th>
+          <th>Sloc</th><th>&rarr; Sloc</th><th>SHKZG</th><th style="text-align:right;">Qty</th>
+          <th>Order (aufnr)</th><th>KDAUF</th><th>KDPOS</th><th>SOBKZ</th>
+        </tr></thead>
+        <tbody>
+          <% IF lt_e_samp IS INITIAL. %>
+          <tr><td colspan="13" style="text-align:center; color:#9ca3af; padding:16px;">
+            Tidak ada satu pun baris ber-KDAUF pada 30 hari terakhir &#8212; konsisten dengan stok anonim (MARD), bukan sales-order stock (MSKA).
+          </td></tr>
+          <% ELSE.
+             LOOP AT lt_e_samp INTO ls_e_samp.
+               lv_dt = zcl_cs_util=>fmt_date( ls_e_samp-budat ).
+               IF ls_e_samp-shkzg = 'S'. lv_hl = 'dg-in'. ELSE. lv_hl = 'dg-out'. ENDIF.
+          %>
+          <tr class="<%= lv_hl %>">
+            <td><%= lv_dt %></td>
+            <td class="dg-code"><%= ls_e_samp-mblnr %></td>
+            <td><%= ls_e_samp-zeile %></td>
+            <td class="dg-code"><%= ls_e_samp-matnr %></td>
+            <td class="dg-code" style="color:#1e3a8a;"><%= ls_e_samp-bwart %></td>
+            <td class="dg-code"><%= ls_e_samp-lgort %></td>
+            <td class="dg-code"><%= ls_e_samp-umlgo %></td>
+            <td class="dg-code"><%= ls_e_samp-shkzg %></td>
+            <td style="text-align:right;"><span class="num-fmt"><%= ls_e_samp-menge %></span></td>
+            <td><%= ls_e_samp-aufnr %></td>
+            <td class="dg-code dg-hl"><%= ls_e_samp-kdauf %></td>
+            <td class="dg-code"><%= ls_e_samp-kdpos %></td>
+            <td class="dg-code"><%= ls_e_samp-sobkz %></td>
+          </tr>
+          <% ENDLOOP. ENDIF. %>
+        </tbody>
+      </table>
+      </div>
+      <p class="dg-legend" style="padding:8px 14px 12px;">
+        Contoh dibatasi 25 baris pertama yang ber-KDAUF. <strong>Perhatikan kolom Bwart-nya:</strong> kalau yang ber-KDAUF ternyata
+        hanya 101/261 (gerakan terkait order) dan tak satu pun 301/311, artinya transfer antar-SLoc memang tidak membawa identitas SO.
+      </p>
+
+      <% ENDIF. %>
+    </div>
   </div>
 
   <script src="js/js.js?r=6"></script>

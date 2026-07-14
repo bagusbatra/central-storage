@@ -2,7 +2,8 @@
 <%
 *&---------------------------------------------------------------------*
 *& BSP Page — Riwayat (Arsip SO Selesai), Plant 2000 Surabaya
-*& Menampilkan Sales Order yang SELURUH item produksinya sudah GR 100%.
+*& Menampilkan Sales Order yang SELURUH itemnya SELESAI menurut checkpoint 229K
+*& (setiap komponen sudah sampai 229K sebanyak yang dibutuhkan) — bukan lagi GR 100%.
 *& Default rentang: 90 hari terakhir. Sort: tanggal buat terbaru di atas.
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
@@ -33,6 +34,13 @@ TYPES: BEGIN OF ty_afpo_agg,
          psmng TYPE afpo-psmng,
          wemng TYPE afpo-wemng,
        END OF ty_afpo_agg.
+
+" Status "selesai" berbasis CHECKPOINT 229K (bukan lagi AFPO GR%). Seluruh query
+" (RESB + MSEG) ada di zcl_cs_util=>item_cp_status.
+DATA: lt_itm   TYPE zcl_cs_util=>ty_itm_tab,
+      ls_itm   TYPE zcl_cs_util=>ty_itm_line,
+      lt_itmcp TYPE zcl_cs_util=>ty_itmcp_tab,
+      ls_itmcp TYPE zcl_cs_util=>ty_itmcp_line.
 
 DATA: lt_local_hdr  TYPE TABLE OF vbak,
       lt_temp_vbap  TYPE TABLE OF vbap,
@@ -163,13 +171,14 @@ IF lv_name_no_match = abap_false.
       WHERE vbeln = lt_local_hdr-vbeln
         AND werks = lc_plant.
 
-    " 3. AFPO untuk klasifikasi GR. Satu item SO (kdauf/kdpos) bisa punya >1
-    "    order produksi (produksi terpisah/parsial). psmng & wemng DIJUMLAHKAN
-    "    per item via COLLECT, agar item hanya dianggap "selesai" bila TOTAL GR
-    "    >= TOTAL target — bukan dari salah satu order saja. Ini mencegah SO
-    "    bocor ke Riwayat saat masih ada order produksi yang belum tuntas.
+    " 3. AFPO — sumber daftar order per item. Satu item SO (kdauf/kdpos) bisa punya
+    "    >1 order produksi (produksi terpisah/parsial).
+    "    ⚠️ BASIS "SELESAI" SUDAH BERUBAH: bukan lagi TOTAL GR >= TOTAL target
+    "    (psmng/wemng), melainkan CHECKPOINT 229K — item selesai ⇔ SETIAP komponen
+    "    (RESB) punya net qty 229K >= kebutuhannya. Lihat zcl_cs_util=>item_cp_status.
+    "    psmng/wemng masih ikut ter-fetch tapi TIDAK lagi menentukan status.
     IF lt_temp_vbap IS NOT INITIAL.
-      SELECT kdauf kdpos psmng wemng FROM afpo
+      SELECT kdauf kdpos psmng wemng aufnr FROM afpo
         INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
         FOR ALL ENTRIES IN lt_temp_vbap
         WHERE kdauf = lt_temp_vbap-vbeln
@@ -183,6 +192,23 @@ IF lv_name_no_match = abap_false.
         COLLECT ls_afpo_agg INTO lt_afpo_agg.
       ENDLOOP.
       SORT lt_afpo_agg BY kdauf kdpos.
+
+      " --- Status checkpoint 229K per item ---
+      REFRESH lt_itm.
+      LOOP AT lt_temp_vbap INTO ls_vbap_row.
+        CLEAR ls_itm.
+        ls_itm-kdauf = ls_vbap_row-vbeln.
+        ls_itm-kdpos = ls_vbap_row-posnr.
+        APPEND ls_itm TO lt_itm.
+      ENDLOOP.
+      LOOP AT lt_afpo_pre INTO ls_afpo_row.
+        CLEAR ls_itm.
+        ls_itm-kdauf = ls_afpo_row-kdauf.
+        ls_itm-kdpos = ls_afpo_row-kdpos.
+        ls_itm-aufnr = ls_afpo_row-aufnr.
+        APPEND ls_itm TO lt_itm.
+      ENDLOOP.
+      lt_itmcp = zcl_cs_util=>item_cp_status( lt_itm ).
     ENDIF.
 
     " 4. Gabungkan VBAP + AFPO (agregat semua order produksi per item)
@@ -199,16 +225,17 @@ IF lv_name_no_match = abap_false.
       APPEND ls_item_row TO lt_local_item.
     ENDLOOP.
 
-    " 5. Statistik per SO: total item + jumlah item selesai (GR 100%)
+    " 5. Statistik per SO: total item + jumlah item SELESAI (checkpoint 229K).
+    "    Item dianggap selesai HANYA bila lt_itmcp menyatakan gc_st_done.
     LOOP AT lt_local_item INTO ls_item_row.
-      CLEAR ls_so_stat.
+      CLEAR: ls_so_stat, ls_itmcp.
       ls_so_stat-vbeln = ls_item_row-vbeln.
       ls_so_stat-total = 1.
-      ls_so_stat-sum_pct = zcl_cs_util=>item_pct( iv_psmng = ls_item_row-psmng
-                                                  iv_wemng = ls_item_row-wemng ).
-      IF ls_item_row-psmng > 0.
-        lv_stat_pct = ( ls_item_row-wemng / ls_item_row-psmng ) * 100.
-        IF lv_stat_pct >= 100.
+      READ TABLE lt_itmcp INTO ls_itmcp
+        WITH TABLE KEY kdauf = ls_item_row-vbeln kdpos = ls_item_row-posnr.
+      IF sy-subrc = 0.
+        ls_so_stat-sum_pct = ls_itmcp-pct.
+        IF ls_itmcp-code = zcl_cs_util=>gc_st_done.
           ls_so_stat-done = 1.
         ENDIF.
       ENDIF.
@@ -216,7 +243,7 @@ IF lv_name_no_match = abap_false.
     ENDLOOP.
     SORT lt_so_stat BY vbeln.
 
-    " 6. FILTER INTI: default hanya SO yang SEMUA item GR 100% (done = total).
+    " 6. FILTER INTI: default hanya SO yang SEMUA item SELESAI (done = total).
     "    PENGECUALIAN: jika user mencari berdasarkan Nomor SO, SO yang belum
     "    selesai TETAP ditampilkan (nanti diberi keterangan + klik ke Monitoring).
     IF lv_ui_vbeln IS NOT INITIAL.
@@ -267,7 +294,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Riwayat - Central Storage KMI 2 Surabaya</title>
-  <link rel="stylesheet" href="css/style.css?r=11">
+  <link rel="stylesheet" href="css/style.css?r=12">
 </head>
 <body>
 
@@ -318,7 +345,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               <path d="M3 3h18v4H3z"/><path d="M5 7v13h14V7"/><path d="M9 11h6"/>
             </svg>
             <h3>Tidak ada SO selesai</h3>
-            <p>Belum ada Sales Order yang seluruh item produksinya selesai (GR 100%) pada rentang dan filter ini. Coba perluas rentang tanggal atau ubah filter.</p>
+            <p>Belum ada Sales Order yang seluruh itemnya selesai (semua komponen sudah sampai SLoc 229K) pada rentang dan filter ini. Coba perluas rentang tanggal atau ubah filter.</p>
             <% IF lv_has_filter = abap_true. %>
             <a href="riwayat.htm" class="btn-reset">Reset Filter</a>
             <% ENDIF. %>

@@ -30,6 +30,13 @@ TYPES: BEGIN OF ty_afpo_agg,
          wemng TYPE afpo-wemng,
        END OF ty_afpo_agg.
 
+" Status "selesai" berbasis CHECKPOINT 229K (menggantikan AFPO GR%). Query RESB +
+" MSEG ada di zcl_cs_util=>item_cp_status; halaman hanya menyiapkan daftar item.
+DATA: lt_itm   TYPE zcl_cs_util=>ty_itm_tab,
+      ls_itm   TYPE zcl_cs_util=>ty_itm_line,
+      lt_itmcp TYPE zcl_cs_util=>ty_itmcp_tab,
+      ls_itmcp TYPE zcl_cs_util=>ty_itmcp_line.
+
 DATA: lt_local_item TYPE TABLE OF ty_local_item,
       lt_temp_vbap  TYPE TABLE OF vbap,
       lt_afpo_pre   TYPE TABLE OF afpo,
@@ -80,8 +87,11 @@ IF lv_req_vb IS NOT INITIAL.
       AND werks = lc_plant.
 
   " 2. AFPO — agregasi per item SO (jumlahkan seluruh order produksi)
+  "    ⚠️ psmng/wemng TIDAK lagi menentukan status: basis "selesai" kini CHECKPOINT
+  "    229K (zcl_cs_util=>item_cp_status). Keduanya tetap di-fetch karena masih
+  "    dipakai untuk membedakan item "tanpa order produksi" di tampilan.
   IF lt_temp_vbap IS NOT INITIAL.
-    SELECT kdauf kdpos psmng wemng FROM afpo
+    SELECT kdauf kdpos psmng wemng aufnr FROM afpo
       INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
       FOR ALL ENTRIES IN lt_temp_vbap
       WHERE kdauf = lt_temp_vbap-vbeln
@@ -95,6 +105,23 @@ IF lv_req_vb IS NOT INITIAL.
       COLLECT ls_afpo_agg INTO lt_afpo_agg.
     ENDLOOP.
     SORT lt_afpo_agg BY kdauf kdpos.
+
+    " --- Status checkpoint 229K per item ---
+    REFRESH lt_itm.
+    LOOP AT lt_temp_vbap INTO ls_vbap_row.
+      CLEAR ls_itm.
+      ls_itm-kdauf = lv_vbeln.
+      ls_itm-kdpos = ls_vbap_row-posnr.
+      APPEND ls_itm TO lt_itm.
+    ENDLOOP.
+    LOOP AT lt_afpo_pre INTO ls_afpo_row.
+      CLEAR ls_itm.
+      ls_itm-kdauf = ls_afpo_row-kdauf.
+      ls_itm-kdpos = ls_afpo_row-kdpos.
+      ls_itm-aufnr = ls_afpo_row-aufnr.
+      APPEND ls_itm TO lt_itm.
+    ENDLOOP.
+    lt_itmcp = zcl_cs_util=>item_cp_status( lt_itm ).
   ENDIF.
 
   " 3. Gabungkan VBAP + AFPO (agregat) ke struktur lokal
@@ -112,13 +139,19 @@ IF lv_req_vb IS NOT INITIAL.
     APPEND ls_item_row TO lt_local_item.
   ENDLOOP.
 
-  " 4. Hitung ringkasan status item untuk tab Ringkasan (via ZCL_CS_UTIL)
+  " 4. Ringkasan status item untuk tab Ringkasan — BASIS CHECKPOINT 229K.
+  "    Item selesai ⇔ SETIAP komponennya sampai 229K sebanyak yang dibutuhkan.
   lv_tot_items = lines( lt_local_item ).
   LOOP AT lt_local_item INTO ls_item_row.
-    lv_sum_pct = lv_sum_pct + zcl_cs_util=>item_pct( iv_psmng = ls_item_row-psmng
-                                                     iv_wemng = ls_item_row-wemng ).
-    CASE zcl_cs_util=>item_status( iv_psmng = ls_item_row-psmng
-                                   iv_wemng = ls_item_row-wemng ).
+    CLEAR ls_itmcp.
+    READ TABLE lt_itmcp INTO ls_itmcp
+      WITH TABLE KEY kdauf = lv_vbeln kdpos = ls_item_row-posnr.
+    IF sy-subrc <> 0.
+      lv_tot_noprd = lv_tot_noprd + 1.
+      CONTINUE.
+    ENDIF.
+    lv_sum_pct = lv_sum_pct + ls_itmcp-pct.
+    CASE ls_itmcp-code.
       WHEN zcl_cs_util=>gc_st_done.   lv_tot_done  = lv_tot_done  + 1.
       WHEN zcl_cs_util=>gc_st_inprog. lv_tot_inprg = lv_tot_inprg + 1.
       WHEN OTHERS.                    lv_tot_noprd = lv_tot_noprd + 1.
@@ -218,11 +251,15 @@ ENDIF.
 
     <div class="sum-item-list">
       <% LOOP AT lt_local_item INTO ls_item_row.
+           " Progres item = RATA-RATA progres komponennya menuju 229K (bukan GR%).
+           " Sub-teks kini "komponen selesai / total komponen", bukan "wemng / psmng".
            lv_sum_prog = 0. lv_sum_cls = 'prog-black'.
-           IF ls_item_row-psmng > 0.
-             lv_sum_prog = ls_item_row-wemng * 100 / ls_item_row-psmng.
-             IF lv_sum_prog > 100. lv_sum_prog = 100. ENDIF.
-             lv_sum_cls = zcl_cs_util=>prog_bar_class( lv_sum_prog ).  " D1
+           CLEAR ls_itmcp.
+           READ TABLE lt_itmcp INTO ls_itmcp
+             WITH TABLE KEY kdauf = lv_vbeln kdpos = ls_item_row-posnr.
+           IF sy-subrc = 0 AND ls_itmcp-tot_cmp > 0.
+             lv_sum_prog = ls_itmcp-pct.
+             lv_sum_cls  = zcl_cs_util=>prog_bar_class( lv_sum_prog ).  " D1
            ENDIF.
       %>
       <div class="sum-item-row">
@@ -231,8 +268,10 @@ ENDIF.
         <div class="sum-item-right">
           <div class="sum-item-bar"><div class="sum-item-fill <%= lv_sum_cls %>" style="width:<%= zcl_cs_util=>css_pct( lv_sum_prog ) %>%;"></div></div>
           <div class="sum-item-pct">
-            <% IF ls_item_row-psmng > 0. %>
-            <b><%= lv_sum_prog %>%</b>&nbsp;<span class="sum-item-sub"><span class="num-fmt"><%= ls_item_row-wemng %></span>&nbsp;/&nbsp;<span class="num-fmt"><%= ls_item_row-psmng %></span></span>
+            <% IF ls_itmcp-tot_cmp > 0. %>
+            <b><%= lv_sum_prog %>%</b>&nbsp;<span class="sum-item-sub" title="Komponen yang sudah sampai SLoc 229K sebanyak yang dibutuhkan"><%= ls_itmcp-done_cmp %>&nbsp;/&nbsp;<%= ls_itmcp-tot_cmp %> komp.</span>
+            <% ELSEIF ls_item_row-psmng > 0. %>
+            <span class="sum-item-sub" style="font-style:italic;">Order tanpa komponen (RESB kosong)</span>
             <% ELSE. %>
             <span class="sum-item-sub" style="font-style:italic;">No order prod.</span>
             <% ENDIF. %>

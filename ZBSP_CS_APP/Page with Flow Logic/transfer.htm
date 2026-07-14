@@ -8,23 +8,45 @@
 *& Model REKONSILIASI per material (lihat plan-transfer-1000-2000.md):
 *&   Butuh (sisa kebutuhan produksi 2000)  = Σ(RESB.bdmng − RESB.enmng), open
 *&   Perlu Kirim = max(0, Butuh − Stok 2KCS)   ← inti "yang AKAN dikirim"
-*&   Sudah Dikirim (aktual) = Σ MSEG(mvt 301, 1D00→2KCS) net reversal (SHKZG)
+*&   Diterima 2KCS (aktual) = CP1 (lihat di bawah)
 *&
-*& ASUMSI yang WAJIB diverifikasi (Fase 0) — sesuaikan bila beda di sistem:
-*&   - Movement type transfer  = '301' (lc_mvt_out). Cek MB51.
-*&   - "Belum dikirim" bersumber dari RESB kebutuhan Plant 2000 (Model B).
-*&     Bila ADA reservasi transfer langsung 1D00→2KCS (Model A), ganti filter
-*&     RESB jadi werks=1000/lgort=1D00/bwart IN (301,311).
-*&   - Netting reversal MSEG memakai SHKZG (H keluar, S masuk).
 *&---------------------------------------------------------------------*
-CONSTANTS: lc_src_plant TYPE werks_d VALUE '1000',   " plant sumber
-           lc_src_sloc  TYPE lgort_d VALUE '1D00',   " sloc sumber
-           lc_dst_plant TYPE werks_d VALUE '2000',   " plant tujuan (Central Storage)
-           lc_dst_sloc  TYPE lgort_d VALUE '2KCS',   " sloc tujuan
-           lc_mvt_out   TYPE bwart   VALUE '301',    " gerakan transfer (VERIFIKASI)
-           lc_horizon   TYPE i       VALUE 90,       " horizon histori "Sudah Dikirim" (hari)
-           lc_cache_ttl TYPE i       VALUE 600,      " TTL snapshot cache INDX (detik)
+*& REVISI FASE-1 — diselaraskan ke CHECKPOINT 1 (asumsi Fase 0 SUDAH TERKUNCI)
+*&---------------------------------------------------------------------*
+*& Kolom "Sudah Dikirim" DULU: Σ MSEG(bwart 301 SAJA, baris PENGIRIM 1D00→2KCS),
+*& dibatasi 90 hari terakhir. Tiga masalahnya, semua terbukti dari diag_movement:
+*&   1. bwart 311 TIDAK terhitung → under-count.
+*&   2. Diukur dari sisi pengirim & hanya rute 1D00 → beda angka dengan titik-1
+*&      dot-bar (yang memakai CP1) untuk kiriman dari SLoc Plant 1000 lain.
+*&   3. Horizon 90 hari → kiriman lama "hilang", seolah belum pernah dikirim.
+*&
+*& SEKARANG = CP1 PERSIS (satu sumber kebenaran, sama dgn dot-bar & KPI):
+*&   net masuk lgort=2KCS (werks 2000), bwart 301 ATAU 311,
+*&   'S' menambah — 'H' HANYA mengurangi bila umwrk=1000 (retur balik ke plant asal).
+*&   'H' ke SLoc hilir (2261 dst) TIDAK dikurangi: itu kemajuan, bukan pembatalan.
+*&   TANPA horizon tanggal. bwart 321 tak pernah ikut (range hanya 301/311).
+*&   Karena itu kolomnya kini bernama "Diterima 2KCS", bukan "Sudah Dikirim":
+*&   sumbernya boleh SLoc Plant 1000 mana pun, tidak harus 1D00.
+*&
+*& SCOPE: "Butuh Dikirim" (RESB) kini DISARING whitelist Wood Furniture via
+*& zcl_cs_util=>wf_order_filter( ) — komponen order Chair/Metal/DRW tidak lagi
+*& muncul di daftar kirim Central Storage.
+*&
+*& Movement type & SLoc TIDAK lagi ditulis sebagai literal di sini — semuanya
+*& diambil dari ZCL_CS_UTIL supaya tak ada sumber kebenaran kedua.
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_cache_ttl TYPE i       VALUE 600,      " TTL snapshot cache INDX (detik)
            lc_page_size TYPE i       VALUE 50.       " jumlah baris per halaman (pagination)
+
+" Alias ke ZCL_CS_UTIL — dipakai di WHERE/perbandingan agar terbaca ringkas.
+DATA: lc_src_plant TYPE werks_d,   " 1000 — plant sumber
+      lc_src_sloc  TYPE lgort_d,   " 1D00 — sloc sumber (rute utama, utk stok & label)
+      lc_dst_plant TYPE werks_d,   " 2000 — Central Storage
+      lc_dst_sloc  TYPE lgort_d.   " 2KCS — CP1
+lc_src_plant = zcl_cs_util=>gc_plant_1000.
+lc_src_sloc  = zcl_cs_util=>gc_sloc_1d00.
+lc_dst_plant = zcl_cs_util=>gc_plant_2000.
+lc_dst_sloc  = zcl_cs_util=>gc_sloc_2kcs.
 
 TYPES: BEGIN OF ty_need,
          matnr    TYPE resb-matnr,
@@ -63,6 +85,7 @@ TYPES: BEGIN OF ty_resb,
        BEGIN OF ty_mv,
          mblnr TYPE mseg-mblnr, matnr TYPE mseg-matnr,
          menge TYPE mseg-menge, shkzg TYPE mseg-shkzg,
+         umwrk TYPE mseg-umwrk,   " plant tujuan — memisahkan retur ke 1000 dari maju ke hilir
          budat TYPE mkpf-budat,
        END OF ty_mv,
        BEGIN OF ty_soauf, aufnr TYPE afpo-aufnr, END OF ty_soauf.
@@ -79,6 +102,12 @@ DATA: lt_need   TYPE SORTED TABLE OF ty_need WITH UNIQUE KEY matnr,
       lr_aufnr  TYPE RANGE OF afpo-aufnr,
       ls_r_auf  LIKE LINE OF lr_aufnr.
 
+" Scope Wood Furniture + range movement CP1 — semuanya dari ZCL_CS_UTIL.
+DATA: lt_wfin  TYPE zcl_cs_util=>ty_aufnr_tab,   " kandidat order dari RESB
+      ls_wfin  TYPE zcl_cs_util=>ty_aufnr_line,
+      lt_wfok  TYPE zcl_cs_util=>ty_aufnr_tab,   " yang LOLOS whitelist WF
+      lr_bw    TYPE zcl_cs_util=>ty_bwart_range. " 301/311
+
 DATA: lv_user     TYPE string,
       lv_f_matnr  TYPE string,          " filter material (input)
       lv_f_so     TYPE string,          " filter nomor SO (input)
@@ -87,7 +116,6 @@ DATA: lv_user     TYPE string,
       lv_matnr_up TYPE string,
       lv_pat      TYPE string,
       lv_open     TYPE resb-bdmng,
-      lv_hz_from  TYPE d,
       lv_cnt_need TYPE i,
       lv_cnt_short TYPE i,
       lv_skip     TYPE abap_bool,
@@ -114,8 +142,7 @@ DATA: lv_user     TYPE string,
 
 FIELD-SYMBOLS <n> TYPE ty_need.
 
-lv_user    = sy-uname.
-lv_hz_from = sy-datum - lc_horizon.
+lv_user = sy-uname.
 
 " === Baca filter (GET, idempotent — konsisten pola B4) ===
 lv_f_matnr  = request->get_form_field( 'matnr' ).
@@ -153,8 +180,11 @@ IF lv_f_so IS INITIAL.
 ENDIF.
 GET TIME STAMP FIELD lv_now_ts.
 IF lv_cacheable = abap_true.
-  " ID diberi versi (V1). Bila struktur ty_need diubah, naikkan ke V2 dst.
-  IMPORT tab = lt_need ts = lv_cache_ts FROM DATABASE indx(cs) ID 'TRANSFER_V2'.
+  " ID diberi versi. Naikkan versinya bila struktur ty_need ATAU MAKNA angkanya
+  " berubah — snapshot lama harus batal, bukan cuma kedaluwarsa TTL.
+  " V3 (Fase-1): "sent" kini = CP1 (diterima 2KCS, 301/311, tanpa horizon) dan
+  " daftar sudah disaring whitelist WF → angka V2 tidak boleh dipakai lagi.
+  IMPORT tab = lt_need ts = lv_cache_ts FROM DATABASE indx(cs) ID 'TRANSFER_V3'.
   IF sy-subrc = 0.
     TRY.
         lv_cache_age = cl_abap_tstmp=>subtract(
@@ -182,10 +212,31 @@ IF lv_use_cache = abap_false AND lv_skip = abap_false.
       AND kzear = ' '
       AND aufnr IN lr_aufnr.
 
+  " === 1b. SCOPE WOOD FURNITURE ===
+  "     Daftar kirim Central Storage hanya untuk komponen order Wood Furniture.
+  "     Rantai AFKO→AFVC→CRCO→whitelist dipusatkan di ZCL_CS_UTIL (batched).
+  "     Order tanpa routing / tanpa cost center valid → TIDAK lolos (default aman).
+  REFRESH lt_wfin.
+  LOOP AT lt_resb INTO ls_resb.
+    IF ls_resb-aufnr IS INITIAL. CONTINUE. ENDIF.
+    ls_wfin-aufnr = ls_resb-aufnr.
+    INSERT ls_wfin INTO TABLE lt_wfin.   " sorted-unique → auto dedup
+  ENDLOOP.
+  IF lt_wfin IS NOT INITIAL.
+    lt_wfok = zcl_cs_util=>wf_order_filter( lt_wfin ).
+  ENDIF.
+
   " Agregasi per material: Σ sisa kebutuhan; simpan aufnr & bdter paling awal
   LOOP AT lt_resb INTO ls_resb.
     lv_open = ls_resb-bdmng - ls_resb-enmng.
     IF lv_open <= 0. CONTINUE. ENDIF.
+
+    " Di luar whitelist WF → bukan urusan Central Storage.
+    IF ls_resb-aufnr IS INITIAL. CONTINUE. ENDIF.
+    READ TABLE lt_wfok TRANSPORTING NO FIELDS
+      WITH TABLE KEY aufnr = ls_resb-aufnr.
+    IF sy-subrc <> 0. CONTINUE. ENDIF.
+
     READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_resb-matnr.
     IF sy-subrc <> 0.
       CLEAR ls_need.
@@ -264,36 +315,44 @@ IF lv_use_cache = abap_false AND lv_skip = abap_false.
       ENDIF.
     ENDLOOP.
 
-    " === 5. Sudah Dikirim aktual: MSEG ⨝ MKPF (mvt 301, 1D00→2KCS) ===
-    "     POIN 1: tanggal disaring di DB (budat >= horizon) via INNER JOIN,
-    "     bukan tarik seluruh histori MSEG lalu saring di ABAP.
-    "     H = keluar (+), S = masuk/pembalikan (−) → reversal 302 ternetralkan.
-    "     Filter TUJUAN via UMWRK/UMLGO (receiving plant/sloc). DIVERIFIKASI &
-    "     DIPERBAIKI 2026-07-11 (SE11: MSEG-UMWRK/UMLGO = CHAR4; SE16 doc
-    "     4908670272 → baris keluar SLoc=1D00/DC=H membawa UMWRK=1000/UMLGO=1E03,
-    "     transfer INTERNAL Plant 1000, BUKAN 2KCS). Tanpa filter ini "Sudah
-    "     Dikirim" OVER-count. Sinkron dgn monitoring_bom.htm K5 — ubah keduanya bersama.
-    SELECT m~mblnr m~matnr m~menge m~shkzg k~budat
+    " === 5. "Diterima 2KCS" aktual = CHECKPOINT 1 (MSEG ⨝ MKPF) ===
+    "     Dibaca dari sisi PENERIMA (lgort=2KCS di Plant 2000), bukan sisi pengirim.
+    "     Ini definisi CP1 yang sama persis dengan dot-bar & KPI — satu angka, satu
+    "     kebenaran. Konsekuensi yang DISENGAJA: kiriman dari SLoc Plant 1000 SELAIN
+    "     1D00 ikut terhitung (mapping final: "dari Plant 1000 mana pun").
+    "
+    "     Arah (kunci — jangan disederhanakan jadi net S−H buta):
+    "       'S'                      → MASUK 2KCS            → tambah
+    "       'H' dgn umwrk = 1000     → RETUR balik ke plant asal → kurangi
+    "       'H' lainnya (ke 2261 dst)→ KEMAJUAN ke hilir, BUKAN pembatalan → ABAIKAN
+    "     Tanpa aturan ketiga itu, material yang maju ke Machining akan tampak
+    "     "belum pernah dikirim" — persis jenis bug yang dulu bikin angka meleset.
+    "
+    "     bwart 301/311 dari transfer_bwarts( ) → 321 (QI release) tak pernah ikut.
+    "     TANPA horizon tanggal (dulu 90 hari): kiriman lama tetap dihitung.
+    lr_bw = zcl_cs_util=>transfer_bwarts( ).
+    SELECT m~mblnr m~matnr m~menge m~shkzg m~umwrk k~budat
       FROM mseg AS m INNER JOIN mkpf AS k
         ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
       INTO TABLE lt_mv
       FOR ALL ENTRIES IN lt_need
       WHERE m~matnr = lt_need-matnr
-        AND m~bwart = lc_mvt_out
-        AND m~werks = lc_src_plant
-        AND m~lgort = lc_src_sloc
-        AND m~umwrk = lc_dst_plant
-        AND m~umlgo = lc_dst_sloc
-        AND k~budat >= lv_hz_from.
+        AND m~werks = lc_dst_plant
+        AND m~lgort = lc_dst_sloc
+        AND m~bwart IN lr_bw.
     LOOP AT lt_mv INTO ls_mv.
       READ TABLE lt_need ASSIGNING <n> WITH KEY matnr = ls_mv-matnr.
       IF sy-subrc <> 0. CONTINUE. ENDIF.
-      IF ls_mv-shkzg = 'H'. <n>-sent = <n>-sent + ls_mv-menge.
-      ELSE.                 <n>-sent = <n>-sent - ls_mv-menge.
-      ENDIF.
-      IF ls_mv-budat >= <n>-last_dt.
-        <n>-last_dt  = ls_mv-budat.
-        <n>-last_doc = ls_mv-mblnr.
+
+      IF ls_mv-shkzg = zcl_cs_util=>gc_shkzg_s.
+        <n>-sent = <n>-sent + ls_mv-menge.
+        " Tanggal & dokumen penerimaan TERAKHIR — hanya dari baris MASUK.
+        IF ls_mv-budat >= <n>-last_dt.
+          <n>-last_dt  = ls_mv-budat.
+          <n>-last_doc = ls_mv-mblnr.
+        ENDIF.
+      ELSEIF ls_mv-umwrk = lc_src_plant.
+        <n>-sent = <n>-sent - ls_mv-menge.   " retur balik ke Plant 1000
       ENDIF.
     ENDLOOP.
 
@@ -313,7 +372,7 @@ IF lv_use_cache = abap_false AND lv_skip = abap_false.
 
   " Simpan snapshot penuh ke cache (hanya path default tanpa filter SO)
   IF lv_cacheable = abap_true.
-    EXPORT tab = lt_need ts = lv_now_ts TO DATABASE indx(cs) ID 'TRANSFER_V2'.
+    EXPORT tab = lt_need ts = lv_now_ts TO DATABASE indx(cs) ID 'TRANSFER_V3'.
   ENDIF.
 ENDIF.
 
@@ -442,7 +501,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <span style="font-size:0.85rem; color:#374151;">Perlu Dikirim: <strong style="color:#f97316;"><%= lv_cnt_need %></strong> material</span>
       <span style="font-size:0.85rem; color:#374151;">Kurang stok 1D00: <strong style="color:#ef4444;"><%= lv_cnt_short %></strong></span>
       <span style="font-size:0.85rem; color:#374151;">Total material: <strong><%= lv_total_disp %></strong></span>
-      <span style="font-size:0.8rem; color:#6b7280;">Rute: 1000/1D00 &rarr; 2000/2KCS &bull; Histori kirim <%= lc_horizon %> hari</span>
+      <span style="font-size:0.8rem; color:#6b7280;">Rute: 1000/1D00 &rarr; 2000/2KCS &bull; Scope: Wood Furniture &bull; Diterima 2KCS = seluruh histori (mvt 301/311)</span>
     </div>
 
     <div style="background:#fff; border:1px solid #e5e7eb; border-radius:12px; overflow:hidden;">
@@ -452,6 +511,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         Tidak ada order produksi untuk SO tersebut.
         <% ELSE. %>
         Tidak ada material yang perlu dikirim dari 1D00 ke 2KCS untuk kriteria ini.
+        <br><span style="font-size:0.8rem;">Catatan: daftar ini hanya memuat komponen order <strong>Wood Furniture</strong> (whitelist cost center). Komponen unit lain (Chair, Metal, DRW) memang tidak ditampilkan di sini.</span>
         <% ENDIF. %>
       </div>
       <% ELSE. %>
@@ -466,7 +526,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <th style="padding:10px 12px; text-align:right;">Perlu Kirim</th>
             <th style="padding:10px 12px;">Sat</th>
             <th style="padding:10px 12px; text-align:right;">Stok 1D00</th>
-            <th style="padding:10px 12px; text-align:right;">Sudah Dikirim</th>
+            <th style="padding:10px 12px; text-align:right;" title="Checkpoint 1: qty NET yang sudah DITERIMA di SLoc 2KCS (mvt 301/311, seluruh histori, dikurangi retur balik ke Plant 1000). Sumbernya boleh SLoc Plant 1000 mana pun — tidak harus 1D00. Angka ini sama dengan titik-1 dot-bar di Monitoring.">Diterima 2KCS</th>
             <th style="padding:10px 12px;">Tgl Butuh</th>
             <th style="padding:10px 12px;">SO</th>
             <th style="padding:10px 12px;">Status</th>

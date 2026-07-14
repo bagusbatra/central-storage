@@ -40,6 +40,17 @@ TYPES: BEGIN OF ty_afpo_agg,
          wemng TYPE afpo-wemng,
        END OF ty_afpo_agg.
 
+" === STATUS "SELESAI" BERBASIS CHECKPOINT 229K (menggantikan AFPO GR%) ===
+" Item SELESAI ⇔ SETIAP komponennya (RESB) punya net qty 229K >= kebutuhannya.
+" Seluruh query (RESB + MSEG) ada di zcl_cs_util=>item_cp_status — halaman hanya
+" menyiapkan daftar (kdauf, kdpos, aufnr) lalu membaca hasilnya.
+" psmng/wemng di ty_local_item SENGAJA dibiarkan: sudah tidak dipakai untuk status,
+" tetapi masih ikut ter-fetch — jangan dipakai lagi untuk klasifikasi.
+DATA: lt_itm   TYPE zcl_cs_util=>ty_itm_tab,
+      ls_itm   TYPE zcl_cs_util=>ty_itm_line,
+      lt_itmcp TYPE zcl_cs_util=>ty_itmcp_tab,
+      ls_itmcp TYPE zcl_cs_util=>ty_itmcp_line.
+
 DATA: lt_local_hdr   TYPE TABLE OF vbak,
       lt_local_item  TYPE TABLE OF ty_local_item,
       lt_temp_vbap   TYPE TABLE OF vbap,
@@ -194,7 +205,9 @@ lv_is_srch = abap_true.
       "    Kunci agregat unik → READ BINARY SEARCH deterministik & konsisten
       "    dengan Ringkasan detail dan Riwayat.
       IF lt_temp_vbap IS NOT INITIAL.
-        SELECT kdauf kdpos psmng wemng FROM afpo
+        " AUFNR ditambahkan ke field-list: dibutuhkan item_cp_status untuk menelusuri
+        " order → komponen (RESB). WHERE/logic agregasi lama tidak berubah.
+        SELECT kdauf kdpos psmng wemng aufnr FROM afpo
           INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
           FOR ALL ENTRIES IN lt_temp_vbap
           WHERE kdauf = lt_temp_vbap-vbeln
@@ -208,6 +221,25 @@ lv_is_srch = abap_true.
           COLLECT ls_afpo_agg INTO lt_afpo_agg.
         ENDLOOP.
         SORT lt_afpo_agg BY kdauf kdpos.
+
+        " --- Status checkpoint 229K per item (basis "selesai" YANG BERLAKU) ---
+        " Semua item VBAP dimasukkan (walau tanpa order → noprod), lalu order-nya
+        " ditambahkan dari AFPO.
+        REFRESH lt_itm.
+        LOOP AT lt_temp_vbap INTO ls_vbap_row.
+          CLEAR ls_itm.
+          ls_itm-kdauf = ls_vbap_row-vbeln.
+          ls_itm-kdpos = ls_vbap_row-posnr.
+          APPEND ls_itm TO lt_itm.
+        ENDLOOP.
+        LOOP AT lt_afpo_pre INTO ls_afpo_row.
+          CLEAR ls_itm.
+          ls_itm-kdauf = ls_afpo_row-kdauf.
+          ls_itm-kdpos = ls_afpo_row-kdpos.
+          ls_itm-aufnr = ls_afpo_row-aufnr.
+          APPEND ls_itm TO lt_itm.
+        ENDLOOP.
+        lt_itmcp = zcl_cs_util=>item_cp_status( lt_itm ).
       ENDIF.
 
       " 5. Gabungkan VBAP + AFPO ke struktur lokal
@@ -235,15 +267,22 @@ lv_is_srch = abap_true.
       SORT lt_local_item BY vbeln.
 
       " 6. Hitung ringkasan status per SO untuk sidebar pills
+      "    BASIS BARU: checkpoint 229K (lt_itmcp), BUKAN lagi AFPO GR%.
+      "    Item yang tak ada di lt_itmcp (tanpa order/komponen) → noprod.
       LOOP AT lt_local_item INTO ls_item_row.
-        CLEAR ls_so_stat.
+        CLEAR: ls_so_stat, ls_itmcp.
         ls_so_stat-vbeln = ls_item_row-vbeln.
         ls_so_stat-total = 1.
+        READ TABLE lt_itmcp INTO ls_itmcp
+          WITH TABLE KEY kdauf = ls_item_row-vbeln kdpos = ls_item_row-posnr.
+        IF sy-subrc <> 0.
+          ls_so_stat-noprod = 1.
+          COLLECT ls_so_stat INTO lt_so_stat.
+          CONTINUE.
+        ENDIF.
         " Persentase progres tiap item (utk rata-rata SO), bukan rasio done/total
-        ls_so_stat-sum_pct = zcl_cs_util=>item_pct( iv_psmng = ls_item_row-psmng
-                                                     iv_wemng = ls_item_row-wemng ).
-        CASE zcl_cs_util=>item_status( iv_psmng = ls_item_row-psmng
-                                       iv_wemng = ls_item_row-wemng ).
+        ls_so_stat-sum_pct = ls_itmcp-pct.
+        CASE ls_itmcp-code.
           WHEN zcl_cs_util=>gc_st_done.   ls_so_stat-done   = 1.
           WHEN zcl_cs_util=>gc_st_inprog. ls_so_stat-inprog = 1.
           WHEN OTHERS.                    ls_so_stat-noprod = 1.
@@ -269,7 +308,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Central Storage Production Dashboard - KMI 2 Surabaya</title>
-  <link rel="stylesheet" href="css/style.css?r=11">
+  <link rel="stylesheet" href="css/style.css?r=12">
 </head>
 <body>
 

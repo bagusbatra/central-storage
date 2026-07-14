@@ -341,6 +341,22 @@ canvas { display: block; max-width: 100%; }
 .rt-out   { background: #f3f4f6; color: #6b7280; }  /* di luar rute Wood Furniture */
 .rt-notin { background: #f3f4f6; color: #6b7280; }  /* belum masuk Central Storage (1000/1D00) */
 
+/* ===== DOT-BAR CHECKPOINT (monitoring_bom — 4 titik pipeline final) =====
+   4 titik = CP1 2KCS → CP2 2261 → CP3 GR 101 @2262 → CP4 229K.
+   Kelas warna DIPUTUSKAN di ZCL_CS_UTIL=>dot_stages( ), bukan di sini — HTML hanya
+   mencetak nama kelas yang dikembalikan method itu. Warna reuse token .prog-*:
+   green #22c55e (tahap terpenuhi), yellow #eab308 (sebagian), red (belum masuk
+   pipeline & stok masih menunggu di 1D00), grey (belum tersentuh).
+   Tampil DI BAWAH .sloc-badge/.rt-tag — tambahan, bukan pengganti. */
+.dot-bar { display: flex; align-items: center; gap: 3px; margin-top: 4px; justify-content: center; }
+.dot-bar .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.dot-bar .dot-link { width: 7px; height: 2px; background: #e5e7eb; flex: none; }  /* garis penghubung antar titik */
+.dot-grey   { background: #d1d5db; }   /* belum tersentuh */
+.dot-red    { background: #ef4444; }   /* belum masuk 2KCS, stok masih di 1D00 */
+.dot-yellow { background: #eab308; }   /* sebagian qty sampai tahap ini */
+.dot-green  { background: #22c55e; }   /* qty yang dibutuhkan sudah terpenuhi */
+.dot-cap { font-size: 0.62rem; color: #9ca3af; margin-left: 4px; font-weight: 700; }
+
 /* ===== SKELETON LOADING (monitoring detail panel) ===== */
 .skel-line {
   border-radius: 4px;
