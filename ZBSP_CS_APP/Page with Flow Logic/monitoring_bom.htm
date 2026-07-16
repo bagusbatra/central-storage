@@ -1,30 +1,150 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Fragment — Tab Item & BOM SO (AJAX endpoint, BERAT)
-*& URL: monitoring_bom.htm?vbeln=XXXXXXXXXX
-*& Returns HTML fragment isi tab "Item & BOM" saja (tanpa wrapper pane).
+*& BSP Fragment — Tab "Item & BOM" DAN Tab "Butuh Dikirim" SO (AJAX, BERAT)
+*& URL: monitoring_bom.htm?vbeln=XXXXXXXXXX         (Item & BOM: Produksi+Finish)
+*&      monitoring_bom.htm?vbeln=XXXXXXXXXX&mode=kirim (Butuh Dikirim: Pembahanan)
+*& Returns HTML fragment isi satu tab saja (tanpa wrapper pane) — SATU JALUR
+*& KODE dipakai untuk KEDUA tab (D6); yang membedakan hanya scope DISPO yang
+*& dipilih dari parameter `mode` (lihat D6 di bawah).
 *&
-*& Dimuat LAZY oleh js.js loadBOM() saat pengguna pertama kali mengklik tab
-*& Item & BOM, sehingga rantai berat tidak menghambat tampil awal detail.
+*& Dimuat LAZY oleh js.js loadBOM() saat pengguna pertama kali mengklik salah
+*& satu tab, sehingga rantai berat tidak menghambat tampil awal detail.
 *&
-*& Progres per item memakai AFPO yang DIAGREGASI per item (1 item bisa punya
-*& >1 order produksi). Tag status order memakai order WAKIL = order paling
-*& belum selesai (rasio GR/target terendah).
+*& Progres per item memakai order UTAMA (D5, order yg materialnya = material
+*& item SO). Tag status order memakai order utama itu juga.
 *&
-*& Daftar Komponen (gaya COOIS): untuk item yang PUNYA order produksi, komponen
-*& dibaca dari RESB (komponen/reservasi order) + T001L (nama Sloc), dengan detail
-*& expand per komponen (status sistem, kuantitas, basic start/finish, actual
-*& finish dari AFKO). Untuk item TANPA order → fallback BOM master (MAST/STPO)
-*& dengan tooltip stok/PO (MARD/EKPO/EKET). Lihat erd_bom.md & update-monitoring.md.
+*& Daftar Komponen (gaya COOIS): untuk item yang PUNYA order (di scope tahap
+*& tab yang aktif), komponen dibaca dari RESB (komponen/reservasi order),
+*& dengan detail expand per komponen (status sistem, kuantitas, basic
+*& start/finish, actual finish dari AFKO). Untuk item TANPA order di scope
+*& tab manapun → fallback BOM master (MAST/STPO) dengan tooltip stok/PO
+*& (MARD/EKPO/EKET). Lihat erd_bom.md & update-monitoring.md.
 *&
-*& KOLOM "SLOC TERKINI" (menggantikan progres GR/target komponen):
-*& menampilkan sloc tempat STOK material komponen berada kini (MARD labst>0) di
-*& Plant 2000, plus 1000/1D00 bila belum masuk. Rute internal Plant 2000 dinamis
-*& per material (banyak sloc; mvt 311/261/101) → TIDAK dilacak sebagai tahap/%.
-*& Nama sloc dari T001L. Material yang sama hanya berpindah sloc (bukan jadi assembly baru).
+*&---------------------------------------------------------------------*
+*& REVISI (D1–D4) — Tab Item & BOM diurutkan per tahapan produksi
+*&---------------------------------------------------------------------*
+*& D1. Daftar Komponen (RESB) kini diurutkan mengikuti ALUR PRODUKSI, bukan lagi
+*&     urutan SELECT mentah: Pembahanan (MRP WM1/WM2/PN1/PN2) → Produksi (MRP
+*&     GA1/GA2) → Finish (MRP EB2). (Catatan: sempat diganti jadi filter Plant
+*&     di D8, TAPI dibalikkan lagi ke whitelist MRP tertutup ini di D10 — lihat
+*&     blok D10 di bawah untuk alasannya.) Tiap baris AFPO diberi stage_rank
+*&     (1/2/3), lalu lt_afpo_pre di-SORT BY kdauf kdpos stage_rank aufnr —
+*&     inilah yang membuat komponen tampil runut per tahap
+*&     di dalam tiap item.
+*&     (Catatan: sejak D6, Pembahanan & Produksi/Finish sudah TERPISAH ke 2 tab
+*&     berbeda — stage_rank tetap dipakai untuk warna badge Tahap di masing²
+*&     tab, walau kini per tab hanya berisi 1-2 tahap, bukan 3 sekaligus.)
+*&
+*& D2. Kolom "Sloc - Nama Sloc" (lokasi RESB terencana) DIHAPUS dari tabel
+*&     komponen — dianggap membingungkan berdampingan dgn Sloc Terkini.
+*&
+*& D3. Kolom "Sloc Terkini" DIHAPUS (revisi lanjutan: diganti kolom "Progres").
+*&     Badge status rute (mis. "Sedang di Machining") dan dot-bar checkpoint
+*&     4-titik (2KCS/2261/2262/229K) sudah DIHAPUS pada revisi sebelumnya;
+*&     kolom posisi fisik (MARD real-time) itu sendiri kini DIHAPUS JUGA dan
+*&     digantikan progress bar per ORDER (target AFPO-PSMNG vs delivered
+*&     AFPO-WEMNG, sama seperti bar di baris item, memakai
+*&     zcl_cs_util=>prog_bar_class/prog_txt_class/css_pct). Konsekuensi: query
+*&     MARD/T001L untuk lokasi stok terkini (dulu "3e") ikut DIHAPUS — tak ada
+*&     lagi tampilan posisi SLoc di tab ini. Seluruh mesin qty checkpoint
+*&     (zcl_cs_util=>cp_qty, dot_stages, wf_route_status) TIDAK LAGI dipanggil
+*&     dari fragment ini — query MSEG batched yang sebelumnya ada di sini
+*&     (bagian "3g CHECKPOINT PIPELINE") DIHAPUS SELURUHNYA. Method-method itu
+*&     TETAP ADA di ZCL_CS_UTIL (dipakai halaman lain: index/monitoring/riwayat/
+*&     monitoring_detail) — hanya pemanggilannya di fragment BOM ini yang dicabut.
+*&     Ini juga meringankan endpoint yang sejak awal ditandai "BERAT".
+*&
+*& D4. Ditambahkan kolom "Target Qty" (AFPO-PSMNG) dan "Delivered Qty"
+*&     (AFPO-WEMNG) per ORDER PRODUKSI (bukan per item) — selaras kolom
+*&     "Target Qty" / "Del. qty" pada Order Info System (COOIS) yang jadi
+*&     acuan pengguna. Nilainya sama untuk semua komponen dari order yang sama.
+*&
+*& D5. Target/Hasil GR/Progres pada BARIS HEADER ITEM (tabel utama, bukan tabel
+*&     komponen D4) SEBELUMNYA dijumlahkan lintas SEMUA order produksi item ini
+*&     (assembly + seluruh sub-assembly/potong/molding di 3 tahap WF sekaligus).
+*&     Ini SALAH secara konsep: PSMNG tiap order levelnya beda (order assembly
+*&     target 48 pcs, order pemotongan komponennya bisa target ratusan/ribuan
+*&     pcs part kecil) — menjumlahkannya menghasilkan angka "Target" yang jauh
+*&     lebih besar dari "Qty SO" dan tidak berarti apa-apa (mis. Target 13.328
+*&     vs Qty SO 48).
+*&
+*&     DIPERBAIKI: Target/Hasil GR/Progres kini HANYA dari ORDER UTAMA — order
+*&     produksi yang MATERIAL OUTPUT-nya (AFPO-MATNR) SAMA DENGAN material item
+*&     SO ini (VBAP-MATNR), yaitu order assembly akhir penghasil barang jadi.
+*&     Query order utama (lt_main_pre) SENGAJA TIDAK memfilter scope apa pun
+*&     (bukan DISPO, bukan pula PLANT) — order utama bisa ada di plant mana
+*&     saja & MRP controller apa saja (mis. order type ZPC1); kalau ikut
+*&     difilter, order utamanya malah hilang dari perhitungan. Konsekuensinya
+*&     Target sekarang SEBANDING dengan Qty SO (order produksi 48 pcs vs SO
+*&     48 pcs — bukan lagi dijumlah dengan
+*&     ratusan pcs komponen di bawahnya).
+*&
+*&     Order wakil (ls_item_row-aufnr, dipakai badge status & tanggal target)
+*&     ikut dipindah ke ORDER UTAMA (dulu: order dengan rasio GR/target
+*&     terendah di antara SEMUA order termasuk komponen — bisa saja terpilih
+*&     order pemotongan kecil yang tak relevan bagi user). Supaya status &
+*&     tanggal itu tetap terisi, driver query AFKO/AUFK/JEST (step 3/3b)
+*&     digabung: order komponen (lt_afpo_pre, basis Daftar Komponen D1) ∪ order
+*&     utama (lt_main_pre) — lihat lt_aufnr_drv.
+*&
+*&     Daftar Komponen (RESB, D1) TIDAK terpengaruh — tetap bersumber dari
+*&     lt_afpo_pre (order-order ber-DISPO WF), order utama tidak ikut masuk
+*&     daftar komponen supaya scope Pembahanan→Produksi→Finish tetap seperti
+*&     semula.
+*&
+*& D6. Tab "Butuh Dikirim" (mode=kirim) DIROMBAK TOTAL. Sebelumnya tab ini
+*&     melakukan rekonsiliasi stok terpisah (Perlu Kirim = kebutuhan RESB open
+*&     dikurangi stok MARD di 2KCS, dibandingkan stok 1D00 & histori MSEG —
+*&     dulu K1-K7, ~130 baris logic sendiri, TIDAK memakai AFPO-PSMNG/WEMNG).
+*&
+*&     SEKARANG: tahap PEMBAHANAN (WM1/WM2/PN1/PN2, Plant 1000) DIPINDAH ke tab
+*&     ini dari tab Item & BOM, dengan LAYOUT & MEKANISME DATA YANG SAMA PERSIS
+*&     (item header Qty SO/Target/Hasil GR/Progres + Daftar Komponen RESB
+*&     Tahap/Order/Material/Target Qty/Delivered Qty/Progres, basis AFPO-PSMNG/
+*&     WEMNG per order — D4). Tab Item & BOM kini HANYA Produksi+Finish
+*&     (GA1/GA2/EB2).
+*&
+*&     Satu-satunya perbedaan antar kedua tab adalah SCOPE DISPO (D10) yang
+*&     dipilih dari parameter `mode` sebelum step 2 (lr_dispo: WM1/WM2/PN1/PN2
+*&     utk Butuh Dikirim, GA1/GA2/EB2 utk Item & BOM) — seluruh query
+*&     (step 1-7) dan seluruh template rendering SATU JALUR KODE untuk kedua
+*&     tab, tidak diduplikasi lagi. lv_bom_title menyesuaikan teks judul tabel
+*&     komponen
+*&     per tab; lv_id_prefix ('k-' utk Butuh Dikirim) mencegah id DOM tabrakan
+*&     dgn tab Item & BOM saat keduanya sama-sama ter-render di halaman (kedua
+*&     tab-pane tetap ada di DOM sekaligus, cuma satu yang tampil).
+*&
+*&     Fitur lama (Perlu Kirim vs stok 2KCS/1D00, kolom Diterima 2KCS/Status)
+*&     DIHAPUS bersama K1-K7 — bukan lagi bagian dari tab ini. Kalau kebutuhan
+*&     rekonsiliasi stok itu masih diperlukan, harus dibangun ulang sebagai
+*&     fitur terpisah (mis. kolom tambahan atau tab baru).
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+
+" Order UTAMA per item (D5) — order produksi yang MATERIAL OUTPUT-nya
+" (AFPO-MATNR) SAMA DENGAN material item SO ini (VBAP-MATNR): order assembly
+" akhir penghasil barang jadi, bukan order komponen/sub-assembly di bawahnya.
+" Basis Target/Hasil GR/Progres header item — TIDAK dijumlah lintas semua
+" order seperti ty_afpo_pre (yang levelnya campur-baur, itulah akar masalah
+" "Target 13.328 vs Qty SO 48").
+TYPES: BEGIN OF ty_main_line,
+         kdauf TYPE afpo-kdauf,
+         kdpos TYPE afpo-kdpos,
+         matnr TYPE afpo-matnr,
+         psmng TYPE afpo-psmng,
+         wemng TYPE afpo-wemng,
+         meins TYPE afpo-meins,
+         aufnr TYPE afpo-aufnr,
+       END OF ty_main_line.
+
+" Driver gabungan AUFNR (order komponen lt_afpo_pre ∪ order utama lt_main_pre)
+" — dipakai query AFKO/AUFK/JEST (step 3/3b) supaya order utama JUGA dapat
+" status sistem & tanggal basic/actual finish, bukan cuma order komponen yang
+" lolos filter DISPO.
+TYPES: BEGIN OF ty_aufnr_drv,
+         aufnr TYPE afpo-aufnr,
+       END OF ty_aufnr_drv.
 
 TYPES: BEGIN OF ty_local_item,
          vbeln   TYPE vbap-vbeln,
@@ -39,6 +159,25 @@ TYPES: BEGIN OF ty_local_item,
          aufnr   TYPE afpo-aufnr,
        END OF ty_local_item.
 
+" AFPO per order produksi (join AFKO) + klasifikasi TAHAP produksi (D1).
+" Pembahanan (WM1/WM2/PN1/PN2, Plant 1000) -> Produksi (GA1/GA2, Plant 2000)
+" -> Finish (EB2, Plant 2000). stage_rank dipakai utk SORT supaya komponen
+" tampil berurutan sesuai alur produksi, bukan urutan SELECT mentah.
+" psmng/wemng dipertahankan di sini (bukan hanya di ty_local_item) karena D4
+" butuh Target/Delivered PER ORDER, bukan hanya teragregasi per item.
+TYPES: BEGIN OF ty_afpo_pre,
+         kdauf      TYPE afpo-kdauf,
+         kdpos      TYPE afpo-kdpos,
+         psmng      TYPE afpo-psmng,
+         wemng      TYPE afpo-wemng,
+         meins      TYPE afpo-meins,
+         aufnr      TYPE afpo-aufnr,
+         werks      TYPE afpo-pwerk,   " AFPO-PWERK = Production Plant (bukan WERKS)
+         dispo      TYPE afko-dispo,
+         stage_rank TYPE i,
+         stage_lbl  TYPE string,
+       END OF ty_afpo_pre.
+
 " Komponen order produksi (RESB) — sumber utama Daftar Komponen gaya COOIS
 TYPES: BEGIN OF ty_resb,
          aufnr TYPE resb-aufnr,
@@ -48,12 +187,6 @@ TYPES: BEGIN OF ty_resb,
          bdmng TYPE resb-bdmng,
          meins TYPE resb-meins,
        END OF ty_resb.
-" Nama storage location (T001L)
-TYPES: BEGIN OF ty_sloc,
-         werks TYPE t001l-werks,
-         lgort TYPE t001l-lgort,
-         lgobe TYPE t001l-lgobe,
-       END OF ty_sloc.
 " Driver unik material untuk MAKT (gabungan komponen RESB + STPO)
 TYPES: BEGIN OF ty_mat,
          matnr TYPE mara-matnr,
@@ -61,18 +194,21 @@ TYPES: BEGIN OF ty_mat,
 
 DATA: lt_local_item TYPE TABLE OF ty_local_item,
       lt_temp_vbap  TYPE TABLE OF vbap,
-      lt_afpo_pre   TYPE TABLE OF afpo,
+      lt_afpo_pre   TYPE TABLE OF ty_afpo_pre,
       lt_afko_pre   TYPE TABLE OF afko,
+      lt_main_pre   TYPE TABLE OF ty_main_line,   " D5: order utama per item
+      lt_aufnr_drv  TYPE TABLE OF ty_aufnr_drv,   " D5: driver AFKO/AUFK gabungan
       ls_item_row   TYPE ty_local_item,
-      ls_afpo_row   TYPE afpo,
-      ls_afpo_ord   TYPE afpo,
+      ls_afpo_ord   TYPE ty_afpo_pre,
+      ls_main_row   TYPE ty_main_line,
+      ls_aufnr_drv  TYPE ty_aufnr_drv,
       ls_afko_row   TYPE afko,
       ls_vbap_row   TYPE vbap.
 
+FIELD-SYMBOLS <afpo> TYPE ty_afpo_pre.
+
 DATA: lt_resb       TYPE TABLE OF ty_resb,
       ls_resb       TYPE ty_resb,
-      lt_sloc       TYPE TABLE OF ty_sloc,
-      ls_sloc       TYPE ty_sloc,
       lt_makt_drv   TYPE TABLE OF ty_mat,
       ls_makt_drv   TYPE ty_mat.
 
@@ -96,12 +232,32 @@ DATA: lv_comp_seq    TYPE i,
       lv_has_comp    TYPE abap_bool,
       lv_ord_idx     TYPE i,
       lv_resb_idx    TYPE i,
-      lv_sloc_disp   TYPE string,
       lv_cstat_lbl   TYPE string,
       lv_cstat_cls   TYPE string,
       lv_bstart      TYPE string,
       lv_bfin        TYPE string,
-      lv_afin        TYPE string.
+      lv_afin        TYPE string,
+      lv_stage_bg    TYPE string,   " D1: warna latar badge Tahap
+      lv_stage_fg    TYPE string.   " D1: warna teks badge Tahap
+
+" D9: cek item PUNYA order utama tapi TIDAK PUNYA komponen (RESB) dalam scope
+" tab ini -> sembunyikan seluruh baris item itu (lihat blok D9 di render loop).
+DATA: lv_item_has_comp TYPE abap_bool,
+      lv_chk_idx       TYPE i,
+      ls_afpo_chk      TYPE ty_afpo_pre.
+
+" D7 (v2): nasib fisik SETIAP material komponen (GR/QC/konsumsi/kirim) —
+" khusus tab Butuh Dikirim, SELALU dihitung (bukan hanya order 100% — lihat
+" catatan v1→v2 di ZCL_CS_UTIL: AFPO-WEMNG order TERBUKTI tidak mewakili qty
+" GR aktual material). Dihitung SEKALI di step 3d (sebelum render), disimpan
+" di lt_pmbstatus, lalu di-lookup per (kdauf,kdpos,matnr) saat komponen expand.
+DATA: lt_pmbkey    TYPE zcl_cs_util=>ty_pmbkey_tab,
+      ls_pmbkey    TYPE zcl_cs_util=>ty_pmbkey,
+      lt_pmbstatus TYPE zcl_cs_util=>ty_pmbstatus_tab,
+      ls_pmbstat   TYPE zcl_cs_util=>ty_pmbstatus,
+      ls_pmbdest   TYPE zcl_cs_util=>ty_pmbdest,
+      ls_pmbused   TYPE zcl_cs_util=>ty_pmbused,
+      ls_afpo_tmp  TYPE ty_afpo_pre.   " work area lookup aufnr->kdauf/kdpos (3d)
 
 TYPES: BEGIN OF ty_mard_agg,
          matnr TYPE mara-matnr,
@@ -177,60 +333,6 @@ DATA: lv_makt_text  TYPE maktx,
       lv_rem        TYPE p DECIMALS 3,
       lv_agg_idx    TYPE i.
 
-" === SLOC TERKINI: tipe & tabel kerja (lokasi stok aktual per material komponen) ===
-"     Rute material di Plant 2000 dinamis (banyak sloc, mvt 311/261/101) → tidak
-"     dilacak sebagai tahap/%; cukup tampilkan sloc tempat stok material BERADA kini.
-TYPES: BEGIN OF ty_curloc,
-         matnr TYPE mard-matnr,
-         werks TYPE mard-werks,
-         lgort TYPE mard-lgort,
-         labst TYPE mard-labst,
-       END OF ty_curloc.
-
-" === DOT-BAR CHECKPOINT (3g) — 4 titik pipeline final: 2KCS → 2261 → GR@2262 → 229K.
-"     Berbasis HISTORI MSEG (bukan stok kini spt lt_curloc), jadi komponen yang sudah
-"     lewat 229K tetap 4 hijau walau stoknya sudah pindah. Definisi tiap checkpoint &
-"     arti warna: lihat header ZCL_CS_UTIL (dot_stages).
-"
-"     REVISI FASE-2 — PRESISI PER SO+ITEM:
-"     Qty TIDAK lagi dihitung di halaman ini. Seluruh query pindah ke
-"     zcl_cs_util=>cp_qty( ), yang memfilter kdauf = SO ini, kdpos = item, sobkz='E'.
-"     Dulu kuncinya MATNR saja → satu material yang dipakai beberapa item/SO memakai
-"     angka yang SAMA (masalah "batas atas"). Sekarang kuncinya (KDPOS, MATNR):
-"     komponen yang sama di item 10 dan item 20 punya angka SENDIRI-SENDIRI.
-"     need = SUM(RESB-BDMNG) per (item, material) — satu material bisa muncul di >1
-"     order produksi item yang sama, jadi tetap dijumlah, bukan per baris RESB.
-"     Komponen ber-nodata (gerakan tanpa KDAUF/SOBKZ='E') → dot-bar ABU "Data Tidak
-"     Lengkap"; TIDAK ada fallback diam-diam ke angka global.
-DATA: lt_cpkey  TYPE zcl_cs_util=>ty_cpkey_tab,
-      ls_cpkey  TYPE zcl_cs_util=>ty_cpkey,
-      lt_cpomap TYPE zcl_cs_util=>ty_ordmap_tab,
-      ls_cpomap TYPE zcl_cs_util=>ty_ordmap,
-      lt_cpqty  TYPE zcl_cs_util=>ty_cpqty_tab,
-      ls_cpqty  TYPE zcl_cs_util=>ty_cpqty,
-      lv_cp_kdp TYPE afpo-kdpos,          " item SO pemilik baris RESB (via aufnr)
-      lv_at1d00 TYPE abap_bool,           " stok masih menunggu di 1000/1D00
-      ls_dot    TYPE zcl_cs_util=>ty_dotbar,
-      lv_dot_tt TYPE string.
-
-FIELD-SYMBOLS <cpk> TYPE zcl_cs_util=>ty_cpkey.
-
-DATA: lt_dot_drv  TYPE TABLE OF ty_mat,
-      lt_curloc   TYPE TABLE OF ty_curloc,
-      ls_curloc   TYPE ty_curloc,
-      lt_cur_sloc TYPE TABLE OF ty_sloc,
-      ls_cur_sloc TYPE ty_sloc,
-      lv_has_cur  TYPE abap_bool,
-      lv_cur_idx  TYPE i,
-      lv_cur_name TYPE string,
-      lv_badge_cls TYPE string.
-
-" Status SLoc Sederhana (plan §11) — label posisi material di rute Wood Furniture.
-" MURNI presentational: dipetakan dari ls_curloc-lgort yang SUDAH ada (MARD, 3e).
-" TIDAK ada query baru. Ditampilkan DI SAMPING badge SLoc mentah (bukan pengganti).
-DATA: lv_route_st  TYPE string,
-      lv_route_cls TYPE string.
-
 " === BADGE "LINE" (Unit Wood Furniture) — per ITEM, bukan per-komponen ======
 "     Rantai (plan-checkpoint-wood-furniture-filter.md §4, revisi kedua):
 "       AFKO-AUFPL → AFVC (operasi PERTAMA, field ARBID — bukan ARBPL!)
@@ -274,69 +376,43 @@ DATA: lv_prev_aufpl TYPE afko-aufpl,
       lv_line_cls   TYPE string,
       lv_line_tip   TYPE string.
 
-" === Cabang "Butuh Dikirim" (mode=kirim) ===================================
-"     Rekonsiliasi per material, di-scope ke SO ini (bukan seluruh plant).
-"     Logika di-LIFT dari transfer.htm §5 (Model B). Jaga SINKRON dengan
-"     transfer.htm bila salah satu diubah (lihat plan §5-2 & backlog reference.md).
-"     Prefiks k*/lk* untuk hindari tabrakan nama dgn tipe Item&BOM di atas
-"     (mis. ty_resb sudah dipakai dgn struktur berbeda).
+" === Tab "Butuh Dikirim" (mode=kirim) — D6 ===================================
+"     MULAI revisi D6: tab ini TIDAK LAGI melakukan rekonsiliasi stok terpisah
+"     (Perlu Kirim vs Stok 2KCS/1D00, dulu K1-K7, logic sendiri terpisah dari
+"     Item & BOM). Sebagai gantinya tab ini kini menampilkan Daftar Komponen
+"     tahap PEMBAHANAN SAJA (WM1/WM2/PN1/PN2) dengan LAYOUT & DATA YANG SAMA
+"     PERSIS dengan tab Item & BOM (AFPO-PSMNG/WEMNG per order). Tab Item &
+"     BOM sendiri kini HANYA menampilkan Produksi+Finish (GA1/GA2/EB2) —
+"     Pembahanan dipindah ke sini. Satu-satunya perbedaan antar 2 tab adalah
+"     SCOPE DISPO (lr_dispo) yang dipakai pada query AFPO di step 2; seluruh
+"     query/render lain SAMA PERSIS (satu jalur kode, tidak diduplikasi).
 DATA: lv_mode TYPE string.
 
-TYPES: BEGIN OF ty_kneed,
-         matnr    TYPE resb-matnr,
-         meins    TYPE resb-meins,
-         need     TYPE resb-bdmng,   " Σ sisa kebutuhan (bdmng−enmng), open
-         aufnr    TYPE resb-aufnr,
-         bdter    TYPE resb-bdter,   " tgl kebutuhan paling awal
-         stok_dst TYPE mard-labst,   " stok 2KCS
-         stok_src TYPE mard-labst,   " stok 1D00
-         sent     TYPE resb-bdmng,   " sudah dikirim aktual (MSEG, net SHKZG)
-         perlu    TYPE resb-bdmng,   " perlu kirim = max(0, need − stok_dst)
-         maktx    TYPE makt-maktx,
-         status   TYPE string,
-         st_cls   TYPE string,
-       END OF ty_kneed.
-TYPES: BEGIN OF ty_kresb,
-         matnr TYPE resb-matnr, meins TYPE resb-meins,
-         bdmng TYPE resb-bdmng, enmng TYPE resb-enmng,
-         aufnr TYPE resb-aufnr, bdter TYPE resb-bdter,
-       END OF ty_kresb,
-       BEGIN OF ty_kmakt,
-         matnr TYPE makt-matnr, maktx TYPE makt-maktx,
-       END OF ty_kmakt,
-       BEGIN OF ty_kmard,
-         matnr TYPE mard-matnr, werks TYPE mard-werks,
-         lgort TYPE mard-lgort, labst TYPE mard-labst,
-       END OF ty_kmard,
-       BEGIN OF ty_kmv,
-         mblnr TYPE mseg-mblnr, matnr TYPE mseg-matnr,
-         menge TYPE mseg-menge, shkzg TYPE mseg-shkzg,
-         umwrk TYPE mseg-umwrk,   " memisahkan retur ke Plant 1000 dari maju ke hilir
-         budat TYPE mkpf-budat,
-       END OF ty_kmv,
-       BEGIN OF ty_ksoauf, aufnr TYPE afpo-aufnr, END OF ty_ksoauf.
-
-DATA: lt_kneed  TYPE SORTED TABLE OF ty_kneed WITH UNIQUE KEY matnr,
-      lt_kdisp  TYPE STANDARD TABLE OF ty_kneed,
-      ls_kneed  TYPE ty_kneed,
-      lt_kresb  TYPE TABLE OF ty_kresb,  ls_kresb  TYPE ty_kresb,
-      lt_kmakt  TYPE TABLE OF ty_kmakt,  ls_kmakt  TYPE ty_kmakt,
-      lt_kmard  TYPE TABLE OF ty_kmard,  ls_kmard  TYPE ty_kmard,
-      lt_kmv    TYPE TABLE OF ty_kmv,    ls_kmv    TYPE ty_kmv,
-      lt_ksoauf TYPE TABLE OF ty_ksoauf, ls_ksoauf TYPE ty_ksoauf,
-      lr_kaufnr TYPE RANGE OF afpo-aufnr,
-      ls_kr_auf LIKE LINE OF lr_kaufnr.
-DATA: lv_kopen    TYPE resb-bdmng,
-      lv_kbdter_s TYPE string,
-      lv_krow_bg  TYPE string,
-      lr_kbw      TYPE zcl_cs_util=>ty_bwart_range,   " 301/311 (CP1)
-      lt_kwfin    TYPE zcl_cs_util=>ty_aufnr_tab,     " kandidat order dari RESB
-      ls_kwfin    TYPE zcl_cs_util=>ty_aufnr_line,
-      lt_kwfok    TYPE zcl_cs_util=>ty_aufnr_tab.     " lolos whitelist WF
-" lc_mvt_out ('301') & lc_horizon (90 hari) DIHAPUS pada revisi Fase-1: movement
-" type kini dari zcl_cs_util=>transfer_bwarts( ) dan "Diterima 2KCS" memakai
-" SELURUH histori (lihat K5). Jangan hidupkan lagi literal '301' di sini.
-FIELD-SYMBOLS <kn> TYPE ty_kneed.
+" === D10: KEMBALI ke whitelist MRP TERTUTUP (bukan lagi scope Plant) =========
+"     D8 sempat mengganti filter jadi berbasis PLANT supaya order dgn MRP di
+"     luar whitelist (mis. Sliding Door: PJ1/PJ2/WE1/WE2/CH4/CH5, atau GF2)
+"     tetap ikut tampil. TERNYATA itu BUKAN yang diinginkan: MRP di luar
+"     WM1/WM2/PN1/PN2/GA1/GA2/EB2 SENGAJA harus dianggap DI LUAR SCOPE aplikasi
+"     ini (bukan "kurang lengkap" seperti dikira sebelumnya) — D10 membalikkan
+"     ke whitelist TERTUTUP itu lagi, TAPI kali ini dengan visibilitas yang
+"     benar di 3 tingkat (bukan cuma menyembunyikan baris "Daftar Komponen"
+"     seperti versi whitelist yang PALING lama):
+"       1) Item YANG PUNYA order utama tapi NOL order-nya lolos whitelist di
+"          scope tab ini -> seluruh baris ITEM disembunyikan (D9, sudah ada,
+"          otomatis berlaku lagi krn D9 tak bergantung pada mekanisme filter).
+"       2) SO yang SEMUA itemnya begitu (nol item lolos) -> SO itu SENDIRI
+"          harus disembunyikan dari daftar sidebar — ini dikerjakan di file
+"          LAIN (index.htm/monitoring.htm, daftar SO), BUKAN di fragment ini.
+"       3) SO yang sebagian/semua itemnya lolos -> tampil apa adanya (D9 sudah
+"          menyaring item yang tidak lolos, sisanya yang lolos tetap tampil).
+"     werks (AFPO-PWERK) TETAP disimpan di ty_afpo_pre — masih dipakai sbg
+"     fallback label Tahap utk DISPO WF yang somehow lolos filter tapi belum
+"     dikenal CASE-nya (harusnya tak pernah terjadi lagi krn sudah difilter
+"     duluan di WHERE, tapi dipertahankan sbg jaring pengaman).
+DATA lr_dispo TYPE zcl_cs_util=>ty_dispo_range.
+DATA: lv_bom_title  TYPE string,   " judul tabel komponen, beda teks per tab (D6)
+      lv_id_prefix  TYPE string,   " prefiks id DOM, cegah tabrakan id antar tab (D6)
+      ls_dispo_r10  LIKE LINE OF lr_dispo.   " satu baris range (sign/option/low/high), D10
 
 lv_req_vb = request->get_form_field( 'vbeln' ).
 lv_mode   = request->get_form_field( 'mode' ).   " '' (Item & BOM) | 'kirim'
@@ -346,193 +422,136 @@ IF lv_req_vb IS NOT INITIAL.
     EXPORTING input  = lv_req_vb
     IMPORTING output = lv_vbeln.
 
+  " D10: ambil sub-himpunan wf_dispo_range() sesuai tab — satu sumber kebenaran
+  " daftar MRP tetap di ZCL_CS_UTIL, tidak diduplikasi di sini.
   IF lv_mode = 'kirim'.
-  " ========================================================================
-  " ===== CABANG BUTUH DIKIRIM (mode=kirim) — rekonsiliasi per material =====
-  " ========================================================================
-
-    " K1. AFPO — order produksi milik SO ini → RANGE aufnr (scope per-SO)
-    SELECT aufnr FROM afpo INTO TABLE lt_ksoauf WHERE kdauf = lv_vbeln.
-    LOOP AT lt_ksoauf INTO ls_ksoauf.
-      ls_kr_auf-sign = 'I'. ls_kr_auf-option = 'EQ'.
-      ls_kr_auf-low  = ls_ksoauf-aufnr.
-      APPEND ls_kr_auf TO lr_kaufnr.
+    LOOP AT zcl_cs_util=>wf_dispo_range( ) INTO ls_dispo_r10.
+      CASE ls_dispo_r10-low.
+        WHEN 'WM1' OR 'WM2' OR 'PN1' OR 'PN2'.
+          APPEND ls_dispo_r10 TO lr_dispo.
+      ENDCASE.
     ENDLOOP.
-
-    IF lr_kaufnr IS NOT INITIAL.
-      " K2. RESB — kebutuhan komponen produksi Plant 2000 yang masih terbuka
-      "     (Model B). Filter open-qty (bdmng>enmng) di loop (Open SQL klasik
-      "     tak dukung banding kolom-ke-kolom). Sinkron transfer.htm langkah 1.
-      SELECT matnr meins bdmng enmng aufnr bdter
-        FROM resb INTO TABLE lt_kresb
-        WHERE werks = lc_plant
-          AND xloek = ' '
-          AND kzear = ' '
-          AND aufnr IN lr_kaufnr.
-
-      " K2b. SCOPE WOOD FURNITURE — sinkron transfer.htm langkah 1b.
-      "      Hanya komponen order WF yang jadi urusan Central Storage.
-      "      ⚠️ Konsekuensi: bila SO ini BUKAN Wood Furniture (mis. Chair/Metal),
-      "      tab "Butuh Dikirim" akan KOSONG — itu benar menurut scope, bukan bug.
-      REFRESH lt_kwfin.
-      LOOP AT lt_kresb INTO ls_kresb.
-        IF ls_kresb-aufnr IS INITIAL. CONTINUE. ENDIF.
-        ls_kwfin-aufnr = ls_kresb-aufnr.
-        INSERT ls_kwfin INTO TABLE lt_kwfin.   " sorted-unique → auto dedup
-      ENDLOOP.
-      IF lt_kwfin IS NOT INITIAL.
-        lt_kwfok = zcl_cs_util=>wf_order_filter( lt_kwfin ).
-      ENDIF.
-
-      LOOP AT lt_kresb INTO ls_kresb.
-        lv_kopen = ls_kresb-bdmng - ls_kresb-enmng.
-        IF lv_kopen <= 0. CONTINUE. ENDIF.
-
-        IF ls_kresb-aufnr IS INITIAL. CONTINUE. ENDIF.
-        READ TABLE lt_kwfok TRANSPORTING NO FIELDS
-          WITH TABLE KEY aufnr = ls_kresb-aufnr.
-        IF sy-subrc <> 0. CONTINUE. ENDIF.   " di luar whitelist WF
-
-        READ TABLE lt_kneed ASSIGNING <kn> WITH KEY matnr = ls_kresb-matnr.
-        IF sy-subrc <> 0.
-          CLEAR ls_kneed.
-          ls_kneed-matnr = ls_kresb-matnr.
-          ls_kneed-meins = ls_kresb-meins.
-          ls_kneed-need  = lv_kopen.
-          ls_kneed-aufnr = ls_kresb-aufnr.
-          ls_kneed-bdter = ls_kresb-bdter.
-          INSERT ls_kneed INTO TABLE lt_kneed.
-        ELSE.
-          <kn>-need = <kn>-need + lv_kopen.
-          IF <kn>-bdter IS INITIAL
-             OR ( ls_kresb-bdter IS NOT INITIAL AND ls_kresb-bdter < <kn>-bdter ).
-            <kn>-bdter = ls_kresb-bdter.
-          ENDIF.
-        ENDIF.
-      ENDLOOP.
-
-      IF lt_kneed IS NOT INITIAL.
-        " K3. Nama material (MAKT)
-        SELECT matnr maktx FROM makt INTO TABLE lt_kmakt
-          FOR ALL ENTRIES IN lt_kneed
-          WHERE matnr = lt_kneed-matnr AND spras = sy-langu.
-        SORT lt_kmakt BY matnr.
-        LOOP AT lt_kneed ASSIGNING <kn>.
-          READ TABLE lt_kmakt INTO ls_kmakt WITH KEY matnr = <kn>-matnr BINARY SEARCH.
-          IF sy-subrc = 0. <kn>-maktx = ls_kmakt-maktx. ENDIF.
-        ENDLOOP.
-
-        " K4. Stok tujuan (2KCS) & sumber (1D00) — MARD. Konstanta plant/sloc
-        "     dari ZCL_CS_UTIL (satu sumber kebenaran, identik dot-bar).
-        SELECT matnr werks lgort labst
-          FROM mard INTO TABLE lt_kmard
-          FOR ALL ENTRIES IN lt_kneed
-          WHERE matnr = lt_kneed-matnr
-            AND ( ( werks = lc_plant AND lgort = zcl_cs_util=>gc_sloc_2kcs )
-               OR ( werks = zcl_cs_util=>gc_plant_1000 AND lgort = zcl_cs_util=>gc_sloc_1d00 ) ).
-        LOOP AT lt_kmard INTO ls_kmard.
-          READ TABLE lt_kneed ASSIGNING <kn> WITH KEY matnr = ls_kmard-matnr.
-          IF sy-subrc <> 0. CONTINUE. ENDIF.
-          IF ls_kmard-werks = lc_plant AND ls_kmard-lgort = zcl_cs_util=>gc_sloc_2kcs.
-            <kn>-stok_dst = <kn>-stok_dst + ls_kmard-labst.
-          ELSEIF ls_kmard-werks = zcl_cs_util=>gc_plant_1000
-             AND ls_kmard-lgort = zcl_cs_util=>gc_sloc_1d00.
-            <kn>-stok_src = <kn>-stok_src + ls_kmard-labst.
-          ENDIF.
-        ENDLOOP.
-
-        " K5. "Diterima 2KCS" aktual = CHECKPOINT 1. MSEG ⨝ MKPF.
-        "     *** SINKRON dengan transfer.htm §5 — UBAH KEDUANYA BERSAMA. ***
-        "
-        "     REVISI FASE-1: dulu dibaca dari sisi PENGIRIM (bwart 301 saja, baris
-        "     keluar 1D00→2KCS, horizon 90 hari). Kini dibaca dari sisi PENERIMA,
-        "     persis definisi CP1 — supaya angkanya identik dengan dot-bar & KPI:
-        "       lgort=2KCS (Plant 2000), bwart 301/311, TANPA horizon tanggal.
-        "       'S'                       → masuk 2KCS              → tambah
-        "       'H' dgn umwrk = 1000      → retur balik ke plant asal → kurangi
-        "       'H' lainnya (ke 2261 dst) → kemajuan ke hilir         → ABAIKAN
-        "     Aturan ketiga itu WAJIB: tanpa itu material yang sudah maju ke
-        "     Machining akan tampak "belum pernah dikirim".
-        "     Filter UMWRK/UMLGO sisi-pengirim yang lama (perbaikan over-count doc
-        "     4908670272) tidak diperlukan lagi — membaca sisi penerima membuat
-        "     transfer INTERNAL Plant 1000 (1D00→1E03) mustahil ikut terhitung.
-        lr_kbw = zcl_cs_util=>transfer_bwarts( ).
-        SELECT m~mblnr m~matnr m~menge m~shkzg m~umwrk k~budat
-          FROM mseg AS m INNER JOIN mkpf AS k
-            ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
-          INTO CORRESPONDING FIELDS OF TABLE lt_kmv
-          FOR ALL ENTRIES IN lt_kneed
-          WHERE m~matnr = lt_kneed-matnr
-            AND m~werks = lc_plant
-            AND m~lgort = zcl_cs_util=>gc_sloc_2kcs
-            AND m~bwart IN lr_kbw.
-        LOOP AT lt_kmv INTO ls_kmv.
-          READ TABLE lt_kneed ASSIGNING <kn> WITH KEY matnr = ls_kmv-matnr.
-          IF sy-subrc <> 0. CONTINUE. ENDIF.
-          IF ls_kmv-shkzg = zcl_cs_util=>gc_shkzg_s.
-            <kn>-sent = <kn>-sent + ls_kmv-menge.
-          ELSEIF ls_kmv-umwrk = zcl_cs_util=>gc_plant_1000.
-            <kn>-sent = <kn>-sent - ls_kmv-menge.   " retur balik ke Plant 1000
-          ENDIF.
-        ENDLOOP.
-
-        " K6. Perlu Kirim + status per material
-        LOOP AT lt_kneed ASSIGNING <kn>.
-          <kn>-perlu = <kn>-need - <kn>-stok_dst.
-          IF <kn>-perlu < 0. <kn>-perlu = 0. ENDIF.
-          IF <kn>-perlu = 0.
-            <kn>-status = 'Tercukupi'.        <kn>-st_cls = 'tf-ok'.
-          ELSEIF <kn>-stok_src >= <kn>-perlu.
-            <kn>-status = 'Akan Dikirim'.     <kn>-st_cls = 'tf-need'.
-          ELSE.
-            <kn>-status = 'Kurang Stok 1D00'. <kn>-st_cls = 'tf-short'.
-          ENDIF.
-        ENDLOOP.
-
-        " K7. Filter tampilan tab: hanya baris "butuh dikirim" (perlu>0).
-        "     KEPUTUSAN edge-case (plan §5-3): TETAP tampilkan walau stok_src=0
-        "     (status "Kurang Stok 1D00", merah) — agar kebutuhan paling kritis
-        "     tidak tersembunyi dari radar Admin (selaras filosofi Action Center).
-        lt_kdisp = lt_kneed.
-        DELETE lt_kdisp WHERE perlu <= 0.
-        SORT lt_kdisp BY perlu DESCENDING matnr ASCENDING.
-      ENDIF.
-    ENDIF.
+    lv_bom_title = 'Daftar Komponen Order Produksi (RESB) — Pembahanan (WM1/WM2/PN1/PN2)'.
+    lv_id_prefix = 'k-'.   " cegah tabrakan id DOM dgn tab Item & BOM (D6)
   ELSE.
-  " ===== CABANG DEFAULT: Item & BOM (tak berubah) — dot-bar mengedit di sini =====
+    LOOP AT zcl_cs_util=>wf_dispo_range( ) INTO ls_dispo_r10.
+      CASE ls_dispo_r10-low.
+        WHEN 'GA1' OR 'GA2' OR 'EB2'.
+          APPEND ls_dispo_r10 TO lr_dispo.
+      ENDCASE.
+    ENDLOOP.
+    lv_bom_title = 'Daftar Komponen Order Produksi (RESB) — Produksi & Finish (GA1/GA2/EB2)'.
+    CLEAR lv_id_prefix.
+  ENDIF.
+
   " 1. VBAP — kolom spesifik untuk SO ini
   SELECT vbeln posnr matnr arktx kwmeng vrkme FROM vbap
     INTO CORRESPONDING FIELDS OF TABLE lt_temp_vbap
     WHERE vbeln = lv_vbeln
       AND werks = lc_plant.
 
-  " 2. AFPO — termasuk AUFNR. Disimpan mentah (per order) untuk: (a) dijumlah
-  "    per item, (b) memilih order wakil, (c) driver RESB & AFKO/AUFK/JEST.
+  " 2. AFPO — termasuk AUFNR + PWERK + AFKO-DISPO. Disimpan mentah (per order)
+  "    untuk: (a) dijumlah per item, (b) memilih order wakil, (c) driver RESB
+  "    & AFKO/AUFK/JEST, (d) klasifikasi TAHAP & Target/Delivered per order (D4).
+  "    FILTER: k~dispo IN lr_dispo (D10 — whitelist tertutup, BUKAN lagi Plant).
+  "    Karena lt_afpo_pre hulu seluruh rantai (AFKO/AUFK/RESB/Line), turunannya
+  "    otomatis terfilter. Item SO tanpa order lolos-filter → tampil "No Prod"
+  "    ATAU disembunyikan sepenuhnya oleh D9 bila item itu PUNYA order utama
+  "    tapi order utamanya tak lolos whitelist ini.
   IF lt_temp_vbap IS NOT INITIAL.
-    SELECT kdauf kdpos psmng wemng meins aufnr FROM afpo
+    SELECT a~kdauf a~kdpos a~psmng a~wemng a~meins a~aufnr a~pwerk AS werks k~dispo
+      FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
       INTO CORRESPONDING FIELDS OF TABLE lt_afpo_pre
       FOR ALL ENTRIES IN lt_temp_vbap
-      WHERE kdauf = lt_temp_vbap-vbeln
-        AND kdpos = lt_temp_vbap-posnr.
-    SORT lt_afpo_pre BY kdauf kdpos.
+      WHERE a~kdauf = lt_temp_vbap-vbeln
+        AND a~kdpos = lt_temp_vbap-posnr
+        AND k~dispo IN lr_dispo.
+
+    " D10: klasifikasi TAHAP dari DISPO — selaras wf_dispo_range di ZCL_CS_UTIL.
+    " WHEN OTHERS praktis tak pernah kena (sudah difilter k~dispo IN lr_dispo di
+    " atas) — dipertahankan sbg jaring pengaman, fallback dari PWERK.
+    LOOP AT lt_afpo_pre ASSIGNING <afpo>.
+      CASE <afpo>-dispo.
+        WHEN 'WM1' OR 'WM2' OR 'PN1' OR 'PN2'.
+          <afpo>-stage_rank = 1. <afpo>-stage_lbl = 'Pembahanan'.
+        WHEN 'GA1' OR 'GA2'.
+          <afpo>-stage_rank = 2. <afpo>-stage_lbl = 'Produksi'.
+        WHEN 'EB2'.
+          <afpo>-stage_rank = 3. <afpo>-stage_lbl = 'Finish'.
+        WHEN OTHERS.
+          IF <afpo>-werks = zcl_cs_util=>gc_plant_1000.
+            <afpo>-stage_rank = 1. <afpo>-stage_lbl = 'Pembahanan'.
+          ELSE.
+            <afpo>-stage_rank = 2. <afpo>-stage_lbl = 'Produksi'.
+          ENDIF.
+      ENDCASE.
+    ENDLOOP.
+
+    " Urutkan (kdauf, kdpos) dulu — dibutuhkan BINARY SEARCH di bawah — lalu
+    " stage_rank, lalu aufnr. Inilah yang membuat Daftar Komponen tampil runut
+    " Pembahanan → Produksi → Finish per item (D1).
+    SORT lt_afpo_pre BY kdauf kdpos stage_rank aufnr.
+
+    " D20: DEDUP wajib — satu ORDER (aufnr) bisa punya >1 baris AFPO (production
+    " order multi-item/POSNR), sehingga lt_afpo_pre bisa berisi order yang SAMA
+    " lebih dari sekali. Tanpa dedup ini: (a) SELECT RESB FOR ALL ENTRIES di
+    " bawah ikut menduplikasi hasilnya per baris driver yang sama, DAN (b) loop
+    " render "Daftar Komponen" merender bagian order yang sama berkali-kali —
+    " persis bug "baris komponen dobel" yang dilaporkan user. kdauf/kdpos/aufnr
+    " sebagai kunci unik (bukan seluruh baris) supaya psmng/wemng/dispo/stage
+    " dari baris PERTAMA yang dipertahankan.
+    DELETE ADJACENT DUPLICATES FROM lt_afpo_pre COMPARING kdauf kdpos aufnr.
   ENDIF.
+
+  " 2b. ORDER UTAMA per item (D5) — order produksi yang MATERIAL OUTPUT-nya
+  "     (AFPO-MATNR) SAMA DENGAN material item SO ini (VBAP-MATNR = order
+  "     assembly akhir penghasil barang jadi). SENGAJA TIDAK memfilter scope
+  "     apa pun (bukan DISPO, bukan PLANT) — order utama bisa ada di plant
+  "     mana saja & MRP apa saja, jadi kalau ikut difilter, order utamanya
+  "     malah hilang. Basis Target/Hasil GR/Progres header item — lihat
+  "     catatan D5 di atas.
+  IF lt_temp_vbap IS NOT INITIAL.
+    SELECT kdauf kdpos matnr psmng wemng meins aufnr FROM afpo
+      INTO CORRESPONDING FIELDS OF TABLE lt_main_pre
+      FOR ALL ENTRIES IN lt_temp_vbap
+      WHERE kdauf = lt_temp_vbap-vbeln
+        AND kdpos = lt_temp_vbap-posnr
+        AND matnr = lt_temp_vbap-matnr.
+    SORT lt_main_pre BY kdauf kdpos.
+  ENDIF.
+
+  " Driver gabungan AUFNR (order komponen ∪ order utama) untuk query AFKO/AUFK
+  " di step 3/3b — supaya order utama JUGA dapat status sistem & tanggal,
+  " bukan cuma order komponen yang lolos filter DISPO (D5).
+  LOOP AT lt_afpo_pre ASSIGNING <afpo>.
+    ls_aufnr_drv-aufnr = <afpo>-aufnr.
+    APPEND ls_aufnr_drv TO lt_aufnr_drv.
+  ENDLOOP.
+  LOOP AT lt_main_pre INTO ls_main_row.
+    ls_aufnr_drv-aufnr = ls_main_row-aufnr.
+    APPEND ls_aufnr_drv TO lt_aufnr_drv.
+  ENDLOOP.
+  SORT lt_aufnr_drv BY aufnr.
+  DELETE ADJACENT DUPLICATES FROM lt_aufnr_drv COMPARING aufnr.
 
   " 3. AFKO — tanggal basic start (GSTRP), basic finish (GLTRP), actual finish
   "    (GETRI). Status sistem dibaca dari JEST (3b).
   "    AUFPL ditambahkan (hanya field-list, WHERE/logic tak berubah) sebagai
-  "    basis rantai badge "Line" di 3f — hindari SELECT AFKO kedua.
-  IF lt_afpo_pre IS NOT INITIAL.
+  "    basis rantai badge "Line" di 3e — hindari SELECT AFKO kedua.
+  "    D5: driver kini lt_aufnr_drv (order komponen ∪ order utama), BUKAN lagi
+  "    lt_afpo_pre saja — supaya order utama juga dapat status & tanggal.
+  IF lt_aufnr_drv IS NOT INITIAL.
     SELECT aufnr aufpl gstrp gltrp getri FROM afko
       INTO CORRESPONDING FIELDS OF TABLE lt_afko_pre
-      FOR ALL ENTRIES IN lt_afpo_pre
-      WHERE aufnr = lt_afpo_pre-aufnr.
+      FOR ALL ENTRIES IN lt_aufnr_drv
+      WHERE aufnr = lt_aufnr_drv-aufnr.
     SORT lt_afko_pre BY aufnr.
 
     " 3b. Status sistem order: AUFK (objnr) -> JEST (status aktif).
     SELECT aufnr objnr FROM aufk
       INTO CORRESPONDING FIELDS OF TABLE lt_aufk_pre
-      FOR ALL ENTRIES IN lt_afpo_pre
-      WHERE aufnr = lt_afpo_pre-aufnr.
+      FOR ALL ENTRIES IN lt_aufnr_drv
+      WHERE aufnr = lt_aufnr_drv-aufnr.
     IF lt_aufk_pre IS NOT INITIAL.
       SELECT objnr stat FROM jest
         INTO CORRESPONDING FIELDS OF TABLE lt_jest_pre
@@ -556,114 +575,52 @@ IF lv_req_vb IS NOT INITIAL.
       ENDLOOP.
       SORT lt_ord_st BY aufnr.
     ENDIF.
+  ENDIF.
 
+  IF lt_afpo_pre IS NOT INITIAL.
     " 3c. RESB — komponen/reservasi seluruh order produksi item ini (gaya COOIS).
+    "     TETAP hanya dari lt_afpo_pre (order ber-DISPO WF) — order utama (D5)
+    "     SENGAJA TIDAK ikut di sini, supaya Daftar Komponen tetap scope
+    "     Pembahanan→Produksi→Finish seperti semula (D1), tidak berubah.
+    "
+    "     D19: filter "AND xloek = ' '" (hanya reservasi AKTIF) DIHAPUS. Bukti
+    "     dari user (COOIS, SO lama yg TECO+DLV, Target=Del di semua baris):
+    "     order LAMA yang sudah tuntas & ditutup punya RESB yang JUGA ditutup
+    "     (XLOEK='X', ditandai utk dihapus/settlement) — filter lama membuat
+    "     Daftar Komponen KOSONG untuk SEMUA SO selesai (persis kasus "Riwayat
+    "     kosong" yg dilaporkan user), walau order & AFPO-PSMNG/WEMNG-nya
+    "     sendiri (yg dipakai monitoring.htm/riwayat.htm utk klasifikasi tahap)
+    "     tetap valid & lengkap. Order AKTIF (xloek=' ') otomatis tetap
+    "     tertangkap tanpa filter ini (tak ada downside utk SO yg masih jalan).
     SELECT aufnr matnr werks lgort bdmng meins FROM resb
       INTO CORRESPONDING FIELDS OF TABLE lt_resb
       FOR ALL ENTRIES IN lt_afpo_pre
-      WHERE aufnr = lt_afpo_pre-aufnr
-        AND xloek = ' '.
+      WHERE aufnr = lt_afpo_pre-aufnr.
     DELETE lt_resb WHERE matnr IS INITIAL.
     SORT lt_resb BY aufnr matnr.
 
-    " 3d. Nama storage location (T001L) untuk kolom "Sloc - Nama Sloc"
-    IF lt_resb IS NOT INITIAL.
-      SELECT werks lgort lgobe FROM t001l
-        INTO CORRESPONDING FIELDS OF TABLE lt_sloc
-        FOR ALL ENTRIES IN lt_resb
-        WHERE werks = lt_resb-werks
-          AND lgort = lt_resb-lgort.
-      SORT lt_sloc BY werks lgort.
-    ENDIF.
-
-    " === 3e. SLOC TERKINI: lokasi stok aktual material komponen (MARD) ===
-    "   Rute Plant 2000 dinamis (banyak sloc; mvt 311/261/101) → tampilkan sloc
-    "   tempat stok material BERADA kini, bukan tahap/%. Sumber: MARD labst>0 di
-    "   Plant 2000 (semua sloc) + 1000/1D00 (bila belum masuk 2000). Nama sloc: T001L.
-    IF lt_resb IS NOT INITIAL.
-      REFRESH lt_dot_drv.
+    " 3d. NASIB FISIK tiap material komponen (D7 v2) — KHUSUS tab Butuh Dikirim.
+    "     Dihitung utk SEMUA komponen yang tampil, TIDAK menunggu order 100%
+    "     (basis lama AFPO-WEMNG TERBUKTI tidak mewakili qty GR aktual material
+    "     — lihat catatan v1→v2 di ZCL_CS_UTIL). Key = (kdauf,kdpos,matnr),
+    "     dibangun dari RESB × order induknya (lt_afpo_pre, utk dapat kdauf/
+    "     kdpos — RESB sendiri hanya bawa AUFNR).
+    IF lv_mode = 'kirim' AND lt_resb IS NOT INITIAL.
       LOOP AT lt_resb INTO ls_resb.
-        ls_makt_drv-matnr = ls_resb-matnr.
-        APPEND ls_makt_drv TO lt_dot_drv.
+        READ TABLE lt_afpo_pre INTO ls_afpo_tmp WITH KEY aufnr = ls_resb-aufnr.
+        IF sy-subrc <> 0. CONTINUE. ENDIF.
+        CLEAR ls_pmbkey.
+        ls_pmbkey-kdauf = ls_afpo_tmp-kdauf.
+        ls_pmbkey-kdpos = ls_afpo_tmp-kdpos.
+        ls_pmbkey-matnr = ls_resb-matnr.
+        INSERT ls_pmbkey INTO TABLE lt_pmbkey.   " sorted-unique -> auto dedup
       ENDLOOP.
-      SORT lt_dot_drv BY matnr.
-      DELETE ADJACENT DUPLICATES FROM lt_dot_drv COMPARING matnr.
-
-      IF lt_dot_drv IS NOT INITIAL.
-        SELECT matnr werks lgort labst FROM mard
-          INTO TABLE lt_curloc
-          FOR ALL ENTRIES IN lt_dot_drv
-          WHERE matnr = lt_dot_drv-matnr
-            AND labst > 0
-            AND ( werks = lc_plant
-               OR ( werks = zcl_cs_util=>gc_plant_1000 AND lgort = zcl_cs_util=>gc_sloc_1d00 ) ).
-        IF lt_curloc IS NOT INITIAL.
-          " Nama sloc terkini (T001L) — bisa mencakup sloc di luar reservasi RESB
-          SELECT werks lgort lgobe FROM t001l
-            INTO CORRESPONDING FIELDS OF TABLE lt_cur_sloc
-            FOR ALL ENTRIES IN lt_curloc
-            WHERE werks = lt_curloc-werks
-              AND lgort = lt_curloc-lgort.
-          SORT lt_cur_sloc BY werks lgort.
-        ENDIF.
-        " Urut per material, qty terbesar dulu (sloc utama tampil pertama)
-        SORT lt_curloc BY matnr labst DESCENDING.
+      IF lt_pmbkey IS NOT INITIAL.
+        lt_pmbstatus = zcl_cs_util=>pmb_output_status( lt_pmbkey ).
       ENDIF.
     ENDIF.
 
-    " === 3g. CHECKPOINT PIPELINE (dot-bar 4 titik) — TAMBAHAN, bukan pengganti ===
-    "   3e (SLoc Terkini / wf_route_status) = STOK KINI. 3g = HISTORI GERAKAN.
-    "   Keduanya tampil berdampingan; 3e tidak disentuh.
-    "
-    "   REVISI FASE-2: seluruh perhitungan qty PINDAH ke zcl_cs_util=>cp_qty( ) —
-    "   halaman ini tidak lagi menyentuh MSEG. Yang disiapkan di sini hanya KUNCI:
-    "     (kdauf = SO ini, kdpos = item SO, matnr = komponen, need = Σ RESB-BDMNG)
-    "   plus peta order → item (utk baris GR 101 yang tak membawa KDAUF).
-    "
-    "   kdpos didapat dari aufnr baris RESB → lt_afpo_pre (order milik item mana).
-    "   Inilah yang membuat komponen sama di item 10 & item 20 punya angka SENDIRI.
-    IF lt_resb IS NOT INITIAL.
-      " Peta order → item SO. lt_afpo_pre sudah berisi SELURUH order item SO ini.
-      LOOP AT lt_afpo_pre INTO ls_afpo_row.
-        IF ls_afpo_row-aufnr IS INITIAL. CONTINUE. ENDIF.
-        CLEAR ls_cpomap.
-        ls_cpomap-aufnr = ls_afpo_row-aufnr.
-        ls_cpomap-kdauf = ls_afpo_row-kdauf.
-        ls_cpomap-kdpos = ls_afpo_row-kdpos.
-        INSERT ls_cpomap INTO TABLE lt_cpomap.   " sorted-unique
-      ENDLOOP.
-
-      " Kunci per (item, komponen). need dijumlah bila 1 material muncul di >1 order
-      " dari item yang SAMA.
-      LOOP AT lt_resb INTO ls_resb.
-        IF ls_resb-aufnr IS INITIAL. CONTINUE. ENDIF.
-        CLEAR: ls_cpomap, lv_cp_kdp.
-        READ TABLE lt_cpomap INTO ls_cpomap
-          WITH TABLE KEY aufnr = ls_resb-aufnr.
-        IF sy-subrc <> 0. CONTINUE. ENDIF.   " order di luar SO ini
-        lv_cp_kdp = ls_cpomap-kdpos.
-
-        READ TABLE lt_cpkey ASSIGNING <cpk>
-          WITH TABLE KEY kdauf = lv_vbeln kdpos = lv_cp_kdp matnr = ls_resb-matnr.
-        IF sy-subrc = 0.
-          <cpk>-need = <cpk>-need + ls_resb-bdmng.
-        ELSE.
-          CLEAR ls_cpkey.
-          ls_cpkey-kdauf = lv_vbeln.
-          ls_cpkey-kdpos = lv_cp_kdp.
-          ls_cpkey-matnr = ls_resb-matnr.
-          ls_cpkey-need  = ls_resb-bdmng.
-          INSERT ls_cpkey INTO TABLE lt_cpkey.
-        ENDIF.
-      ENDLOOP.
-
-      IF lt_cpkey IS NOT INITIAL.
-        lt_cpqty = zcl_cs_util=>cp_qty( it_key    = lt_cpkey
-                                        it_ordmap = lt_cpomap ).
-      ENDIF.
-    ENDIF.
-
-    " === 3f. BADGE "LINE" (Unit Wood Furniture) — PER ITEM =================
+    " === 3e. BADGE "LINE" (Unit Wood Furniture) — PER ITEM =================
     "   AFKO-AUFPL → AFVC (operasi pertama, ARBID) → CRCO → KOSTL → whitelist.
     "   Semua batched (FOR ALL ENTRIES), operasi pertama dipilih via SORT ABAP.
     "   Tidak mengubah Sloc Terkini / progres / kolom lain — murni tambahan.
@@ -756,8 +713,12 @@ IF lv_req_vb IS NOT INITIAL.
     SORT lt_line BY aufnr.
   ENDIF.
 
-  " 4. Gabungkan VBAP + AFPO: psmng/wemng DIJUMLAH per item; AUFNR wakil =
-  "    order dengan rasio GR/target TERENDAH (paling belum selesai).
+  " 4. Gabungkan VBAP + order UTAMA (D5): psmng/wemng dari order utama SAJA
+  "    (bisa >1 bila ada beberapa run produksi utk material yang sama — makanya
+  "    tetap dijumlah, tapi levelnya sudah SAMA/sebanding, beda dgn dulu yang
+  "    mencampur level assembly+komponen). AUFNR wakil = order utama dengan
+  "    rasio GR/target terendah (paling belum selesai) DI ANTARA order utama
+  "    saja — bukan lagi bisa "kejatuhan" order komponen kecil yang tak relevan.
   LOOP AT lt_temp_vbap INTO ls_vbap_row.
     CLEAR ls_item_row.
     ls_item_row-vbeln  = ls_vbap_row-vbeln.
@@ -767,26 +728,26 @@ IF lv_req_vb IS NOT INITIAL.
     ls_item_row-kwmeng = ls_vbap_row-kwmeng.
     ls_item_row-vrkme  = ls_vbap_row-vrkme.
     lv_best_ratio = 999999.
-    READ TABLE lt_afpo_pre TRANSPORTING NO FIELDS
+    READ TABLE lt_main_pre TRANSPORTING NO FIELDS
       WITH KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr BINARY SEARCH.
     IF sy-subrc = 0.
       lv_afpo_idx = sy-tabix.
-      LOOP AT lt_afpo_pre INTO ls_afpo_row FROM lv_afpo_idx.
-        IF ls_afpo_row-kdauf <> ls_vbap_row-vbeln
-           OR ls_afpo_row-kdpos <> ls_vbap_row-posnr.
+      LOOP AT lt_main_pre INTO ls_main_row FROM lv_afpo_idx.
+        IF ls_main_row-kdauf <> ls_vbap_row-vbeln
+           OR ls_main_row-kdpos <> ls_vbap_row-posnr.
           EXIT.
         ENDIF.
-        ls_item_row-psmng = ls_item_row-psmng + ls_afpo_row-psmng.
-        ls_item_row-wemng = ls_item_row-wemng + ls_afpo_row-wemng.
-        IF ls_item_row-meins IS INITIAL. ls_item_row-meins = ls_afpo_row-meins. ENDIF.
-        IF ls_afpo_row-psmng > 0.
-          lv_ratio = ls_afpo_row-wemng / ls_afpo_row-psmng.
+        ls_item_row-psmng = ls_item_row-psmng + ls_main_row-psmng.
+        ls_item_row-wemng = ls_item_row-wemng + ls_main_row-wemng.
+        IF ls_item_row-meins IS INITIAL. ls_item_row-meins = ls_main_row-meins. ENDIF.
+        IF ls_main_row-psmng > 0.
+          lv_ratio = ls_main_row-wemng / ls_main_row-psmng.
         ELSE.
           lv_ratio = 0.
         ENDIF.
         IF lv_ratio < lv_best_ratio.
           lv_best_ratio     = lv_ratio.
-          ls_item_row-aufnr = ls_afpo_row-aufnr.
+          ls_item_row-aufnr = ls_main_row-aufnr.
         ENDIF.
       ENDLOOP.
     ENDIF.
@@ -896,7 +857,6 @@ IF lv_req_vb IS NOT INITIAL.
       ENDLOOP.
     ENDIF.
   ENDIF.
-  ENDIF.   " <-- tutup cabang lv_mode = 'kirim' ... ELSE (Item & BOM)
 ENDIF.
 %>
 <% IF lv_vbeln IS INITIAL. %>
@@ -904,60 +864,10 @@ ENDIF.
   <h3>Parameter Tidak Valid</h3>
   <p>Nomor Sales Order tidak ditemukan dalam request.</p>
 </div>
-<% ELSEIF lv_mode = 'kirim'. %>
-<!-- ===== FRAGMENT: Butuh Dikirim (mode=kirim) ===== -->
-<% IF lt_kdisp IS INITIAL. %>
-  <% IF lr_kaufnr IS INITIAL. %>
-  <div class="placeholder-ctx" style="text-align:center; color:#9ca3af; padding:32px;">
-    <p>Belum ada order produksi untuk Sales Order ini &#8212; belum ada kebutuhan transfer.</p>
-  </div>
-  <% ELSE. %>
-  <div class="placeholder-ctx" style="text-align:center; color:#16a34a; padding:32px;">
-    <p>&#10004; Semua bahan telah dikirim untuk SO ini.</p>
-  </div>
-  <% ENDIF. %>
 <% ELSE. %>
-<div class="bom-title">Butuh Dikirim &#8212; Rute 1000/1D00 &rarr; 2000/2KCS &bull; Scope: Wood Furniture &bull; Diterima 2KCS = seluruh histori (mvt 301/311)</div>
-<div style="overflow-x: auto;">
-  <table class="data-table" style="font-size:0.82rem;">
-    <thead>
-      <tr>
-        <th>Material</th>
-        <th>Nama</th>
-        <th style="text-align: right;">Butuh</th>
-        <th style="text-align: right;">Stok 2KCS</th>
-        <th style="text-align: right;">Perlu Kirim</th>
-        <th>Sat</th>
-        <th style="text-align: right;">Stok 1D00</th>
-        <th style="text-align: right;" title="Checkpoint 1: qty NET yang sudah DITERIMA di SLoc 2KCS (mvt 301/311, seluruh histori, dikurangi retur balik ke Plant 1000). Sama persis dengan titik-1 dot-bar dan kolom yang sama di halaman Transfer.">Diterima 2KCS</th>
-        <th>Tgl Butuh</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% LOOP AT lt_kdisp INTO ls_kneed.
-           lv_kbdter_s = zcl_cs_util=>fmt_date( ls_kneed-bdter ).
-           CLEAR lv_krow_bg.
-           IF ls_kneed-st_cls = 'tf-short'. lv_krow_bg = 'background:#fef2f2;'. ENDIF.
-      %>
-      <tr style="<%= lv_krow_bg %>">
-        <td style="font-weight:700; color:#1e3a8a;"><%= ls_kneed-matnr %></td>
-        <td><%= ls_kneed-maktx %></td>
-        <td style="text-align: right;"><span class="num-fmt" data-val="<%= ls_kneed-need %>"><%= ls_kneed-need %></span></td>
-        <td style="text-align: right; color:#6b7280;"><span class="num-fmt" data-val="<%= ls_kneed-stok_dst %>"><%= ls_kneed-stok_dst %></span></td>
-        <td style="text-align: right; font-weight:700; color:#b45309;"><span class="num-fmt" data-val="<%= ls_kneed-perlu %>"><%= ls_kneed-perlu %></span></td>
-        <td style="color:#6b7280;"><%= ls_kneed-meins %></td>
-        <td style="text-align: right;"><span class="num-fmt" data-val="<%= ls_kneed-stok_src %>"><%= ls_kneed-stok_src %></span></td>
-        <td style="text-align: right; color:#6b7280;"><span class="num-fmt" data-val="<%= ls_kneed-sent %>"><%= ls_kneed-sent %></span></td>
-        <td style="color:#6b7280;"><%= lv_kbdter_s %></td>
-        <td><span class="badge <%= ls_kneed-st_cls %>"><%= ls_kneed-status %></span></td>
-      </tr>
-      <% ENDLOOP. %>
-    </tbody>
-  </table>
-</div>
+<% IF lv_mode = 'kirim'. %>
+<div class="bom-title">Butuh Dikirim &#8212; Komponen tahap Pembahanan (Plant 1000, MRP WM1/WM2/PN1/PN2) yang perlu diproses &amp; dikirim ke Plant 2000</div>
 <% ENDIF. %>
-<% ELSE. %>
 <div class="bom-ctrl-row">
   <button class="bom-ctrl-btn" onclick="expandAllBOM()">&#43; Buka Semua BOM</button>
   <button class="bom-ctrl-btn" onclick="collapseAllBOM()">&#8722; Tutup Semua BOM</button>
@@ -970,15 +880,47 @@ ENDIF.
         <th class="sort-th" style="width: 14%;"                      onclick="sortCol(this,'str')">Material #</th>
         <th class="sort-th" style="width: 29%;"                      onclick="sortCol(this,'str')">Deskripsi Komponen</th>
         <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')">Qty SO</th>
-        <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')" title="Jumlah yang direncanakan diproduksi pada order produksi (satuan dasar material)">Target</th>
-        <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')" title="Jumlah yang sudah selesai diproduksi dan diterima ke gudang via Goods Receipt (satuan dasar material)">Hasil GR</th>
-        <th class="sort-th" style="width: 22%; text-align: center;"  onclick="sortCol(this,'num')">Progres &#9651;</th>
+        <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')" title="AFPO-PSMNG order UTAMA (order yang materialnya = material item ini) — bukan dijumlah dgn order komponen/sub-assembly di bawahnya">Target</th>
+        <th class="sort-th" style="width: 9%;  text-align: right;"   onclick="sortCol(this,'num')" title="AFPO-WEMNG order UTAMA: jumlah yang sudah diterima Goods Receipt untuk order penghasil barang jadi ini">Hasil GR</th>
+        <th class="sort-th" style="width: 22%; text-align: center;"  onclick="sortCol(this,'num')" title="Hasil GR / Target order UTAMA (order penghasil barang jadi item ini)">Progres &#9651;</th>
       </tr>
     </thead>
     <tbody>
       <%
         lv_has_item = abap_false.
         LOOP AT lt_local_item INTO ls_item_row.
+          " D9: item PUNYA order utama (Target/Progres terisi, D5) tapi TIDAK
+          " PUNYA komponen (RESB) di scope tab ini (whitelist MRP Pembahanan
+          " utk Butuh Dikirim / Produksi+Finish utk Item & BOM, D10) ->
+          " SEMBUNYIKAN seluruh baris item ini, bukan cuma tampilkan "Tidak
+          " ada komponen..." yang membingungkan (Target/Progres terisi tapi
+          " kosong di bawahnya).
+          " Item TANPA order sama sekali (aufnr kosong, fallback BOM master)
+          " TETAP ditampilkan seperti biasa — itu bukan kasus yang dikeluhkan.
+          IF ls_item_row-aufnr IS NOT INITIAL.
+            lv_item_has_comp = abap_false.
+            READ TABLE lt_afpo_pre TRANSPORTING NO FIELDS
+              WITH KEY kdauf = ls_item_row-vbeln kdpos = ls_item_row-posnr BINARY SEARCH.
+            IF sy-subrc = 0.
+              lv_chk_idx = sy-tabix.
+              LOOP AT lt_afpo_pre INTO ls_afpo_chk FROM lv_chk_idx.
+                IF ls_afpo_chk-kdauf <> ls_item_row-vbeln
+                   OR ls_afpo_chk-kdpos <> ls_item_row-posnr.
+                  EXIT.
+                ENDIF.
+                READ TABLE lt_resb TRANSPORTING NO FIELDS
+                  WITH KEY aufnr = ls_afpo_chk-aufnr BINARY SEARCH.
+                IF sy-subrc = 0.
+                  lv_item_has_comp = abap_true.
+                  EXIT.
+                ENDIF.
+              ENDLOOP.
+            ENDIF.
+            IF lv_item_has_comp = abap_false.
+              CONTINUE.
+            ENDIF.
+          ENDIF.
+
           lv_has_item = abap_true.
           IF ls_item_row-psmng > 0.
             lv_has_prd = abap_true.
@@ -1019,7 +961,7 @@ ENDIF.
             ENDIF.
           ENDIF.
       %>
-      <tr class="clickable-item-row" onclick="toggleBOMRow('<%= lv_vbeln %>-<%= ls_item_row-posnr %>')">
+      <tr class="clickable-item-row" onclick="toggleBOMRow('<%= lv_id_prefix %><%= lv_vbeln %>-<%= ls_item_row-posnr %>')">
         <td><strong><%= ls_item_row-posnr %></strong></td>
         <td><%= ls_item_row-matnr %></td>
         <td style="color:#2563eb; font-weight:600;"><%= ls_item_row-arktx %><% IF lv_line_lbl IS NOT INITIAL. %><span class="line-tag <%= lv_line_cls %>" title="<%= lv_line_tip %>"><%= lv_line_lbl %></span><% ENDIF. %> <span style="font-size:0.75rem; color:#9ca3af;">(Klik BOM)</span></td>
@@ -1040,25 +982,30 @@ ENDIF.
           <% ENDIF. %>
         </td>
       </tr>
-      <tr id="bom-row-<%= lv_vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;">
+      <tr id="bom-row-<%= lv_id_prefix %><%= lv_vbeln %>-<%= ls_item_row-posnr %>" style="display:none; background:#fafafa;">
         <td colspan="7" style="padding: 0 16px 4px 16px;">
-          <div class="bom-section-wrapper" id="wrapper-<%= lv_vbeln %>-<%= ls_item_row-posnr %>">
+          <div class="bom-section-wrapper" id="wrapper-<%= lv_id_prefix %><%= lv_vbeln %>-<%= ls_item_row-posnr %>">
             <% IF ls_item_row-aufnr IS NOT INITIAL. %>
-            <!-- ===== Komponen order produksi (RESB), gaya COOIS ===== -->
-            <div class="bom-title">Daftar Komponen Order Produksi (RESB)</div>
+            <!-- ===== Komponen order produksi (RESB), gaya COOIS, diurutkan per tahap (D1) ===== -->
+            <div class="bom-title"><%= lv_bom_title %></div>
             <table class="bom-table cois-table">
               <thead>
                 <tr>
-                  <th style="width: 26%;">Material Komponen</th>
-                  <th style="width: 32%;">Nama Material</th>
-                  <th style="width: 24%;">Sloc - Nama Sloc <button type="button" class="info-btn" onclick="toggleInfo(this, event)" title="SLoc yang tercatat di reservasi order produksi (RESB) &#8212; lokasi pengambilan komponen sesuai rencana sistem, belum tentu mencerminkan posisi fisik saat ini." data-info="SLoc yang tercatat di reservasi order produksi (RESB) &#8212; lokasi pengambilan komponen sesuai rencana sistem, belum tentu mencerminkan posisi fisik saat ini.">i</button></th>
-                  <th style="width: 18%; text-align: center;" title="Sloc tempat stok material berada kini (Plant 2000; atau 1D00 bila belum masuk)">Sloc Terkini <button type="button" class="info-btn" onclick="toggleInfo(this, event)" title="SLoc tempat stok fisik material berada saat ini (dari data stok real-time MARD), termasuk bila material masih di Plant 1000/1D00 (belum masuk Plant 2000)." data-info="SLoc tempat stok fisik material berada saat ini (dari data stok real-time MARD), termasuk bila material masih di Plant 1000/1D00 (belum masuk Plant 2000).">i</button></th>
+                  <th style="width: 10%;">Tahap</th>
+                  <th style="width: 9%;">Order</th>
+                  <th style="width: 15%;">Material Komponen</th>
+                  <th style="width: 19%;">Nama Material</th>
+                  <th style="width: 9%; text-align: right;" title="AFPO-PSMNG: target qty order produksi ini">Target Qty</th>
+                  <th style="width: 9%; text-align: right;" title="AFPO-WEMNG: qty yang sudah diterima Goods Receipt untuk order produksi ini">Delivered Qty</th>
+                  <th style="width: 29%; text-align: center;" title="Delivered Qty / Target Qty order produksi ini (AFPO-WEMNG / AFPO-PSMNG)">Progres</th>
                 </tr>
               </thead>
               <tbody>
                 <%
                   lv_has_comp = abap_false.
-                  " Telusuri semua order produksi item ini, lalu komponen RESB-nya
+                  " Telusuri semua order produksi item ini, lalu komponen RESB-nya.
+                  " lt_afpo_pre SUDAH terurut (kdauf kdpos stage_rank aufnr) — loop
+                  " ini otomatis berjalan Pembahanan -> Produksi -> Finish (D1).
                   READ TABLE lt_afpo_pre TRANSPORTING NO FIELDS
                     WITH KEY kdauf = ls_item_row-vbeln kdpos = ls_item_row-posnr BINARY SEARCH.
                   IF sy-subrc = 0.
@@ -1090,6 +1037,29 @@ ENDIF.
                       IF lv_bfin   IS INITIAL. lv_bfin   = '-'. ENDIF.
                       IF lv_afin   IS INITIAL. lv_afin   = '-'. ENDIF.
 
+                      " D1: warna badge Tahap — dihitung sekali per order, dipakai
+                      " untuk semua komponen order ini.
+                      CASE ls_afpo_ord-stage_rank.
+                        WHEN 1. lv_stage_bg = '#eff6ff'. lv_stage_fg = '#1d4ed8'.  " Pembahanan
+                        WHEN 2. lv_stage_bg = '#fef3c7'. lv_stage_fg = '#92400e'.  " Produksi
+                        WHEN 3. lv_stage_bg = '#dcfce7'. lv_stage_fg = '#15803d'.  " Finish
+                        WHEN OTHERS. lv_stage_bg = '#f3f4f6'. lv_stage_fg = '#6b7280'.
+                      ENDCASE.
+
+                      " Progres kolom (menggantikan Sloc Terkini): delivered/target
+                      " ORDER ini (bukan agregat item) — sama utk semua komponennya,
+                      " jadi cukup dihitung sekali di sini. Pakai method yang sama
+                      " dgn bar item di atas supaya konsisten (prog_bar_class/txt).
+                      IF ls_afpo_ord-psmng > 0.
+                        lv_prog = ( ls_afpo_ord-wemng / ls_afpo_ord-psmng ) * 100.
+                        IF lv_prog > 100. lv_prog = 100. ENDIF.
+                      ELSE.
+                        lv_prog = 0.
+                      ENDIF.
+                      lv_bar_w = lv_prog.
+                      lv_bcls  = zcl_cs_util=>prog_bar_class( lv_prog ).
+                      lv_pcls  = zcl_cs_util=>prog_txt_class( lv_prog ).
+
                       READ TABLE lt_resb TRANSPORTING NO FIELDS
                         WITH KEY aufnr = ls_afpo_ord-aufnr BINARY SEARCH.
                       IF sy-subrc = 0.
@@ -1102,123 +1072,23 @@ ENDIF.
                           READ TABLE lt_makt_pre INTO ls_makt_pre
                             WITH KEY matnr = ls_resb-matnr BINARY SEARCH.
                           IF sy-subrc = 0. lv_makt_text = ls_makt_pre-maktx. ENDIF.
-                          " Sloc - Nama Sloc
-                          IF ls_resb-lgort IS INITIAL.
-                            lv_sloc_disp = '-'.
-                          ELSE.
-                            CLEAR ls_sloc.
-                            READ TABLE lt_sloc INTO ls_sloc
-                              WITH KEY werks = ls_resb-werks lgort = ls_resb-lgort BINARY SEARCH.
-                            IF sy-subrc = 0 AND ls_sloc-lgobe IS NOT INITIAL.
-                              lv_sloc_disp = ls_resb-lgort && ' - ' && ls_sloc-lgobe.
-                            ELSE.
-                              lv_sloc_disp = ls_resb-lgort.
-                            ENDIF.
-                          ENDIF.
                 %>
-                <tr class="clickable-comp-row" onclick="toggleCompRow('<%= lv_vbeln %>-c<%= lv_comp_seq %>')">
+                <tr class="clickable-comp-row" onclick="toggleCompRow('<%= lv_id_prefix %><%= lv_vbeln %>-c<%= lv_comp_seq %>')">
+                  <td><span style="display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:700; background:<%= lv_stage_bg %>; color:<%= lv_stage_fg %>;"><%= ls_afpo_ord-stage_lbl %></span> <span style="font-size:0.7rem; color:#9ca3af;">(<%= ls_afpo_ord-dispo %>)</span></td>
+                  <td><%= ls_afpo_ord-aufnr %></td>
                   <td><code class="mat-code"><%= ls_resb-matnr %></code> <span style="font-size:0.7rem; color:#9ca3af;">(Klik detail)</span></td>
                   <td><%= lv_makt_text %></td>
-                  <td><%= lv_sloc_disp %></td>
+                  <td style="text-align: right;"><span class="num-fmt"><%= ls_afpo_ord-psmng %></span> <%= ls_afpo_ord-meins %></td>
+                  <td style="text-align: right;"><span class="num-fmt"><%= ls_afpo_ord-wemng %></span> <%= ls_afpo_ord-meins %></td>
                   <td style="text-align: center;">
-                    <%
-                      lv_has_cur = abap_false.
-                      READ TABLE lt_curloc TRANSPORTING NO FIELDS
-                        WITH KEY matnr = ls_resb-matnr BINARY SEARCH.
-                      IF sy-subrc = 0.
-                        lv_cur_idx = sy-tabix.
-                        LOOP AT lt_curloc INTO ls_curloc FROM lv_cur_idx.
-                          IF ls_curloc-matnr <> ls_resb-matnr. EXIT. ENDIF.
-                          lv_has_cur = abap_true.
-                          CLEAR lv_cur_name.
-                          READ TABLE lt_cur_sloc INTO ls_cur_sloc
-                            WITH KEY werks = ls_curloc-werks lgort = ls_curloc-lgort BINARY SEARCH.
-                          IF sy-subrc = 0. lv_cur_name = ls_cur_sloc-lgobe. ENDIF.
-                          IF ls_curloc-werks = zcl_cs_util=>gc_plant_1000.
-                            lv_badge_cls = 'sloc-src'.
-                          ELSE.
-                            lv_badge_cls = 'sloc-cur'.
-                          ENDIF.
-                          " --- Status SLoc Sederhana (plan §11) — TAMBAHAN, bukan pengganti ---
-                          " werks=1000 (belum masuk Plant 2000) dicek DULU: method
-                          " wf_route_status hanya terima lgort, tak tahu werks — tanpa
-                          " cek ini, 1D00 akan salah dilabeli "Di Luar Rute".
-                          CLEAR: lv_route_st, lv_route_cls.
-                          IF ls_curloc-werks = zcl_cs_util=>gc_plant_1000.
-                            lv_route_st  = zcl_cs_util=>gc_route_notin.  " 'Belum Masuk Central Storage'
-                            lv_route_cls = 'rt-notin'.
-                          ELSE.
-                            lv_route_st = zcl_cs_util=>wf_route_status( ls_curloc-lgort ).
-                            IF ls_curloc-lgort = zcl_cs_util=>gc_sloc_229k.
-                              lv_route_cls = 'rt-done'.   " hijau — beres dari sisi Central Storage
-                            ELSEIF lv_route_st = zcl_cs_util=>gc_route_out.
-                              lv_route_cls = 'rt-out'.    " abu — di luar rute WF
-                            ELSE.
-                              lv_route_cls = 'rt-proc'.   " biru — sedang diproses di rute WF
-                            ENDIF.
-                          ENDIF.
-                    %>
-                    <span class="sloc-badge <%= lv_badge_cls %>" title="Stok: <%= ls_curloc-labst %>"><%= ls_curloc-lgort %><% IF lv_cur_name IS NOT INITIAL. %> &middot; <%= lv_cur_name %><% ENDIF. %></span><span class="rt-tag <%= lv_route_cls %>"><%= lv_route_st %></span>
-                    <% ENDLOOP.
-                       ENDIF.
-                       IF lv_has_cur = abap_false. %>
-                    <span style="color:#9ca3af; font-style:italic; font-size:0.8rem;">Tidak ada stok</span>
-                    <% ENDIF. %>
-                    <%
-                      " --- Dot-bar checkpoint (3g) — HISTORI, bukan stok kini. Sengaja
-                      "     dirender DI LUAR blok lv_has_cur: komponen yang stoknya sudah
-                      "     habis pindah tetap harus menunjukkan jejak 4 checkpoint-nya.
-                      "     Kunci (item SO ini, komponen ini) → angka MILIK item ini,
-                      "     bukan angka material yang dipakai bersama SO/item lain.
-                      CLEAR: ls_cpqty, ls_dot, lv_dot_tt, lv_at1d00.
-                      READ TABLE lt_cpqty INTO ls_cpqty
-                        WITH TABLE KEY kdauf = lv_vbeln
-                                       kdpos = ls_item_row-posnr
-                                       matnr = ls_resb-matnr.
-                      IF sy-subrc = 0.
-                        " Stok masih menunggu di 1000/1D00? → titik-1 MERAH (bukan abu).
-                        READ TABLE lt_curloc TRANSPORTING NO FIELDS
-                          WITH KEY matnr = ls_resb-matnr
-                                   werks = zcl_cs_util=>gc_plant_1000.
-                        IF sy-subrc = 0. lv_at1d00 = abap_true. ENDIF.
-
-                        ls_dot = zcl_cs_util=>dot_stages(
-                                   iv_q_2kcs    = ls_cpqty-q2kcs
-                                   iv_q_2261    = ls_cpqty-q2261
-                                   iv_q_2262_gr = ls_cpqty-q2262
-                                   iv_q_229k    = ls_cpqty-q229k
-                                   iv_q_need    = ls_cpqty-need
-                                   iv_at_1d00   = lv_at1d00
-                                   iv_nodata    = ls_cpqty-nodata ).
-
-                        IF ls_dot-nodata = abap_true.
-                          lv_dot_tt = ls_dot-note.
-                        ELSE.
-                          lv_dot_tt = 'SO ' && lv_vbeln && ' item ' && ls_item_row-posnr
-                                   && ' | Butuh ' && ls_cpqty-need
-                                   && ' | 2KCS ' && ls_cpqty-q2kcs
-                                   && ' | 2261 ' && ls_cpqty-q2261
-                                   && ' | GR 2262 ' && ls_cpqty-q2262
-                                   && ' | 229K ' && ls_cpqty-q229k
-                                   && ' | terjauh: ' && ls_dot-sloc_lbl.
-                        ENDIF.
-                      ENDIF.
-                    %>
-                    <div class="dot-bar" title="<%= lv_dot_tt %>">
-                      <span class="dot <%= ls_dot-d1 %>"></span><span class="dot-link"></span>
-                      <span class="dot <%= ls_dot-d2 %>"></span><span class="dot-link"></span>
-                      <span class="dot <%= ls_dot-d3 %>"></span><span class="dot-link"></span>
-                      <span class="dot <%= ls_dot-d4 %>"></span>
-                      <% IF ls_dot-nodata = abap_true. %>
-                      <span class="dot-cap" style="color:#b45309;">&#9888; Data Tidak Lengkap</span>
-                      <% ELSE. %>
-                      <span class="dot-cap"><%= ls_dot-pct %>%</span>
-                      <% ENDIF. %>
+                    <div class="prog-container">
+                      <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= zcl_cs_util=>css_pct( lv_bar_w ) %>%;"></div></div></div>
+                      <span class="prog-pct <%= lv_pcls %>"><%= lv_prog %>%</span>
                     </div>
                   </td>
                 </tr>
-                <tr id="compdet-<%= lv_vbeln %>-c<%= lv_comp_seq %>" class="comp-detail-row" style="display:none;">
-                  <td colspan="4">
+                <tr id="compdet-<%= lv_id_prefix %><%= lv_vbeln %>-c<%= lv_comp_seq %>" class="comp-detail-row" style="display:none;">
+                  <td colspan="7">
                     <div class="comp-detail">
                       <div class="cd-cell"><span class="cd-lbl">System Status</span><span class="cd-val"><span class="ord-status-tag <%= lv_cstat_cls %>"><%= lv_cstat_lbl %></span></span></div>
                       <div class="cd-cell"><span class="cd-lbl">Kuantitas</span><span class="cd-val"><span class="num-fmt"><%= ls_resb-bdmng %></span> <%= ls_resb-meins %></span></div>
@@ -1226,12 +1096,74 @@ ENDIF.
                       <div class="cd-cell"><span class="cd-lbl">Basic Finish Date</span><span class="cd-val"><%= lv_bfin %></span></div>
                       <div class="cd-cell"><span class="cd-lbl">Actual Finish Date</span><span class="cd-val"><%= lv_afin %></span></div>
                     </div>
+                    <%
+                      " === D7 (v2): Nasib fisik material ini — SELALU ditampilkan di
+                      " tab Butuh Dikirim, apa pun progres order-nya (bukan hanya 100%;
+                      " basis lama AFPO-WEMNG TERBUKTI tidak mewakili qty GR aktual
+                      " material — lihat bukti MB51/MB52 di catatan v1→v2 ZCL_CS_UTIL).
+                      " Key = (kdauf,kdpos,matnr KOMPONEN), BUKAN aufnr order.
+                      IF lv_mode = 'kirim'.
+                        CLEAR ls_pmbstat.
+                        READ TABLE lt_pmbstatus INTO ls_pmbstat
+                          WITH TABLE KEY kdauf = ls_afpo_ord-kdauf
+                                         kdpos = ls_afpo_ord-kdpos
+                                         matnr = ls_resb-matnr.
+                    %>
+                    <div style="margin-top:10px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
+                      <div style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:0.03em; margin-bottom:6px;">Status Pergerakan Material (GR/QC/Konsumsi/Kirim)</div>
+                      <% IF sy-subrc = 0 AND ls_pmbstat-qty_gr > 0. %>
+                        <div style="font-size:0.78rem; color:#475569; padding:2px 0 6px 0; border-bottom:1px dashed #e2e8f0; margin-bottom:6px;">
+                          Total Diterima (GR)<% IF ls_pmbstat-src_lgort IS NOT INITIAL. %> di SLoc <%= ls_pmbstat-src_lgort %><% ENDIF. %>: <b><span class="num-fmt"><%= ls_pmbstat-qty_gr %></span> <%= ls_resb-meins %></b>
+                        </div>
+                        <% IF ls_pmbstat-qty_qc > 0. %>
+                        <div style="display:flex; align-items:center; gap:7px; padding:3px 0; font-size:0.82rem; color:#92400e;">
+                          <span style="width:8px; height:8px; border-radius:50%; background:#f59e0b; display:inline-block; flex-shrink:0;"></span>
+                          Sedang QC (Quality Inspection): <b><span class="num-fmt"><%= ls_pmbstat-qty_qc %></span> <%= ls_resb-meins %></b>
+                        </div>
+                        <% ENDIF.
+                           IF ls_pmbstat-qty_wait > 0. %>
+                        <div style="display:flex; align-items:center; gap:7px; padding:3px 0; font-size:0.82rem; color:#0369a1;">
+                          <span style="width:8px; height:8px; border-radius:50%; background:#38bdf8; display:inline-block; flex-shrink:0;"></span>
+                          Tersedia, belum dipakai/dikirim<% IF ls_pmbstat-src_lgort IS NOT INITIAL. %> (di <%= ls_pmbstat-src_lgort %>)<% ENDIF. %>: <b><span class="num-fmt"><%= ls_pmbstat-qty_wait %></span> <%= ls_resb-meins %></b>
+                        </div>
+                        <% ENDIF.
+                           IF ls_pmbstat-qty_used > 0. %>
+                        <div style="padding:3px 0;">
+                          <div style="display:flex; align-items:center; gap:7px; font-size:0.82rem; color:#7e22ce;">
+                            <span style="width:8px; height:8px; border-radius:50%; background:#a855f7; display:inline-block; flex-shrink:0;"></span>
+                            Sudah Dikonsumsi (proses lanjutan): <b><span class="num-fmt"><%= ls_pmbstat-qty_used %></span> <%= ls_resb-meins %></b>
+                          </div>
+                          <% LOOP AT ls_pmbstat-t_used INTO ls_pmbused. %>
+                          <div style="margin-left:15px; font-size:0.78rem; color:#6b7280;">
+                            &rarr; <% IF ls_pmbused-aufnr IS NOT INITIAL. %>Order <%= ls_pmbused-aufnr %><% ELSE. %>(order tak teridentifikasi)<% ENDIF. %>: <span class="num-fmt"><%= ls_pmbused-qty %></span> <%= ls_resb-meins %><% IF ls_pmbused-last_dt IS NOT INITIAL. %>, terakhir <%= zcl_cs_util=>fmt_date( ls_pmbused-last_dt ) %><% ENDIF. %>
+                          </div>
+                          <% ENDLOOP. %>
+                        </div>
+                        <% ENDIF.
+                           IF ls_pmbstat-qty_sent > 0. %>
+                        <div style="padding:3px 0;">
+                          <div style="display:flex; align-items:center; gap:7px; font-size:0.82rem; color:#15803d;">
+                            <span style="width:8px; height:8px; border-radius:50%; background:#22c55e; display:inline-block; flex-shrink:0;"></span>
+                            Sudah Dikirim (transfer fisik): <b><span class="num-fmt"><%= ls_pmbstat-qty_sent %></span> <%= ls_resb-meins %></b>
+                          </div>
+                          <% LOOP AT ls_pmbstat-t_dest INTO ls_pmbdest. %>
+                          <div style="margin-left:15px; font-size:0.78rem; color:#6b7280;">
+                            &rarr; SLoc <%= ls_pmbdest-lgort %><% IF ls_pmbdest-werks IS NOT INITIAL. %> (Plant <%= ls_pmbdest-werks %>)<% ENDIF. %>: <span class="num-fmt"><%= ls_pmbdest-qty %></span> <%= ls_resb-meins %><% IF ls_pmbdest-last_dt IS NOT INITIAL. %>, terakhir <%= zcl_cs_util=>fmt_date( ls_pmbdest-last_dt ) %><% ENDIF. %>
+                          </div>
+                          <% ENDLOOP. %>
+                        </div>
+                        <% ENDIF. %>
+                      <% ELSE. %>
+                        <div style="font-size:0.8rem; color:#9ca3af; font-style:italic;">Belum ada Goods Receipt untuk komponen ini di MSEG (SO+item ini).</div>
+                      <% ENDIF. %>
+                    </div>
+                    <% ENDIF. %>
                   </td>
                 </tr>
                 <% ENDLOOP. ENDIF. %>
                 <% ENDLOOP. ENDIF. %>
                 <% IF lv_has_comp = abap_false. %>
-                <tr><td colspan="4" style="color:#9ca3af; text-align:center; padding:12px;">Tidak ada komponen order produksi (RESB) untuk item ini.</td></tr>
+                <tr><td colspan="7" style="color:#9ca3af; text-align:center; padding:12px;">Tidak ada komponen order produksi (RESB) untuk item ini.</td></tr>
                 <% ENDIF. %>
               </tbody>
             </table>
@@ -1317,7 +1249,11 @@ ENDIF.
       </tr>
       <% ENDLOOP. %>
       <% IF lv_has_item = abap_false. %>
-      <tr><td colspan="7" style="text-align:center; padding:32px; color:#9ca3af;">Tidak ada item produksi untuk Sales Order ini.</td></tr>
+      <tr><td colspan="7" style="text-align:center; padding:32px; color:#9ca3af;">
+        <% IF lv_mode = 'kirim'. %>Tidak ada item dengan komponen tahap Pembahanan (Plant 1000) untuk Sales Order ini.
+        <% ELSE. %>Tidak ada item dengan komponen tahap Produksi/Finish (Plant 2000) untuk Sales Order ini.
+        <% ENDIF. %>
+      </td></tr>
       <% ENDIF. %>
     </tbody>
   </table>

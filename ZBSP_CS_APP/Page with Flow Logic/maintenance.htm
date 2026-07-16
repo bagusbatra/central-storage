@@ -1,0 +1,332 @@
+<%@page language="abap"%>
+<%
+*&---------------------------------------------------------------------*
+*& Halaman Maintenance — Central Storage KMI 2 — Plant 2000
+*& Halaman MANDIRI: tidak memakai css/style.css maupun js/js.js, supaya
+*& tetap tampil benar walau MIME repository ikut dimatikan saat maintenance.
+*&
+*& CARA PAKAI: ubah 3 konstanta di bawah, lalu aktifkan halaman ini.
+*&---------------------------------------------------------------------*
+" Jendela pemeliharaan: 14/07/2026 12:00 -> 15/07/2026 12:00 (durasi 1 hari).
+CONSTANTS: lc_end_date TYPE d      VALUE '20260715',   " target selesai (YYYYMMDD)
+           lc_end_time TYPE t      VALUE '120000',     " target selesai (HHMMSS)
+           lc_contact  TYPE string VALUE 'IT Support &#8212; ext. 1234'.
+
+DATA: lv_user     TYPE string,
+      lv_days     TYPE i,
+      lv_secs     TYPE i,          " sisa detik menuju target selesai
+      lv_secs_str TYPE string,
+      lv_end_disp TYPE string,
+      lv_ts       TYPE string.
+
+lv_user = sy-uname.
+
+" Sisa waktu = (selisih hari * 86400) + (selisih detik dalam hari).
+" Tipe T pada aritmetika ABAP otomatis jadi "detik sejak tengah malam".
+lv_days = lc_end_date - sy-datum.
+lv_secs = lv_days * 86400 + ( lc_end_time - sy-uzeit ).
+IF lv_secs < 0.
+  lv_secs = 0.                     " target sudah lewat -> JS tampilkan state "coba muat ulang"
+ENDIF.
+lv_secs_str = lv_secs.
+CONDENSE lv_secs_str.
+
+CONCATENATE lc_end_date+6(2) '/' lc_end_date+4(2) '/' lc_end_date(4)
+            ' &#183; ' lc_end_time(2) ':' lc_end_time+2(2) ' WIB'
+       INTO lv_end_disp.
+
+CONCATENATE sy-datum+6(2) '/' sy-datum+4(2) '/' sy-datum(4)
+            ' ' sy-uzeit(2) ':' sy-uzeit+2(2)
+       INTO lv_ts.
+%>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <title>Sedang Dirawat &#8212; Central Storage KMI 2</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      background-color: #eef1f6;
+      background-image:
+        repeating-linear-gradient(0deg,  rgba(22,32,46,.035) 0, rgba(22,32,46,.035) 1px, transparent 1px, transparent 32px),
+        repeating-linear-gradient(90deg, rgba(22,32,46,.035) 0, rgba(22,32,46,.035) 1px, transparent 1px, transparent 32px);
+      font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+      color: #16202e;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .card {
+      width: 100%;
+      max-width: 620px;
+      background: #ffffff;
+      border: 1px solid #e2e7ef;
+      border-radius: 16px;
+      box-shadow: 0 1px 2px rgba(22,32,46,.04), 0 12px 32px -12px rgba(22,32,46,.16);
+      padding: 44px 44px 36px;
+      overflow: hidden;
+    }
+
+    /* --- Eyebrow --- */
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-family: "Cascadia Mono", Consolas, "SFMono-Regular", "Courier New", monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: #8a97a8;
+      margin-bottom: 26px;
+    }
+    .beacon {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #e0a62a;
+      box-shadow: 0 0 0 0 rgba(224,166,42,.55);
+      animation: pulse 2.2s ease-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(224,166,42,.5); }
+      70%  { box-shadow: 0 0 0 8px rgba(224,166,42,0); }
+      100% { box-shadow: 0 0 0 0 rgba(224,166,42,0); }
+    }
+
+    /* --- Headline --- */
+    h1 {
+      margin: 0 0 16px;
+      font-size: 40px;
+      line-height: 1.08;
+      font-weight: 700;
+      letter-spacing: -.02em;
+    }
+    h1 .dim { color: #97a3b3; font-weight: 400; }
+
+    .lede {
+      margin: 0 0 32px;
+      max-width: 46ch;
+      font-size: 15px;
+      line-height: 1.65;
+      color: #5a6879;
+    }
+
+    /* --- Signature: konveyor yang tetap berjalan --- */
+    .belt {
+      position: relative;
+      height: 40px;
+      border-radius: 6px;
+      background-color: #e9edf2;
+      background-image: repeating-linear-gradient(90deg,
+        #dce2ea 0px, #dce2ea 10px, #e9edf2 10px, #e9edf2 26px);
+      animation: roll 1.4s linear infinite;
+      overflow: hidden;
+    }
+    @keyframes roll { from { background-position: 0 0; } to { background-position: 26px 0; } }
+
+    .crate {
+      position: absolute;
+      top: 8px;
+      width: 24px; height: 24px;
+      border-radius: 3px;
+      background: #16202e;
+      border-top: 3px solid #e0a62a;
+      animation: haul 7s linear infinite;
+    }
+    @keyframes haul {
+      from { left: -32px; }
+      to   { left: 100%; }
+    }
+
+    .hazard {
+      height: 6px;
+      margin-top: 4px;
+      border-radius: 3px;
+      background-image: repeating-linear-gradient(45deg,
+        #e0a62a 0px, #e0a62a 7px, #16202e 7px, #16202e 14px);
+      opacity: .85;
+    }
+
+    /* --- Readout --- */
+    .readout {
+      margin: 34px 0 30px;
+      border-top: 1px solid #eaeef3;
+    }
+    .row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 13px 0;
+      border-bottom: 1px solid #eaeef3;
+    }
+    .row .k {
+      font-family: "Cascadia Mono", Consolas, "SFMono-Regular", "Courier New", monospace;
+      font-size: 11px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #8a97a8;
+      white-space: nowrap;
+    }
+    .row .v {
+      font-family: "Cascadia Mono", Consolas, "SFMono-Regular", "Courier New", monospace;
+      font-size: 14px;
+      font-weight: 600;
+      color: #16202e;
+      text-align: right;
+    }
+    #countdown { font-size: 17px; letter-spacing: .04em; }
+    #countdown.done { color: #b07617; }
+
+    /* --- Aksi --- */
+    .btn {
+      display: inline-block;
+      padding: 12px 22px;
+      border: none;
+      border-radius: 8px;
+      background: #16202e;
+      color: #ffffff;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s ease, transform .15s ease;
+    }
+    .btn:hover  { background: #24334a; }
+    .btn:active { transform: translateY(1px); }
+    .btn:focus  { outline: 3px solid rgba(224,166,42,.6); outline-offset: 2px; }
+
+    .hint {
+      margin: 14px 0 0;
+      font-size: 12.5px;
+      line-height: 1.6;
+      color: #97a3b3;
+    }
+
+    .footer {
+      margin-top: 22px;
+      max-width: 620px;
+      width: 100%;
+      font-family: "Cascadia Mono", Consolas, "SFMono-Regular", "Courier New", monospace;
+      font-size: 11px;
+      letter-spacing: .04em;
+      color: #97a3b3;
+      text-align: center;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 560px) {
+      .card { padding: 32px 24px 28px; border-radius: 12px; }
+      h1 { font-size: 30px; }
+      .row { flex-direction: column; align-items: flex-start; gap: 4px; }
+      .row .v { text-align: left; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .belt, .crate, .beacon { animation: none; }
+      .crate { left: 46%; }
+      .btn { transition: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+
+    <div class="eyebrow">
+      <span class="beacon"></span>
+      <span>Pemeliharaan Terjadwal &#183; Plant 2000</span>
+    </div>
+
+    <h1>Dashboard sedang dirawat.<br><span class="dim">Sebentar saja.</span></h1>
+
+    <p class="lede">
+      Kami sedang memperbarui sistem Central Storage. Produksi dan data SAP Anda
+      tidak terpengaruh &#8212; halaman ini kembali normal begitu pemeliharaan selesai.
+    </p>
+
+    <div class="belt"><span class="crate"></span></div>
+    <div class="hazard"></div>
+
+    <div class="readout">
+      <div class="row">
+        <span class="k">Perkiraan Aktif</span>
+        <span class="v"><%= lv_end_disp %></span>
+      </div>
+      <div class="row">
+        <span class="k">Sisa Waktu</span>
+        <span class="v" id="countdown">&#8212;&#8212;</span>
+      </div>
+      <div class="row">
+        <span class="k">Butuh Bantuan</span>
+        <span class="v"><%= lc_contact %></span>
+      </div>
+    </div>
+
+    <button type="button" class="btn" id="reload">Muat ulang halaman</button>
+    <p class="hint" id="hint">Halaman akan dimuat ulang otomatis saat waktu pemeliharaan berakhir.</p>
+
+  </div>
+
+  <div class="footer">
+    Central Storage KMI 2 &#183; Sistem <%= sy-sysid %> &#183; User <%= lv_user %> &#183; <%= lv_ts %> WIB
+  </div>
+
+  <script>
+    (function () {
+      var secs  = parseInt('<%= lv_secs_str %>', 10);
+      var out   = document.getElementById('countdown');
+      var hint  = document.getElementById('hint');
+      var timer = null;
+
+      function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+      function finished() {
+        if (timer) { clearInterval(timer); }
+        out.className = 'v done';
+        out.innerHTML = 'Selesai';
+        hint.innerHTML = 'Waktu pemeliharaan sudah lewat. Muat ulang halaman untuk mengecek statusnya.';
+      }
+
+      function render() {
+        if (isNaN(secs) || secs <= 0) { finished(); return; }
+        var d = Math.floor(secs / 86400);
+        var h = Math.floor((secs % 86400) / 3600);
+        var m = Math.floor((secs % 3600) / 60);
+        var s = secs % 60;
+        var clock = pad(h) + ':' + pad(m) + ':' + pad(s);
+        out.innerHTML = (d > 0) ? (d + ' hari ' + clock) : clock;
+      }
+
+      function tick() {
+        secs = secs - 1;
+        if (secs <= 0) {
+          finished();
+          window.setTimeout(function () { window.location.reload(); }, 1500);
+          return;
+        }
+        render();
+      }
+
+      render();
+      if (!isNaN(secs) && secs > 0) { timer = window.setInterval(tick, 1000); }
+
+      document.getElementById('reload').onclick = function () {
+        window.location.reload();
+      };
+    })();
+  </script>
+
+</body>
+</html>

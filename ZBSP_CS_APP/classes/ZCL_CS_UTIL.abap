@@ -62,6 +62,41 @@
 *& Stok 2KCS/1D00 di transfer.htm, flag iv_at_1d00) masih memakai MARD → berpotensi
 *& nol/tak lengkap. BELUM diverifikasi & BELUM diperbaiki — jangan anggap benar.
 *&---------------------------------------------------------------------*
+*& REVISI FASE-3 (D7, v2) — pmb_output_status( ): nasib MATERIAL KOMPONEN
+*&---------------------------------------------------------------------*
+*& Dipakai monitoring_bom.htm tab "Butuh Dikirim" (mode=kirim), TIAP baris
+*& material komponen (bukan hanya yang order-nya 100%) — pengguna ingin tahu
+*& nasib FISIK material itu: sudah GR berapa, masih di QC berapa, sudah
+*& dikonsumsi ke proses lanjutan berapa (dan oleh order mana), sudah dikirim
+*& fisik ke SLoc lain berapa (dan ke mana), sisa tersedia berapa.
+*&
+*& v1 (dihapus) keliru men-scope ke AUFNR order & threshold 100% AFPO-WEMNG.
+*& Bukti dari user (MB51/MB52 riil): AFPO-WEMNG order (mis. 67/192 = 34.9%)
+*& TIDAK merepresentasikan qty GR aktual material (yang ternyata sudah 192,
+*& 100% GR + 100% lolos QC) — keduanya basis data BEDA (AFPO header vs MSEG
+*& histori riil). v2 TIDAK LAGI bergantung pada AFPO-PSMNG/WEMNG SAMA SEKALI;
+*& murni menelusuri MSEG milik MATERIAL KOMPONEN itu, discope SO+item+
+*& SOBKZ='E' (pola sama dgn cp_qty), dan SELALU dihitung/ditampilkan apa pun
+*& progres order-nya.
+*&
+*& Ditelusuri dari MSEG⨝MKPF, key = (kdauf, kdpos, matnr KOMPONEN):
+*&   1) GR (bwart 101)     : SHKZG 'S' menambah qty_gr; INSMK='X' → qty_qc,
+*&                           selain itu → qty_wait. src_lgort = LGORT baris ini.
+*&   2) QI release (321)   : baris SHKZG 'H' sebesar MENGE → qty_qc dikurangi,
+*&                           qty_wait ditambah.
+*&   3) Konsumsi (261)     : GOODS ISSUE ke order LAIN (bukan transfer
+*&                           lokasi!) di src_lgort, baris SHKZG 'H' →
+*&                           qty_wait dikurangi, qty_used ditambah.
+*&                           Order konsumen = MSEG-AUFNR baris 261 itu
+*&                           SENDIRI (field ini memang terisi utk goods
+*&                           issue ke order — tak perlu ditelusuri lewat
+*&                           RESB-RSNUM).
+*&   4) Transfer (301/311) : baris SHKZG 'H' DI src_lgort → qty_wait dikurangi,
+*&                           qty_sent ditambah; UMLGO/UMWRK = tujuan (t_dest).
+*&
+*& qty_gr = qty_qc + qty_wait + qty_used + qty_sent (kira-kira; retur/pembulatan
+*& bisa membuat sedikit meleset, sudah dijepit non-negatif per kategori).
+*&---------------------------------------------------------------------*
 CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
 
   PUBLIC SECTION.
@@ -94,6 +129,10 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
 
     " Range movement type untuk WHERE bwart IN ( … ).
     TYPES ty_bwart_range TYPE RANGE OF bwart.
+
+    " Range MRP controller (AFKO-DISPO) untuk WHERE dispo IN ( … ) — scope 3 tahap
+    " Wood Furniture (Pembahanan / Produksi / Finish). Lihat wf_dispo_range( ).
+    TYPES ty_dispo_range TYPE RANGE OF afko-dispo.
 
     " Daftar order untuk wf_order_filter (in & out). SORTED+UNIQUE → pemanggil bisa
     " READ TABLE … WITH TABLE KEY aufnr tanpa SORT/dedup sendiri.
@@ -165,6 +204,54 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
            END OF ty_itmcp_line.
     TYPES ty_itmcp_tab TYPE SORTED TABLE OF ty_itmcp_line WITH UNIQUE KEY kdauf kdpos.
 
+    " === D7 (v2): pmb_output_status — nasib fisik MATERIAL KOMPONEN =========
+    " INPUT: satu baris per (item SO, material komponen) yang mau ditelusuri.
+    " Key SENGAJA berbasis MATERIAL, BUKAN aufnr — status ini tentang nasib
+    " material itu sendiri (bisa muncul di >1 order komponen), TIDAK bergantung
+    " pada AFPO-PSMNG/WEMNG order manapun (lihat catatan v1→v2 di header).
+    TYPES: BEGIN OF ty_pmbkey,
+             kdauf TYPE afpo-kdauf,
+             kdpos TYPE afpo-kdpos,
+             matnr TYPE resb-matnr,
+           END OF ty_pmbkey.
+    TYPES ty_pmbkey_tab TYPE SORTED TABLE OF ty_pmbkey WITH UNIQUE KEY kdauf kdpos matnr.
+
+    " Satu baris tujuan pengiriman fisik (301/311) — bisa >1 bila dikirim ke
+    " lebih dari 1 SLoc.
+    TYPES: BEGIN OF ty_pmbdest,
+             werks   TYPE mseg-umwrk,
+             lgort   TYPE mseg-lgort,
+             qty     TYPE ty_qty,
+             last_dt TYPE d,
+           END OF ty_pmbdest.
+    TYPES ty_pmbdest_tab TYPE STANDARD TABLE OF ty_pmbdest WITH DEFAULT KEY.
+
+    " Satu baris order TUJUAN KONSUMSI (261, goods issue ke reservasi order
+    " lain) — bisa >1 bila dikonsumsi bertahap oleh order yang sama atau beda.
+    TYPES: BEGIN OF ty_pmbused,
+             aufnr   TYPE resb-aufnr,
+             qty     TYPE ty_qty,
+             last_dt TYPE d,
+           END OF ty_pmbused.
+    TYPES ty_pmbused_tab TYPE STANDARD TABLE OF ty_pmbused WITH DEFAULT KEY.
+
+    " OUTPUT pmb_output_status: qty_qc + qty_wait + qty_used + qty_sent SEHARUSNYA
+    " ≈ qty_gr (bisa sedikit meleset krn retur/pembulatan, sudah dijepit ≥0).
+    TYPES: BEGIN OF ty_pmbstatus,
+             kdauf     TYPE afpo-kdauf,
+             kdpos     TYPE afpo-kdpos,
+             matnr     TYPE resb-matnr,
+             src_lgort TYPE mseg-lgort,     " SLoc penerimaan GR (kosong bila blm GR)
+             qty_gr    TYPE ty_qty,         " total pernah di-GR (konteks/cross-check)
+             qty_qc    TYPE ty_qty,         " masih di Quality Inspection
+             qty_wait  TYPE ty_qty,         " tersedia (unrestricted), blm dipakai/kirim
+             qty_used  TYPE ty_qty,         " sudah dikonsumsi (GI 261) ke order lanjutan
+             qty_sent  TYPE ty_qty,         " sudah ditransfer fisik (301/311)
+             t_used    TYPE ty_pmbused_tab, " rincian order yg mengkonsumsi
+             t_dest    TYPE ty_pmbdest_tab, " rincian tujuan pengiriman fisik
+           END OF ty_pmbstatus.
+    TYPES ty_pmbstatus_tab TYPE SORTED TABLE OF ty_pmbstatus WITH UNIQUE KEY kdauf kdpos matnr.
+
     " Kode status item produksi — satu sumber kebenaran untuk klasifikasi.
     " ⚠️ gc_st_nodata WAJIB ditangani EKSPLISIT oleh pemanggil. Kalau dibiarkan
     " jatuh ke "WHEN OTHERS" (= Belum Produksi), item yang datanya bermasalah akan
@@ -218,6 +305,15 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " ber-SOBKZ 'E' membawa KDAUF/KDPOS → gerakan TAHU miliknya SO+item mana.
     " Inilah yang memungkinkan qty pipeline dipilah per SO (verifikasi: 99.9%).
     CONSTANTS: gc_sobkz_e TYPE sobkz VALUE 'E'.
+
+    " D7: indikator jenis stok (MSEG-INSMK) saat GR — 'X' = masuk Quality
+    " Inspection stock (belum released), bukan langsung unrestricted.
+    CONSTANTS: gc_insmk_qi TYPE mseg-insmk VALUE 'X'.
+
+    " D7: movement type "Goods Issue utk order" — material KELUAR dari stok
+    " karena DIKONSUMSI sbg komponen order lain, BUKAN transfer lokasi fisik
+    " (beda konsep dgn 301/311). Baris ini membawa MSEG-AUFNR = order konsumen.
+    CONSTANTS: gc_bwart_gi TYPE bwart VALUE '261'.
 
     " Label status rute (dipusatkan agar pemanggil tak membandingkan literal).
     CONSTANTS: gc_route_out   TYPE string VALUE 'Di Luar Rute Wood Furniture',
@@ -305,6 +401,18 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
     "! GR (101) TIDAK termasuk — itu checkpoint tersendiri (CP3). 321 tak pernah masuk.
     CLASS-METHODS transfer_bwarts
       RETURNING VALUE(rt_bwart) TYPE ty_bwart_range.
+
+    "! Range MRP controller (AFKO-DISPO) untuk WHERE dispo IN — scope 3 tahap Wood
+    "! Furniture. HANYA order yang melewati salah satu MRP ini yang ikut diambil:
+    "!   • Pembahanan : WM1 WM2 PN1 PN2
+    "!   • Produksi   : GA1 GA2
+    "!   • Finish     : EB2
+    "! Menggantikan penyaringan cost-center (wf_order_filter) di cabang "Butuh
+    "! Dikirim": DISPO menyatakan langsung tahap WF di header order, sedangkan
+    "! whitelist cost-center bias ke unit perakitan sehingga bisa membuang order
+    "! Pembahanan (operasi pertamanya di luar 10 cost center itu).
+    CLASS-METHODS wf_dispo_range
+      RETURNING VALUE(rt_dispo) TYPE ty_dispo_range.
 
     "! Dot-bar perjalanan material melewati 4 CHECKPOINT pipeline final:
     "!   d1 2KCS → d2 2261 → d3 GR 101 @2262 → d4 229K.
@@ -453,6 +561,36 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
       IMPORTING iv_lgort         TYPE lgort_d
       RETURNING VALUE(rv_status) TYPE string.
 
+    "! ⭐ D7 (v2): NASIB FISIK material komponen — GR / QC / dikonsumsi / dikirim.
+    "! Menelusuri MSEG⨝MKPF (bwart 101/321/261/301/311), discope SO+item+
+    "! SOBKZ='E' (pola sama dgn cp_qty), key = MATERIAL (bukan order/aufnr —
+    "! lihat catatan v1→v2 di header REVISI FASE-3: AFPO-PSMNG/WEMNG order
+    "! TERBUKTI tidak merepresentasikan qty GR aktual material, jadi status ini
+    "! SENGAJA independen dari progres AFPO order manapun & SELALU dihitung,
+    "! bukan cuma saat order 100%).
+    "!
+    "! Kategori hasil:
+    "!   qty_gr   : total pernah di-GR (konteks/cross-check thd Target Qty tabel)
+    "!   qty_qc   : masih di Quality Inspection (GR dgn INSMK='X', blm dirilis 321)
+    "!   qty_wait : tersedia (unrestricted), belum dipakai maupun dikirim
+    "!   qty_used : sudah DIKONSUMSI (GI 261) sbg komponen order lain — rincian
+    "!              order konsumen ada di t_used (dibaca LANGSUNG dari
+    "!              MSEG-AUFNR baris 261, bukan lewat RESB-RSNUM)
+    "!   qty_sent : sudah ditransfer FISIK (301/311) ke SLoc lain — rincian
+    "!              tujuan ada di t_dest (UMWRK/UMLGO baris transfer)
+    "! src_lgort = SLoc penerimaan GR (dibaca dari data GR itu sendiri, TIDAK
+    "! diasumsikan/dihardcode — beda material/order bisa GR ke SLoc berbeda).
+    "!
+    "! Batched (FOR ALL ENTRIES atas MATNR unik) — panggil utk SEMUA material
+    "! komponen yang sedang ditampilkan di tab Butuh Dikirim, TIDAK PERLU
+    "! menunggu order 100% (beda dgn v1).
+    "!
+    "! @parameter it_key    | (kdauf, kdpos, matnr) per material komponen
+    "! @parameter rt_status | Pemilahan qty_gr/qc/wait/used/sent + t_used/t_dest
+    CLASS-METHODS pmb_output_status
+      IMPORTING it_key           TYPE ty_pmbkey_tab
+      RETURNING VALUE(rt_status) TYPE ty_pmbstatus_tab.
+
 ENDCLASS.
 
 CLASS zcl_cs_util IMPLEMENTATION.
@@ -529,6 +667,22 @@ CLASS zcl_cs_util IMPLEMENTATION.
     ls_b-sign = 'I'. ls_b-option = 'EQ'.
     ls_b-low = gc_bwart_301. APPEND ls_b TO rt_bwart.
     ls_b-low = gc_bwart_311. APPEND ls_b TO rt_bwart.
+  ENDMETHOD.
+
+  METHOD wf_dispo_range.
+    " Satu sumber kebenaran daftar MRP controller (AFKO-DISPO) tahap Wood Furniture.
+    DATA ls_r LIKE LINE OF rt_dispo.
+    ls_r-sign = 'I'. ls_r-option = 'EQ'.
+    " Tahap 1 — Pembahanan
+    ls_r-low = 'WM1'. APPEND ls_r TO rt_dispo.
+    ls_r-low = 'WM2'. APPEND ls_r TO rt_dispo.
+    ls_r-low = 'PN1'. APPEND ls_r TO rt_dispo.
+    ls_r-low = 'PN2'. APPEND ls_r TO rt_dispo.
+    " Tahap 2 — Produksi
+    ls_r-low = 'GA1'. APPEND ls_r TO rt_dispo.
+    ls_r-low = 'GA2'. APPEND ls_r TO rt_dispo.
+    " Tahap 3 — Finish
+    ls_r-low = 'EB2'. APPEND ls_r TO rt_dispo.
   ENDMETHOD.
 
   METHOD dot_stages.
@@ -1087,6 +1241,200 @@ CLASS zcl_cs_util IMPLEMENTATION.
       WHEN gc_sloc_229k. rv_status = 'Sampai Batas Akhir (229K)'.
       WHEN OTHERS.       rv_status = gc_route_out.
     ENDCASE.
+  ENDMETHOD.
+
+  METHOD pmb_output_status.
+    " D7 (v2, disederhanakan). Lihat dokumentasi lengkap di deklarasi & header
+    " REVISI FASE-3. Ringkas: telusuri MSEG⨝MKPF (101 GR / 321 QI-release /
+    " 261 konsumsi / 301+311 transfer keluar), discope SO+item+SOBKZ='E',
+    " key = MATERIAL (bukan order) — lalu pilah qty ke qty_qc/qty_wait/
+    " qty_used/qty_sent.
+    "
+    " Order KONSUMEN (261) dibaca LANGSUNG dari MSEG-AUFNR baris itu sendiri —
+    " field ini memang terisi utk goods issue ke order (261), TIDAK perlu
+    " ditelusuri lewat RESB-RSNUM (versi sebelumnya sempat memakai RSNUM,
+    " disederhanakan krn AUFNR sudah cukup & lebih langsung).
+    TYPES: BEGIN OF lty_mat,
+             matnr TYPE resb-matnr,
+           END OF lty_mat,
+           BEGIN OF lty_mv,
+             matnr TYPE mseg-matnr,
+             werks TYPE mseg-werks,
+             lgort TYPE mseg-lgort,
+             umlgo TYPE mseg-umlgo,
+             umwrk TYPE mseg-umwrk,
+             aufnr TYPE mseg-aufnr,
+             bwart TYPE mseg-bwart,
+             shkzg TYPE mseg-shkzg,
+             menge TYPE mseg-menge,
+             kdauf TYPE mseg-kdauf,
+             kdpos TYPE mseg-kdpos,
+             sobkz TYPE mseg-sobkz,
+             insmk TYPE mseg-insmk,
+             budat TYPE mkpf-budat,
+           END OF lty_mv.
+
+    DATA: lt_mat TYPE TABLE OF lty_mat, ls_mat TYPE lty_mat,
+          lt_mv  TYPE TABLE OF lty_mv,  ls_mv  TYPE lty_mv,
+          ls_key TYPE ty_pmbkey,
+          ls_out TYPE ty_pmbstatus,
+          lr_bw  TYPE ty_bwart_range,
+          ls_bw  LIKE LINE OF lr_bw.
+
+    FIELD-SYMBOLS: <o> TYPE ty_pmbstatus,
+                   <d> TYPE ty_pmbdest,
+                   <u> TYPE ty_pmbused.
+
+    IF it_key IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Kerangka hasil + driver material unik.
+    LOOP AT it_key INTO ls_key.
+      CLEAR ls_out.
+      ls_out-kdauf = ls_key-kdauf.
+      ls_out-kdpos = ls_key-kdpos.
+      ls_out-matnr = ls_key-matnr.
+      INSERT ls_out INTO TABLE rt_status.
+
+      ls_mat-matnr = ls_key-matnr.
+      APPEND ls_mat TO lt_mat.
+    ENDLOOP.
+    SORT lt_mat BY matnr.
+    DELETE ADJACENT DUPLICATES FROM lt_mat COMPARING matnr.
+
+    lr_bw = transfer_bwarts( ).                        " 301/311
+    ls_bw-sign = 'I'. ls_bw-option = 'EQ'.
+    ls_bw-low  = gc_bwart_gr. APPEND ls_bw TO lr_bw.    " +101
+    ls_bw-low  = gc_bwart_qi. APPEND ls_bw TO lr_bw.    " +321
+    ls_bw-low  = gc_bwart_gi. APPEND ls_bw TO lr_bw.    " +261
+
+    SELECT m~matnr m~werks m~lgort m~umlgo m~umwrk m~aufnr m~bwart m~shkzg
+           m~menge m~kdauf m~kdpos m~sobkz m~insmk k~budat
+      FROM mseg AS m INNER JOIN mkpf AS k
+        ON m~mblnr = k~mblnr AND m~mjahr = k~mjahr
+      INTO TABLE lt_mv
+      FOR ALL ENTRIES IN lt_mat
+      WHERE m~matnr = lt_mat-matnr
+        AND m~bwart IN lr_bw.
+    IF lt_mv IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " --- 1. GR (101): tentukan src_lgort (dibaca dari data) + qty_gr + pilah
+    "        ke qty_qc (INSMK='X') vs qty_wait (langsung unrestricted). -------
+    LOOP AT lt_mv INTO ls_mv WHERE bwart = gc_bwart_gr.
+      IF ls_mv-kdauf IS INITIAL OR ls_mv-sobkz <> gc_sobkz_e. CONTINUE. ENDIF.
+      READ TABLE rt_status ASSIGNING <o>
+        WITH TABLE KEY kdauf = ls_mv-kdauf kdpos = ls_mv-kdpos matnr = ls_mv-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+
+      IF <o>-src_lgort IS INITIAL.
+        <o>-src_lgort = ls_mv-lgort.
+      ENDIF.
+
+      IF ls_mv-shkzg = gc_shkzg_s.
+        <o>-qty_gr = <o>-qty_gr + ls_mv-menge.
+        IF ls_mv-insmk = gc_insmk_qi.
+          <o>-qty_qc   = <o>-qty_qc   + ls_mv-menge.
+        ELSE.
+          <o>-qty_wait = <o>-qty_wait + ls_mv-menge.
+        ENDIF.
+      ELSEIF ls_mv-shkzg = gc_shkzg_h.
+        " Retur GR (jarang).
+        <o>-qty_gr = <o>-qty_gr - ls_mv-menge.
+        IF ls_mv-insmk = gc_insmk_qi.
+          <o>-qty_qc   = <o>-qty_qc   - ls_mv-menge.
+        ELSE.
+          <o>-qty_wait = <o>-qty_wait - ls_mv-menge.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+
+    " --- 2. QI release (321): baris 'H' = keluar dari Quality Insp sebesar
+    "        MENGE. Tidak butuh AUFNR — sudah dikunci oleh key (kdauf,kdpos,
+    "        matnr) yang sama dgn GR. -----------------------------------------
+    LOOP AT lt_mv INTO ls_mv WHERE bwart = gc_bwart_qi AND shkzg = gc_shkzg_h.
+      IF ls_mv-kdauf IS INITIAL OR ls_mv-sobkz <> gc_sobkz_e. CONTINUE. ENDIF.
+      READ TABLE rt_status ASSIGNING <o>
+        WITH TABLE KEY kdauf = ls_mv-kdauf kdpos = ls_mv-kdpos matnr = ls_mv-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      <o>-qty_qc   = <o>-qty_qc   - ls_mv-menge.
+      <o>-qty_wait = <o>-qty_wait + ls_mv-menge.
+    ENDLOOP.
+
+    " --- 3. Konsumsi (261, Goods Issue ke order lain) DI src_lgort: qty_wait
+    "        berkurang, qty_used bertambah. Order konsumen = MSEG-AUFNR baris
+    "        ini LANGSUNG (261 memang mengisi field ini), TANPA perlu
+    "        menelusuri RESB-RSNUM. -----------------------------------------
+    LOOP AT lt_mv INTO ls_mv WHERE bwart = gc_bwart_gi.
+      IF ls_mv-kdauf IS INITIAL OR ls_mv-sobkz <> gc_sobkz_e. CONTINUE. ENDIF.
+      READ TABLE rt_status ASSIGNING <o>
+        WITH TABLE KEY kdauf = ls_mv-kdauf kdpos = ls_mv-kdpos matnr = ls_mv-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      IF <o>-src_lgort IS NOT INITIAL AND ls_mv-lgort <> <o>-src_lgort. CONTINUE. ENDIF.
+
+      IF ls_mv-shkzg = gc_shkzg_h.
+        <o>-qty_wait = <o>-qty_wait - ls_mv-menge.
+        <o>-qty_used = <o>-qty_used + ls_mv-menge.
+
+        READ TABLE <o>-t_used ASSIGNING <u> WITH KEY aufnr = ls_mv-aufnr.
+        IF sy-subrc = 0.
+          <u>-qty = <u>-qty + ls_mv-menge.
+          IF ls_mv-budat > <u>-last_dt. <u>-last_dt = ls_mv-budat. ENDIF.
+        ELSE.
+          APPEND INITIAL LINE TO <o>-t_used ASSIGNING <u>.
+          <u>-aufnr   = ls_mv-aufnr.   " kosong bila baris 261 ini tak ber-AUFNR
+          <u>-qty     = ls_mv-menge.
+          <u>-last_dt = ls_mv-budat.
+        ENDIF.
+      ELSEIF ls_mv-shkzg = gc_shkzg_s.
+        " Retur GI (jarang) — batalkan sebagian konsumsi.
+        <o>-qty_wait = <o>-qty_wait + ls_mv-menge.
+        <o>-qty_used = <o>-qty_used - ls_mv-menge.
+      ENDIF.
+    ENDLOOP.
+
+    " --- 4. Transfer keluar fisik (301/311) DI src_lgort: qty_wait berkurang,
+    "        qty_sent bertambah. UMWRK/UMLGO baris ini = tujuan. -------------
+    LOOP AT lt_mv INTO ls_mv WHERE ( bwart = gc_bwart_301 OR bwart = gc_bwart_311 ).
+      IF ls_mv-kdauf IS INITIAL OR ls_mv-sobkz <> gc_sobkz_e. CONTINUE. ENDIF.
+      READ TABLE rt_status ASSIGNING <o>
+        WITH TABLE KEY kdauf = ls_mv-kdauf kdpos = ls_mv-kdpos matnr = ls_mv-matnr.
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
+      IF <o>-src_lgort IS INITIAL OR ls_mv-lgort <> <o>-src_lgort. CONTINUE. ENDIF.
+
+      IF ls_mv-shkzg = gc_shkzg_h.
+        <o>-qty_wait = <o>-qty_wait - ls_mv-menge.
+        <o>-qty_sent = <o>-qty_sent + ls_mv-menge.
+
+        READ TABLE <o>-t_dest ASSIGNING <d>
+          WITH KEY werks = ls_mv-umwrk lgort = ls_mv-umlgo.
+        IF sy-subrc = 0.
+          <d>-qty = <d>-qty + ls_mv-menge.
+          IF ls_mv-budat > <d>-last_dt. <d>-last_dt = ls_mv-budat. ENDIF.
+        ELSE.
+          APPEND INITIAL LINE TO <o>-t_dest ASSIGNING <d>.
+          <d>-werks   = ls_mv-umwrk.
+          <d>-lgort   = ls_mv-umlgo.
+          <d>-qty     = ls_mv-menge.
+          <d>-last_dt = ls_mv-budat.
+        ENDIF.
+      ELSEIF ls_mv-shkzg = gc_shkzg_s.
+        " Retur balik ke src_lgort (jarang) — batalkan sebagian pengiriman.
+        <o>-qty_wait = <o>-qty_wait + ls_mv-menge.
+        <o>-qty_sent = <o>-qty_sent - ls_mv-menge.
+      ENDIF.
+    ENDLOOP.
+
+    " --- 5. Jepit non-negatif (retur/pembulatan bisa membuat net sedikit minus) ---
+    LOOP AT rt_status ASSIGNING <o>.
+      IF <o>-qty_gr   < 0. <o>-qty_gr   = 0. ENDIF.
+      IF <o>-qty_qc   < 0. <o>-qty_qc   = 0. ENDIF.
+      IF <o>-qty_wait < 0. <o>-qty_wait = 0. ENDIF.
+      IF <o>-qty_used < 0. <o>-qty_used = 0. ENDIF.
+      IF <o>-qty_sent < 0. <o>-qty_sent = 0. ENDIF.
+    ENDLOOP.
   ENDMETHOD.
 
 ENDCLASS.
