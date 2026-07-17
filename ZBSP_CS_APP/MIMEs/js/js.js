@@ -1,8 +1,23 @@
 /* =======================================================================
    Dashboard Central Storage KMI 2 — Plant 2000
    Shared JS: index.htm & monitoring.htm
-   Data ABAP (weekLabels, doneCounts, dll.) di-inject via inline <script>
-   di index.htm karena mengandung nilai <%= %> dari ABAP server-side.
+   Data ABAP (weekLabels, pembahananCounts, dll.) di-inject via inline
+   <script> di index.htm karena mengandung nilai <%= %> dari ABAP server-side.
+   ======================================================================= */
+
+/* ---------------------------------------------------------------------
+   D23/D27 — MIGRASI ke 4 TAHAP (Pembahanan/Produksi/Ready Assy/Selesai).
+   Sebelumnya (revisi lama) chart ini hanya menerima 3 seri
+   (doneCounts/inprogCounts/noprodCounts). index.htm sekarang mengirim 4
+   seri utuh (pembahananCounts/produksiCounts/readyAssyCounts/selesaiCounts
+   + versi tunggal utk donut) — file ini diperbarui utk memakainya langsung,
+   bar chart & donut kini benar-benar menampilkan 4 warna berbeda.
+
+   D27 — granularitas bar chart TIDAK LAGI selalu "per minggu, 7 hari":
+   index.htm sekarang mengirim `chartGran` ('D'/'W1'/'W2'/'W3'/'M') dan
+   `chartGranLabel` (teks tampil). drillDown() & tooltip memakai ini untuk
+   menghitung tanggal AKHIR bucket yang benar (dulu hardcode +6 hari,
+   salah untuk granularitas selain mingguan).
    ======================================================================= */
 
 /** Tunda eksekusi fn hingga delay ms setelah panggilan terakhir (anti-flicker resize) */
@@ -58,9 +73,47 @@ function drawRoundTop(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/** Format Date -> 'YYYY-MM-DD' */
+function fmtISODate(d) {
+  function p2(v) { return v < 10 ? '0' + v : '' + v; }
+  return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+}
+
+/** Format Date -> 'DD/MM' (tampilan tooltip) */
+function fmtShortDate(d) {
+  function p2(v) { return v < 10 ? '0' + v : '' + v; }
+  return p2(d.getDate()) + '/' + p2(d.getMonth() + 1);
+}
+
+/* ------------------------------------------------------------------
+   D27 — hitung TANGGAL AKHIR bucket dari tanggal awal + granularitas.
+   gran: 'D' (1 hari) / 'W1' (7 hari) / 'W2' (14 hari) / 'W3' (21 hari) /
+   'M' (akhir bulan kalender dari dtFrom). Selaras persis dgn rumus
+   bucket ABAP di index.htm (D15/D27) — WAJIB disamakan bila rumus itu
+   berubah.
+   ------------------------------------------------------------------ */
+function bucketEndDate(dtFrom, gran) {
+  switch (gran) {
+    case 'D':  return new Date(dtFrom.getTime());
+    case 'W1': return new Date(dtFrom.getTime() + 6  * 24 * 60 * 60 * 1000);
+    case 'W2': return new Date(dtFrom.getTime() + 13 * 24 * 60 * 60 * 1000);
+    case 'W3': return new Date(dtFrom.getTime() + 20 * 24 * 60 * 60 * 1000);
+    case 'M':  return new Date(dtFrom.getFullYear(), dtFrom.getMonth() + 1, 0);
+    default:   return new Date(dtFrom.getTime() + 6  * 24 * 60 * 60 * 1000);
+  }
+}
+
 /* ------------------------------------------------------------------
    Drill-down: klik bar → navigasi ke monitoring.htm dengan rentang
-   tanggal minggu yang diklik (weekDates berformat YYYYMMDD)
+   tanggal bucket yang diklik. D28: pakai weekDatesEnd (dikirim server,
+   SUDAH di-clip ke rentang filter lv_dfrom/lv_dto) LANGSUNG — JANGAN
+   hitung ulang end-date dari start+granularitas (bucketEndDate()) di
+   sini, karena bucket W1/W2/W3 di-anchor ke tanggal tetap yang bisa
+   "menjorok" keluar rentang filter; menghitung ulang tanpa clip akan
+   membuka rentang LEBIH LEBAR drpd yang benar-benar dihitung di chart
+   (persis bug yang dilaporkan: jumlah SO di monitoring.htm >> angka
+   tooltip chart). bucketEndDate() dipertahankan sbg fallback HANYA bila
+   weekDatesEnd tidak tersedia (versi lama/kompatibilitas).
    ------------------------------------------------------------------ */
 function drillDown(weekIdx) {
   var wdate = weekDates[weekIdx];
@@ -69,17 +122,29 @@ function drillDown(weekIdx) {
   var mo = parseInt(wdate.substr(4, 2), 10) - 1;
   var dy = parseInt(wdate.substr(6, 2), 10);
   var dtFrom = new Date(y, mo, dy);
-  var dtTo   = new Date(dtFrom.getTime() + 6 * 24 * 60 * 60 * 1000);
-  function p2(v) { return v < 10 ? '0' + v : '' + v; }
-  var fromStr = dtFrom.getFullYear() + '-' + p2(dtFrom.getMonth() + 1) + '-' + p2(dtFrom.getDate());
-  var toStr   = dtTo.getFullYear()   + '-' + p2(dtTo.getMonth()   + 1) + '-' + p2(dtTo.getDate());
+
+  var dtTo;
+  var wdateEnd = (typeof weekDatesEnd !== 'undefined') ? weekDatesEnd[weekIdx] : null;
+  if (wdateEnd) {
+    var ey = parseInt(wdateEnd.substr(0, 4), 10);
+    var em = parseInt(wdateEnd.substr(4, 2), 10) - 1;
+    var ed = parseInt(wdateEnd.substr(6, 2), 10);
+    dtTo = new Date(ey, em, ed);
+  } else {
+    var gran = (typeof chartGran !== 'undefined') ? chartGran : 'W1';
+    dtTo = bucketEndDate(dtFrom, gran);
+  }
+
+  var fromStr = fmtISODate(dtFrom);
+  var toStr   = fmtISODate(dtTo);
   window.location.href = 'monitoring.htm?date_from=' + fromStr + '&date_to=' + toStr + '&search_btn=X';
 }
 
 /* ------------------------------------------------------------------
-   Stacked bar chart (index.htm) — Selesai / Proses / Belum per minggu.
-   canvas.width dihitung dari lebar parent setiap render agar responsif
-   saat window di-resize (dipanggil ulang oleh resize handler).
+   Stacked bar chart (index.htm) — 4 TAHAP per periode (D23/D27):
+   Pembahanan (abu) -> Produksi (amber) -> Ready Assy (biru) -> Selesai
+   (hijau), stacking bawah ke atas. canvas.width dihitung dari lebar
+   parent setiap render agar responsif saat window di-resize.
    ------------------------------------------------------------------ */
 function drawBarChart() {
   var canvas = document.getElementById('barChart');
@@ -103,21 +168,31 @@ function drawBarChart() {
     return;
   }
 
+  /* D23: 4 seri, urutan stacking BAWAH -> ATAS (paling awal di dasar). */
+  var seriesDef = [
+    { key: 'pembahanan', data: pembahananCounts, color: '#d1d5db' },
+    { key: 'produksi',   data: produksiCounts,   color: '#f59e0b' },
+    { key: 'readyassy',  data: readyAssyCounts,  color: '#3b82f6' },
+    { key: 'selesai',    data: selesaiCounts,    color: '#10b981' }
+  ];
+
   var totals = [], max = 0;
   for (var i = 0; i < n; i++) {
-    totals[i] = doneCounts[i] + inprogCounts[i] + noprodCounts[i];
-    if (totals[i] > max) max = totals[i];
+    var t = 0;
+    for (var s = 0; s < seriesDef.length; s++) { t += seriesDef[s].data[i] || 0; }
+    totals[i] = t;
+    if (t > max) max = t;
   }
   if (max === 0) max = 1;
   var tickStep = Math.ceil(max / 5);
   var tickMax  = tickStep * 5;
   if (tickMax === 0) tickMax = 5;
 
-  for (var t = 0; t <= 5; t++) {
-    var yv = tickMax * t / 5;
+  for (var tk = 0; tk <= 5; tk++) {
+    var yv = tickMax * tk / 5;
     var yp = padT + chartH - (yv / tickMax) * chartH;
     ctx.beginPath();
-    ctx.strokeStyle = t === 0 ? '#d1d5db' : '#f0f0f0';
+    ctx.strokeStyle = tk === 0 ? '#d1d5db' : '#f0f0f0';
     ctx.lineWidth = 1;
     ctx.moveTo(padL, yp); ctx.lineTo(padL + chartW, yp); ctx.stroke();
     ctx.fillStyle = '#9ca3af';
@@ -128,6 +203,7 @@ function drawBarChart() {
 
   var slotW = chartW / n;
   var barW  = Math.min(slotW * 0.62, 56);
+  var xAxisLbl = (typeof chartGranLabel !== 'undefined' && chartGranLabel) ? chartGranLabel : 'Periode';
   barState  = [];
 
   for (var i = 0; i < n; i++) {
@@ -135,36 +211,33 @@ function drawBarChart() {
     var bx    = padL + i * slotW + (slotW - barW) / 2;
     var baseY = padT + chartH;
     var cx    = bx + barW / 2;
-    barState.push({ x: bx, w: barW, idx: i, cx: cx, total: total,
-      done: doneCounts[i], inprog: inprogCounts[i], noprod: noprodCounts[i],
-      label: weekLabels[i], wdate: weekDates[i] });
+    barState.push({
+      x: bx, w: barW, idx: i, cx: cx, total: total,
+      pembahanan: pembahananCounts[i] || 0,
+      produksi:   produksiCounts[i]   || 0,
+      readyassy:  readyAssyCounts[i]  || 0,
+      selesai:    selesaiCounts[i]    || 0,
+      label: weekLabels[i], wdate: weekDates[i]
+    });
 
-    var np_h = noprodCounts[i] > 0 ? (noprodCounts[i] / tickMax) * chartH : 0;
-    var ip_h = inprogCounts[i] > 0 ? (inprogCounts[i] / tickMax) * chartH : 0;
-    var dn_h = doneCounts[i]   > 0 ? (doneCounts[i]   / tickMax) * chartH : 0;
-
-    var topSeg = 0;
-    if (doneCounts[i]      > 0) topSeg = 1;
-    else if (inprogCounts[i] > 0) topSeg = 2;
-    else if (noprodCounts[i] > 0) topSeg = 3;
+    /* Segmen TERATAS (utk sudut membulat) = seri tertinggi yg nilainya > 0 */
+    var topSegIdx = -1;
+    for (var s = seriesDef.length - 1; s >= 0; s--) {
+      if ((seriesDef[s].data[i] || 0) > 0) { topSegIdx = s; break; }
+    }
 
     var curY = baseY;
-    if (np_h > 0) {
-      curY -= np_h;
-      if (topSeg === 3) { drawRoundTop(ctx, bx, curY, barW, np_h, 5); }
-      else { ctx.beginPath(); ctx.rect(bx, curY, barW, np_h); }
-      ctx.fillStyle = '#d1d5db'; ctx.fill();
-    }
-    if (ip_h > 0) {
-      curY -= ip_h;
-      if (topSeg === 2) { drawRoundTop(ctx, bx, curY, barW, ip_h, 5); }
-      else { ctx.beginPath(); ctx.rect(bx, curY, barW, ip_h); }
-      ctx.fillStyle = '#3b82f6'; ctx.fill();
-    }
-    if (dn_h > 0) {
-      curY -= dn_h;
-      drawRoundTop(ctx, bx, curY, barW, dn_h, 5);
-      ctx.fillStyle = '#10b981'; ctx.fill();
+    for (var s = 0; s < seriesDef.length; s++) {
+      var val = seriesDef[s].data[i] || 0;
+      if (val <= 0) continue;
+      var segH = (val / tickMax) * chartH;
+      curY -= segH;
+      if (s === topSegIdx) {
+        drawRoundTop(ctx, bx, curY, barW, segH, 5);
+      } else {
+        ctx.beginPath(); ctx.rect(bx, curY, barW, segH);
+      }
+      ctx.fillStyle = seriesDef[s].color; ctx.fill();
     }
 
     if (total > 0) {
@@ -189,7 +262,7 @@ function drawBarChart() {
     ctx.fillStyle = '#6b7280';
     ctx.font = '9px Segoe UI, Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Minggu', cx, padT + chartH + 14);
+    ctx.fillText(xAxisLbl, cx, padT + chartH + 14);
     ctx.font = 'bold 10px Segoe UI, Arial, sans-serif';
     ctx.fillStyle = '#374151';
     ctx.fillText(weekLabels[i], cx, padT + chartH + 26);
@@ -202,18 +275,29 @@ function drawBarChart() {
     var mm   = parseInt(d.wdate.substr(4, 2), 10) - 1;
     var dd   = parseInt(d.wdate.substr(6, 2), 10);
     var dtF  = new Date(yyyy, mm, dd);
-    var dtT  = new Date(dtF.getTime() + 6 * 24 * 60 * 60 * 1000);
-    function p2(v) { return v < 10 ? '0' + v : '' + v; }
-    var rangeStr = p2(dtF.getDate()) + '/' + p2(dtF.getMonth() + 1) +
-                   ' – ' + p2(dtT.getDate()) + '/' + p2(dtT.getMonth() + 1);
-    var rate = d.total > 0 ? Math.round(d.done / d.total * 100) : 0;
+
+    var dtT;
+    var wdateEnd = (typeof weekDatesEnd !== 'undefined') ? weekDatesEnd[hoveredBar] : null;
+    if (wdateEnd) {
+      var ey = parseInt(wdateEnd.substr(0, 4), 10);
+      var em = parseInt(wdateEnd.substr(4, 2), 10) - 1;
+      var ed = parseInt(wdateEnd.substr(6, 2), 10);
+      dtT = new Date(ey, em, ed);
+    } else {
+      var gran = (typeof chartGran !== 'undefined') ? chartGran : 'W1';
+      dtT = bucketEndDate(dtF, gran);
+    }
+    var rangeStr = (dtF.getTime() === dtT.getTime())
+      ? fmtShortDate(dtF)
+      : fmtShortDate(dtF) + ' \u2013 ' + fmtShortDate(dtT);
 
     var lines = [
       rangeStr,
-      'Total SO   : ' + d.total,
-      'Selesai     : ' + d.done + '  (' + rate + '%)',
-      'Proses      : ' + d.inprog,
-      'Belum       : ' + d.noprod
+      'Total Item  : ' + d.total,
+      'Selesai     : ' + d.selesai,
+      'Ready Assy  : ' + d.readyassy,
+      'Produksi    : ' + d.produksi,
+      'Pembahanan  : ' + d.pembahanan
     ];
 
     ctx.font = '12px Segoe UI, Arial, sans-serif';
@@ -223,7 +307,7 @@ function drawBarChart() {
       var lw = ctx.measureText(lines[li]).width;
       if (lw > ttw) ttw = lw;
     }
-    var tth = lines.length * 20 + 16;
+    var tth = lines.length * 18 + 16;
     ttw += 28;
 
     /* Posisi: di atas puncak bar, horizontal center pada bar */
@@ -246,20 +330,19 @@ function drawBarChart() {
     ctx.lineTo(arrowX + 6, ty + tth);
     ctx.fillStyle = '#1f2937'; ctx.fill();
 
-    /* Teks */
+    /* Teks — warna tiap baris selaras warna seri (D23) */
     ctx.textAlign = 'left';
-    for (var li = 0; li < lines.length; li++) {
-      ctx.font      = li === 0 ? 'bold 12px Segoe UI, Arial, sans-serif' : '12px Segoe UI, Arial, sans-serif';
-      ctx.fillStyle = li === 0 ? '#93c5fd'
-                    : li === 2 ? '#86efac'
-                    : '#ffffff';
-      ctx.fillText(lines[li], tx + 12, ty + 18 + li * 20);
+    var lineColors = ['#93c5fd', '#ffffff', '#86efac', '#93c5fd', '#fcd34d', '#d1d5db'];
+    for (var li2 = 0; li2 < lines.length; li2++) {
+      ctx.font      = li2 === 0 ? 'bold 12px Segoe UI, Arial, sans-serif' : '12px Segoe UI, Arial, sans-serif';
+      ctx.fillStyle = lineColors[li2] || '#ffffff';
+      ctx.fillText(lines[li2], tx + 12, ty + 16 + li2 * 18);
     }
   }
 }
 
 /* ------------------------------------------------------------------
-   Donut chart (index.htm) — distribusi status item produksi.
+   Donut chart (index.htm) — distribusi 4 TAHAP item produksi (D23).
    Dimensi canvas disesuaikan dengan lebar parent tiap render (responsif).
    ------------------------------------------------------------------ */
 function drawDonutChart() {
@@ -277,7 +360,12 @@ function drawDonutChart() {
   var cx = W / 2, cy = H / 2;
   var R    = Math.min(W, H) / 2 - 12;
   var hole = R * 0.56;
-  var total = doneCount + progCount + noprodCount;
+
+  var pembahanan = (typeof pembahananCount !== 'undefined') ? pembahananCount : 0;
+  var produksi   = (typeof produksiCount   !== 'undefined') ? produksiCount   : 0;
+  var readyassy  = (typeof readyAssyCount  !== 'undefined') ? readyAssyCount  : 0;
+  var selesai    = (typeof selesaiCount    !== 'undefined') ? selesaiCount    : 0;
+  var total = pembahanan + produksi + readyassy + selesai;
 
   ctx.clearRect(0, 0, W, H);
 
@@ -293,10 +381,13 @@ function drawDonutChart() {
     return;
   }
 
+  /* D23: 4 segmen — urutan visual sengaja Selesai dulu (searah jarum jam
+     dari jam 12) supaya konsisten dgn kebiasaan donut lama (hijau di atas). */
   var segs = [
-    { val: doneCount,   color: '#10b981' },
-    { val: progCount,   color: '#3b82f6' },
-    { val: noprodCount, color: '#d1d5db' }
+    { val: selesai,    color: '#10b981' },
+    { val: readyassy,  color: '#3b82f6' },
+    { val: produksi,   color: '#f59e0b' },
+    { val: pembahanan, color: '#d1d5db' }
   ];
   var angle = -Math.PI / 2;
   for (var i = 0; i < segs.length; i++) {
@@ -311,7 +402,7 @@ function drawDonutChart() {
   ctx.beginPath(); ctx.arc(cx, cy, hole, 0, Math.PI * 2);
   ctx.fillStyle = '#ffffff'; ctx.fill();
 
-  var pct = Math.round(doneCount / total * 100);
+  var pct = Math.round(selesai / total * 100);
   ctx.fillStyle = '#1e3a8a';
   ctx.font = 'bold 26px Segoe UI, Arial, sans-serif';
   ctx.textAlign = 'center';

@@ -3,26 +3,15 @@
 *&---------------------------------------------------------------------*
 *& BSP Page — Riwayat (Arsip SO Selesai), Plant 2000 Surabaya
 *&---------------------------------------------------------------------*
-*& REVISI D17 — akar masalah "tidak ada data muncul": halaman ini SEBELUMNYA
-*& masih memakai basis LAMA (zcl_cs_util=>item_cp_status, checkpoint 229K via
-*& RESB+MSEG) yang TIDAK PERNAH ikut diperbarui saat monitoring.htm/index.htm
-*& pindah ke basis tahap Pembahanan/Produksi/Finish (D13-D16). Checkpoint 229K
-*& mensyaratkan barang FISIK terverifikasi sampai SLoc 229K via MSEG — jauh
-*& lebih ketat & rawan "Data Tidak Lengkap" (gerakan tanpa KDAUF/SOBKZ='E'),
-*& sehingga nyaris tak ada SO yang lolos jadi "Selesai".
+*& D23 — status kini 4 TAHAP: Pembahanan / Produksi / Ready Assy / Selesai.
+"     "Finish" DIGANTI NAMA jadi "Ready Assy" (lihat catatan lengkap D23 di
+"     index.htm). Arsip Riwayat TETAP hanya menampilkan SO yang SEMUA item-nya
+"     stage=4 (Selesai) — Ready Assy (stage=3, komponen siap rakit tapi order
+"     utama belum tuntas) TIDAK dianggap layak arsip, konsisten dgn semangat
+"     "Riwayat = benar-benar tuntas".
 *&
-*& DIPERBAIKI — basis "Selesai" kini SAMA dgn D16 (monitoring.htm/index.htm):
-*&   item SELESAI ⇔ Pembahanan tuntas (atau tak ada) DAN Produksi tuntas (atau
-*&   tak ada) DAN ADA order Finish (EB2) DAN Finish itu SENDIRI tuntas
-*&   (Delivered>=Target). SO SELESAI ⇔ SEMUA item-nya begitu.
-*&   Item TANPA order ber-DISPO whitelist (WM1/WM2/PN1/PN2/GA1/GA2/EB2) di luar
-*&   scope — SO yg SEMUA itemnya begitu dibuang (selaras D11).
-*&   RESB, MSEG, item_cp_status TIDAK LAGI dipanggil sama sekali di halaman ini
-*&   — hanya AFPO⨝AFKO, jauh lebih ringan.
-*&
-*& Default rentang: SEMULA 60 hari, TAPI D18 menghapusnya — lihat catatan D18
-*& di blok tanggal (ERDAT = tanggal SO DIBUAT, bukan tanggal SELESAI; default
-*& rentang pendek APAPUN akan membuang SO lama yang justru baru saja selesai).
+*& Filter tanggal (ERDAT) TETAP opsional (D18) — lihat catatan di sana.
+*& Menu "Transfer" DISEMBUNYIKAN dari navbar (D25).
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
 
@@ -31,21 +20,15 @@ TYPES: BEGIN OF ty_cust_name,
          name1 TYPE kna1-name1,
        END OF ty_cust_name.
 
-" D17: ringkasan per SO — total item ter-scope, jumlah yang SELESAI TUNTAS
-" (is_complete), dan distribusi tahap SAAT INI (utk label "Belum Selesai").
 TYPES: BEGIN OF ty_so_stat,
          vbeln      TYPE vbap-vbeln,
          total      TYPE i,
-         complete   TYPE i,
+         selesai    TYPE i,
          pembahanan TYPE i,
          produksi   TYPE i,
-         finish     TYPE i,
+         readyassy  TYPE i,
        END OF ty_so_stat.
 
-" === D21 (Opsi B) — PENENTU TAMBAHAN utk tahap/status Finish: ORDER UTAMA,
-"     dicari TANPA filter DISPO/Plant (lihat catatan lengkap di monitoring.htm
-"     D21). Item dianggap BENAR-BENAR SELESAI (is_complete) bila order utamanya
-"     Delivered>=Target, ATAU (fallback) order Finish whitelist-nya tuntas.
 TYPES: BEGIN OF ty_main_ord,
          kdauf TYPE afpo-kdauf,
          kdpos TYPE afpo-kdpos,
@@ -54,11 +37,8 @@ TYPES: BEGIN OF ty_main_ord,
        END OF ty_main_ord.
 TYPES ty_main_ord_tab TYPE SORTED TABLE OF ty_main_ord WITH UNIQUE KEY kdauf kdpos.
 
-" D17: tahap + status tuntas per item. stage = tahap PALING AWAL yang MASIH
-" BERJALAN (D16 ladder, sama dgn monitoring.htm/index.htm). is_complete = TRUE
-" hanya bila Pembahanan+Produksi tuntas (atau tak ada) DAN (order UTAMA D21
-" tuntas ATAU Finish whitelist ADA & TUNTAS) — inilah syarat "benar-benar
-" selesai", beda dgn 'stage' yg cuma label tahap.
+" D23: stage 1=Pembahanan 2=Produksi 3=Ready Assy 4=Selesai. is_complete
+" SEKARANG cukup boolc(stage = 4) — Selesai SUDAH berarti benar-benar tuntas.
 TYPES: BEGIN OF ty_item_stage,
          kdauf       TYPE afpo-kdauf,
          kdpos       TYPE afpo-kdpos,
@@ -72,7 +52,6 @@ TYPES: BEGIN OF ty_item_stage,
          t_fin       TYPE afpo-psmng,
          d_fin       TYPE afpo-wemng,
          stage       TYPE i,
-         is_complete TYPE abap_bool,
        END OF ty_item_stage.
 TYPES ty_item_stage_tab TYPE SORTED TABLE OF ty_item_stage WITH UNIQUE KEY kdauf kdpos.
 
@@ -84,10 +63,12 @@ TYPES: BEGIN OF ty_afpo_dispo,
          dispo TYPE afko-dispo,
        END OF ty_afpo_dispo.
 
-DATA: lt_main_ord TYPE ty_main_ord_tab,      " D21
-      lt_main_raw TYPE TABLE OF ty_main_ord,  " D21
-      ls_main_ord TYPE ty_main_ord,          " D21
-      lv_main_ok  TYPE abap_bool.            " D21
+DATA: lt_main_ord TYPE ty_main_ord_tab,
+      lt_main_raw TYPE TABLE OF ty_main_ord,
+      ls_main_ord TYPE ty_main_ord,
+      lv_main_ok  TYPE abap_bool,
+      lv_fin_ok   TYPE abap_bool,
+      lv_done_ok  TYPE abap_bool.
 FIELD-SYMBOLS <mo> TYPE ty_main_ord.
 
 DATA: lt_local_hdr  TYPE TABLE OF vbak,
@@ -95,11 +76,11 @@ DATA: lt_local_hdr  TYPE TABLE OF vbak,
       lt_cust_names TYPE TABLE OF ty_cust_name,
       lt_kna1_srch  TYPE TABLE OF ty_cust_name,
       lt_so_stat    TYPE TABLE OF ty_so_stat,
-      lt_item_stage TYPE ty_item_stage_tab,       " D17
-      ls_item_stage TYPE ty_item_stage,           " D17
-      lt_afpo_dispo TYPE TABLE OF ty_afpo_dispo,   " D17
-      ls_afpo_dispo TYPE ty_afpo_dispo,            " D17
-      lr_wf_dispo   TYPE zcl_cs_util=>ty_dispo_range,  " D17
+      lt_item_stage TYPE ty_item_stage_tab,
+      ls_item_stage TYPE ty_item_stage,
+      lt_afpo_dispo TYPE TABLE OF ty_afpo_dispo,
+      ls_afpo_dispo TYPE ty_afpo_dispo,
+      lr_wf_dispo   TYPE zcl_cs_util=>ty_dispo_range,
       ls_hdr_row    TYPE vbak,
       ls_vbap_row   TYPE vbap,
       ls_cust_name  TYPE ty_cust_name,
@@ -121,7 +102,7 @@ DATA: lv_layout_user   TYPE string,
       lv_name_pattern  TYPE string,
       lv_name_no_match TYPE abap_bool,
       lv_has_filter    TYPE abap_bool,
-      lv_has_datefil   TYPE abap_bool,   " D18: true hanya bila user isi tanggal manual
+      lv_has_datefil   TYPE abap_bool,
       lv_local_cnt     TYPE i,
       lv_dd            TYPE string,
       lv_cust_name_dsp TYPE kna1-name1,
@@ -132,17 +113,14 @@ DATA: lv_layout_user   TYPE string,
       lv_keep_incompl  TYPE abap_bool,
       lv_is_complete   TYPE abap_bool,
       lv_stat_label    TYPE string,
-      lv_stage         TYPE i,     " D17
-      lv_pmb_ok        TYPE abap_bool,
-      lv_prd_ok        TYPE abap_bool,
-      lv_fin_ok        TYPE abap_bool.
+      lv_stage         TYPE i.
 
 DATA: lr_vbeln TYPE RANGE OF vbak-vbeln,
       ls_vbeln LIKE LINE OF lr_vbeln,
       lr_kunnr TYPE RANGE OF vbak-kunnr,
       ls_kunnr LIKE LINE OF lr_kunnr,
-      lt_excl_cust TYPE TABLE OF kna1-kunnr,   " D12
-      ls_excl_cust TYPE kna1-kunnr.            " D12
+      lt_excl_cust TYPE TABLE OF kna1-kunnr,
+      ls_excl_cust TYPE kna1-kunnr.
 
 lv_layout_user = sy-uname.
 lv_ui_vbeln    = request->get_form_field( 'so_num' ).
@@ -157,21 +135,12 @@ IF lv_ui_vbeln IS NOT INITIAL OR lv_ui_kunnr IS NOT INITIAL
   lv_has_filter = abap_true.
 ENDIF.
 
-" === D18: filter tanggal (ERDAT = tanggal SO DIBUAT) kini OPSIONAL — TIDAK
-"     LAGI ada default rentang (dulu 60/90 hari). ALASAN: ERDAT itu tanggal SO
-"     DIBUAT, bukan tanggal SELESAI — proses Pembahanan→Produksi→Finish bisa
-"     makan waktu lebih lama dari rentang default manapun. SO yang dibuat 4
-"     bulan lalu tapi BARU tuntas minggu ini akan TERBUANG oleh default
-"     rentang pendek (persis kasus "Riwayat kosong" yang dilaporkan user),
-"     padahal SO itulah yang justru paling mungkin memang sudah selesai.
-"     Tanpa filter tanggal sama sekali -> cari ke SELURUH histori SO (dari
-"     '19000101'). Bila user MENGISI salah satu/kedua tanggal, filter itu
-"     tetap dihormati sebagai penyempit pencarian (opsional, bukan wajib).
+" D18: filter tanggal opsional — tanpa default rentang.
 IF lv_ui_edf IS NOT INITIAL AND strlen( lv_ui_edf ) = 10.
   lv_erdat_from    = lv_ui_edf(4) && lv_ui_edf+5(2) && lv_ui_edf+8(2).
   lv_has_datefil   = abap_true.
 ELSE.
-  lv_erdat_from    = '19000101'.   " tanpa batas bawah
+  lv_erdat_from    = '19000101'.
 ENDIF.
 IF lv_ui_edt IS NOT INITIAL AND strlen( lv_ui_edt ) = 10.
   lv_erdat_to      = lv_ui_edt(4) && lv_ui_edt+5(2) && lv_ui_edt+8(2).
@@ -180,7 +149,6 @@ ELSE.
   lv_erdat_to      = sy-datum.
 ENDIF.
 
-" === Filter nomor SO (exact + partial) ===
 IF lv_ui_vbeln IS NOT INITIAL.
   CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
     EXPORTING input = lv_ui_vbeln IMPORTING output = lv_search_so.
@@ -190,7 +158,6 @@ IF lv_ui_vbeln IS NOT INITIAL.
   APPEND ls_vbeln TO lr_vbeln.
 ENDIF.
 
-" === Filter kode customer (exact + partial); kode diprioritaskan atas nama ===
 IF lv_ui_kunnr IS NOT INITIAL.
   CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
     EXPORTING input = lv_ui_kunnr IMPORTING output = lv_search_kun.
@@ -200,7 +167,6 @@ IF lv_ui_kunnr IS NOT INITIAL.
   APPEND ls_kunnr TO lr_kunnr.
 ENDIF.
 
-" === Filter nama customer → cari KNA1 (MCOD1 upper), masukkan kunnr ke range ===
 IF lv_ui_name IS NOT INITIAL AND lv_ui_kunnr IS INITIAL.
   TRANSLATE lv_ui_name TO UPPER CASE.
   lv_name_pattern = '%' && lv_ui_name && '%'.
@@ -216,7 +182,6 @@ IF lv_ui_name IS NOT INITIAL AND lv_ui_kunnr IS INITIAL.
   ENDIF.
 ENDIF.
 
-" === D12: KECUALIKAN customer "Sample" ===
 SELECT kunnr FROM kna1 INTO TABLE lt_excl_cust
   WHERE mcod1 LIKE '%SAMPLE%'.
 LOOP AT lt_excl_cust INTO ls_excl_cust.
@@ -225,7 +190,7 @@ LOOP AT lt_excl_cust INTO ls_excl_cust.
 ENDLOOP.
 
 IF lv_name_no_match = abap_false.
-  " 1. Header SO — termasuk netwr/waerk untuk Nilai SO
+  " 1. Header SO
   SELECT vbeln erdat auart kunnr netwr waerk FROM vbak
     INTO CORRESPONDING FIELDS OF TABLE lt_local_hdr
     WHERE erdat BETWEEN lv_erdat_from AND lv_erdat_to
@@ -234,8 +199,7 @@ IF lv_name_no_match = abap_false.
       AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
 
   IF lt_local_hdr IS NOT INITIAL.
-    " 2. Item VBAP Plant 2000 — matnr ditambahkan (D21): dibutuhkan utk cari
-    "    order UTAMA.
+    " 2. Item VBAP Plant 2000
     SELECT vbeln posnr matnr FROM vbap
       INTO CORRESPONDING FIELDS OF TABLE lt_temp_vbap
       FOR ALL ENTRIES IN lt_local_hdr
@@ -243,8 +207,7 @@ IF lv_name_no_match = abap_false.
         AND werks = lc_plant.
     SORT lt_temp_vbap BY vbeln posnr.
 
-    " D21 (Opsi B): ORDER UTAMA per item — TANPA filter DISPO/Plant (lihat
-    " catatan lengkap di monitoring.htm D21), diagregasi per item.
+    " D21 (Opsi B): ORDER UTAMA per item.
     IF lt_temp_vbap IS NOT INITIAL.
       SELECT kdauf kdpos psmng wemng FROM afpo
         INTO CORRESPONDING FIELDS OF TABLE lt_main_raw
@@ -264,8 +227,7 @@ IF lv_name_no_match = abap_false.
       ENDLOOP.
     ENDIF.
 
-    " === D17: TAHAP per item — AFPO⨝AFKO, filter k~dispo IN whitelist
-    "     LANGSUNG di WHERE (RINGAN: tanpa RESB/MSEG/item_cp_status). ===
+    " TAHAP per item — AFPO⨝AFKO, filter k~dispo IN whitelist.
     IF lt_temp_vbap IS NOT INITIAL.
       lr_wf_dispo = zcl_cs_util=>wf_dispo_range( ).
       SELECT a~kdauf a~kdpos a~psmng a~wemng k~dispo
@@ -276,12 +238,11 @@ IF lv_name_no_match = abap_false.
           AND a~kdpos = lt_temp_vbap-posnr
           AND k~dispo IN lr_wf_dispo.
 
-      " --- Akumulasi target/delivered PER TAHAP (termasuk Finish), per item ---
       LOOP AT lt_afpo_dispo INTO ls_afpo_dispo.
         CASE ls_afpo_dispo-dispo.
           WHEN 'WM1' OR 'WM2' OR 'PN1' OR 'PN2'. lv_stage = 1.
           WHEN 'GA1' OR 'GA2'.                   lv_stage = 2.
-          WHEN 'EB2'.                            lv_stage = 3.
+          WHEN 'EB2' OR 'CH1'.                   lv_stage = 3.  " D29
           WHEN OTHERS.                           CONTINUE.
         ENDCASE.
         READ TABLE lt_item_stage ASSIGNING <ist>
@@ -307,13 +268,7 @@ IF lv_name_no_match = abap_false.
         ENDCASE.
       ENDLOOP.
 
-      " (D21 sebelumnya menyisipkan entri lt_item_stage utk item yang HANYA
-      " punya order utama tanpa order whitelist sama sekali — sekarang D22 di
-      " bawah SELALU membuang item semacam itu, jadi langkah sisip itu mubazir
-      " & sudah dihapus. lt_main_ord tetap dipakai di ladder finalisasi.)
-
-      " --- Finalisasi per item: tahap SAAT INI (D16 ladder) + is_complete,
-      "     dgn order UTAMA (D21/Opsi B) sbg penentu TAMBAHAN utk Finish ---
+      " --- D23: Finalisasi 4 TAHAP — Selesai (stage=4) berarti benar² tuntas ---
       LOOP AT lt_item_stage ASSIGNING <ist>.
         lv_main_ok = abap_false.
         READ TABLE lt_main_ord INTO ls_main_ord
@@ -322,70 +277,51 @@ IF lv_name_no_match = abap_false.
            AND ls_main_ord-wemng >= ls_main_ord-psmng.
           lv_main_ok = abap_true.
         ENDIF.
+        lv_fin_ok  = boolc( <ist>-has_fin = abap_true AND <ist>-d_fin >= <ist>-t_fin ).
+        lv_done_ok = boolc( lv_main_ok = abap_true OR lv_fin_ok = abap_true ).
 
         IF <ist>-has_pmb = abap_true AND <ist>-d_pmb < <ist>-t_pmb.
           <ist>-stage = 1.
         ELSEIF <ist>-has_prd = abap_true AND <ist>-d_prd < <ist>-t_prd.
           <ist>-stage = 2.
-        ELSEIF lv_main_ok = abap_true
-               OR ( <ist>-has_fin = abap_true AND <ist>-d_fin >= <ist>-t_fin ).
+        ELSEIF lv_done_ok = abap_true.
+          <ist>-stage = 4.
+        ELSEIF <ist>-has_fin = abap_true.
           <ist>-stage = 3.
         ELSEIF <ist>-has_prd = abap_true.
           <ist>-stage = 2.
         ELSEIF <ist>-has_pmb = abap_true.
           <ist>-stage = 1.
         ELSE.
-          <ist>-stage = 2.   " ada order utama tapi belum tuntas & tak ada
-                              " whitelist sama sekali -> anggap Produksi
+          <ist>-stage = 2.
         ENDIF.
-
-        " is_complete: Pembahanan tuntas (atau tak ada) DAN Produksi tuntas
-        " (atau tak ada) DAN (order UTAMA D21 tuntas ATAU Finish whitelist
-        " ADA & tuntas sendiri).
-        lv_pmb_ok = boolc( <ist>-has_pmb = abap_false OR <ist>-d_pmb >= <ist>-t_pmb ).
-        lv_prd_ok = boolc( <ist>-has_prd = abap_false OR <ist>-d_prd >= <ist>-t_prd ).
-        lv_fin_ok = boolc( lv_main_ok = abap_true
-                            OR ( <ist>-has_fin = abap_true AND <ist>-d_fin >= <ist>-t_fin ) ).
-        <ist>-is_complete = boolc( lv_pmb_ok = abap_true AND lv_prd_ok = abap_true
-                                    AND lv_fin_ok = abap_true ).
       ENDLOOP.
 
-      " === D22: FOKUS MRP PRODUKSI & FINISH (permintaan eksplisit user) —
-      " item TANPA order Produksi (GA1/GA2) DAN TANPA order Finish (EB2) SAMA
-      " SEKALI dikeluarkan dari scope (lihat catatan lengkap di monitoring.htm
-      " D22). Konsekuensi khusus di Riwayat: SO yang "selesai" HANYA lewat
-      " Pembahanan (tak pernah masuk Produksi/Finish) TIDAK LAGI dianggap
-      " layak arsip — arsip ini fokus pada SO yang benar produksi & finish-nya
-      " tercatat di MRP yang di-set.
+      " D22: FOKUS MRP PRODUKSI & FINISH.
       DELETE lt_item_stage WHERE has_prd = abap_false AND has_fin = abap_false.
     ENDIF.
 
-    " 3. Ringkasan per SO: total item ter-scope, jumlah TUNTAS, distribusi tahap.
+    " 3. Ringkasan per SO.
     LOOP AT lt_temp_vbap INTO ls_vbap_row.
       CLEAR ls_item_stage.
       READ TABLE lt_item_stage INTO ls_item_stage
         WITH TABLE KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr.
-      IF sy-subrc <> 0. CONTINUE. ENDIF.   " item di luar scope whitelist
+      IF sy-subrc <> 0. CONTINUE. ENDIF.
 
       CLEAR ls_so_stat.
       ls_so_stat-vbeln = ls_vbap_row-vbeln.
       ls_so_stat-total = 1.
-      IF ls_item_stage-is_complete = abap_true.
-        ls_so_stat-complete = 1.
-      ENDIF.
       CASE ls_item_stage-stage.
         WHEN 1. ls_so_stat-pembahanan = 1.
         WHEN 2. ls_so_stat-produksi   = 1.
-        WHEN 3. ls_so_stat-finish     = 1.
+        WHEN 3. ls_so_stat-readyassy  = 1.
+        WHEN 4. ls_so_stat-selesai    = 1.
       ENDCASE.
       COLLECT ls_so_stat INTO lt_so_stat.
     ENDLOOP.
     SORT lt_so_stat BY vbeln.
 
-    " 4. FILTER INTI: default hanya SO yang SEMUA item-nya TUNTAS
-    "    (complete = total). SO tanpa item ter-scope whitelist SELALU dibuang
-    "    (selaras D11). PENGECUALIAN: jika user mencari berdasarkan Nomor SO,
-    "    SO yang belum tuntas TETAP ditampilkan (klik ke Monitoring).
+    " 4. FILTER INTI: default hanya SO yang SEMUA item-nya Selesai (stage=4).
     IF lv_ui_vbeln IS NOT INITIAL.
       lv_keep_incompl = abap_true.
     ENDIF.
@@ -394,13 +330,13 @@ IF lv_name_no_match = abap_false.
         WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
       IF sy-subrc <> 0 OR ls_so_stat_r-total = 0.
         DELETE lt_local_hdr.
-      ELSEIF ls_so_stat_r-complete <> ls_so_stat_r-total
+      ELSEIF ls_so_stat_r-selesai <> ls_so_stat_r-total
              AND lv_keep_incompl = abap_false.
         DELETE lt_local_hdr.
       ENDIF.
     ENDLOOP.
 
-    " 5. Nama customer untuk SO yang lolos filter
+    " 5. Nama customer
     IF lt_local_hdr IS NOT INITIAL.
       SELECT kunnr name1 FROM kna1
         INTO CORRESPONDING FIELDS OF TABLE lt_cust_names
@@ -409,7 +345,6 @@ IF lv_name_no_match = abap_false.
       SORT lt_cust_names BY kunnr.
     ENDIF.
 
-    " 6. Urut tanggal buat terbaru di atas
     SORT lt_local_hdr BY erdat DESCENDING vbeln DESCENDING.
   ENDIF.
 ENDIF.
@@ -422,8 +357,6 @@ IF lv_has_datefil = abap_true.
   lv_lbl_from  = zcl_cs_util=>fmt_date( lv_erdat_from ).
   lv_lbl_to    = zcl_cs_util=>fmt_date( lv_erdat_to ).
 ELSE.
-  " D18: tanpa filter tanggal — input tetap KOSONG (bukan 1900-01-01), dan
-  " label header memakai teks generik, bukan rentang semu.
   CLEAR: lv_disp_from, lv_disp_to.
 ENDIF.
 
@@ -460,11 +393,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <a href="index.htm" class="nav-btn"><span class="nav-icon">&#9782;</span>Dashboard</a>
     <a href="monitoring.htm" class="nav-btn"><span class="nav-icon">&#9741;</span>Monitoring</a>
     <a href="riwayat.htm" class="nav-btn active"><span class="nav-icon">&#128220;</span>Riwayat</a>
-    <a href="transfer.htm" class="nav-btn"><span class="nav-icon">&#128666;</span>Transfer</a>
   </div>
 
   <div class="filter-card">
-    <!-- GET → hasil bisa di-bookmark & reload tanpa dialog kirim ulang -->
     <form method="get" action="riwayat.htm">
       <div class="filter-form">
         <div class="form-group" style="width:16%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_vbeln %>" placeholder="10000021 atau sebagian"></div>
@@ -489,7 +420,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               <path d="M3 3h18v4H3z"/><path d="M5 7v13h14V7"/><path d="M9 11h6"/>
             </svg>
             <h3>Tidak ada SO selesai</h3>
-            <p>Belum ada Sales Order yang seluruh itemnya SELESAI TUNTAS (Pembahanan &amp; Produksi tuntas, dan tahap Finish sudah Delivered = Target) pada rentang dan filter ini. Coba perluas rentang tanggal atau ubah filter.</p>
+            <p>Belum ada Sales Order yang seluruh itemnya SELESAI TUNTAS pada rentang dan filter ini. Coba perluas rentang tanggal atau ubah filter.</p>
             <% IF lv_has_filter = abap_true. %>
             <a href="riwayat.htm" class="btn-reset">Reset Filter</a>
             <% ENDIF. %>
@@ -507,13 +438,12 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               CLEAR ls_so_stat_r.
               READ TABLE lt_so_stat INTO ls_so_stat_r
                 WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
-              lv_is_complete = boolc( ls_so_stat_r-total > 0 AND ls_so_stat_r-complete = ls_so_stat_r-total ).
+              lv_is_complete = boolc( ls_so_stat_r-total > 0 AND ls_so_stat_r-selesai = ls_so_stat_r-total ).
               CLEAR lv_stat_label.
               IF lv_is_complete = abap_false.
-                " Label tahap (belum tuntas) — ladder sama dgn monitoring.htm
-                IF ls_so_stat_r-finish = ls_so_stat_r-total AND ls_so_stat_r-total > 0.
-                  lv_stat_label = 'Finish'.
-                ELSEIF ls_so_stat_r-produksi > 0 OR ls_so_stat_r-finish > 0.
+                IF ls_so_stat_r-readyassy > 0.
+                  lv_stat_label = 'Ready Assy'.
+                ELSEIF ls_so_stat_r-produksi > 0.
                   lv_stat_label = 'Produksi'.
                 ELSE.
                   lv_stat_label = 'Pembahanan'.
@@ -521,7 +451,6 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               ENDIF.
             %>
             <% IF lv_is_complete = abap_true. %>
-            <!-- SO selesai TUNTAS: klik -> panel detail AJAX di halaman ini -->
             <div class="so-item-row so-border-done" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card" onclick="viewDetails('<%= ls_hdr_row-vbeln %>')">
               <div class="so-meta">
                 <span class="so-id">SO #<%= ls_hdr_row-vbeln %></span>
@@ -533,7 +462,6 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               <div class="so-date">Nilai: <span class="cur-fmt"><%= ls_hdr_row-netwr %></span> <%= ls_hdr_row-waerk %></div>
             </div>
             <% ELSE. %>
-            <!-- SO belum tuntas (hanya muncul saat pencarian by Nomor SO): klik -> Monitoring -->
             <div class="so-item-row so-border-inprog" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card"
                  title="SO belum selesai tuntas — klik untuk membuka di Monitoring"
                  onclick="window.location.href='monitoring.htm?so_num=<%= ls_hdr_row-vbeln %>&amp;search_btn=X'">
@@ -546,7 +474,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               <div class="so-date">Tgl: <%= lv_dd %> | Tipe: <%= ls_hdr_row-auart %></div>
               <div class="so-date">Nilai: <span class="cur-fmt"><%= ls_hdr_row-netwr %></span> <%= ls_hdr_row-waerk %></div>
               <div class="so-date" style="color:#2563eb; font-weight:600; margin-top:4px;">
-                <%= ls_so_stat_r-complete %> / <%= ls_so_stat_r-total %> item tuntas &#8212; &#8594; Buka di Monitoring
+                <%= ls_so_stat_r-selesai %> / <%= ls_so_stat_r-total %> item tuntas &#8212; &#8594; Buka di Monitoring
               </div>
             </div>
             <% ENDIF. %>

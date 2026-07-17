@@ -436,11 +436,11 @@ IF lv_req_vb IS NOT INITIAL.
   ELSE.
     LOOP AT zcl_cs_util=>wf_dispo_range( ) INTO ls_dispo_r10.
       CASE ls_dispo_r10-low.
-        WHEN 'GA1' OR 'GA2' OR 'EB2'.
+        WHEN 'GA1' OR 'GA2' OR 'EB2' OR 'CH1'.   " D29: CH1 ditambahkan ke Ready Assy
           APPEND ls_dispo_r10 TO lr_dispo.
       ENDCASE.
     ENDLOOP.
-    lv_bom_title = 'Daftar Komponen Order Produksi (RESB) — Produksi & Finish (GA1/GA2/EB2)'.
+    lv_bom_title = 'Daftar Komponen Order Produksi (RESB) — Produksi & Ready Assy (GA1/GA2/EB2/CH1)'.
     CLEAR lv_id_prefix.
   ENDIF.
 
@@ -476,8 +476,8 @@ IF lv_req_vb IS NOT INITIAL.
           <afpo>-stage_rank = 1. <afpo>-stage_lbl = 'Pembahanan'.
         WHEN 'GA1' OR 'GA2'.
           <afpo>-stage_rank = 2. <afpo>-stage_lbl = 'Produksi'.
-        WHEN 'EB2'.
-          <afpo>-stage_rank = 3. <afpo>-stage_lbl = 'Finish'.
+        WHEN 'EB2' OR 'CH1'.                     " D29: CH1 ditambahkan ke Ready Assy
+          <afpo>-stage_rank = 3. <afpo>-stage_lbl = 'Ready Assy'.
         WHEN OTHERS.
           IF <afpo>-werks = zcl_cs_util=>gc_plant_1000.
             <afpo>-stage_rank = 1. <afpo>-stage_lbl = 'Pembahanan'.
@@ -1251,7 +1251,7 @@ ENDIF.
       <% IF lv_has_item = abap_false. %>
       <tr><td colspan="7" style="text-align:center; padding:32px; color:#9ca3af;">
         <% IF lv_mode = 'kirim'. %>Tidak ada item dengan komponen tahap Pembahanan (Plant 1000) untuk Sales Order ini.
-        <% ELSE. %>Tidak ada item dengan komponen tahap Produksi/Finish (Plant 2000) untuk Sales Order ini.
+        <% ELSE. %>Tidak ada item dengan komponen tahap Produksi/Ready Assy (Plant 2000) untuk Sales Order ini.
         <% ENDIF. %>
       </td></tr>
       <% ENDIF. %>

@@ -406,7 +406,7 @@ CLASS zcl_cs_util DEFINITION PUBLIC FINAL CREATE PUBLIC.
     "! Furniture. HANYA order yang melewati salah satu MRP ini yang ikut diambil:
     "!   • Pembahanan : WM1 WM2 PN1 PN2
     "!   • Produksi   : GA1 GA2
-    "!   • Finish     : EB2
+    "!   • Ready Assy (dulu "Finish") : EB2 CH1
     "! Menggantikan penyaringan cost-center (wf_order_filter) di cabang "Butuh
     "! Dikirim": DISPO menyatakan langsung tahap WF di header order, sedangkan
     "! whitelist cost-center bias ke unit perakitan sehingga bisa membuang order
@@ -681,8 +681,9 @@ CLASS zcl_cs_util IMPLEMENTATION.
     " Tahap 2 — Produksi
     ls_r-low = 'GA1'. APPEND ls_r TO rt_dispo.
     ls_r-low = 'GA2'. APPEND ls_r TO rt_dispo.
-    " Tahap 3 — Finish
+    " Tahap 3 — Ready Assy (dulu "Finish")
     ls_r-low = 'EB2'. APPEND ls_r TO rt_dispo.
+    ls_r-low = 'CH1'. APPEND ls_r TO rt_dispo.   " D29: ditambahkan atas permintaan user
   ENDMETHOD.
 
   METHOD dot_stages.

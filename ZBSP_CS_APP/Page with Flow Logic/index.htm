@@ -3,30 +3,22 @@
 *&---------------------------------------------------------------------*
 *& Dashboard Statistik & Grafik — Central Storage KMI 2 — Plant 2000
 *&---------------------------------------------------------------------*
-*& D13 — status 3 TAHAP (Pembahanan/Produksi/Finish), basis AFPO-DISPO
-*& whitelist (WM1/WM2/PN1/PN2/GA1/GA2/EB2) — lihat catatan lengkap di revisi
-*& sebelumnya.
-*&
-*& D15 — filter periode DIKEMBALIKAN & DIPERLUAS: 7/30/60/90 hari, 1 tahun,
-*& ATAU rentang tanggal custom. SELURUH statistik (stat card, donut, daftar
-*& customer) mengikuti rentang yang dipilih — yang BERBEDA cuma GRANULARITAS
-*& bar chart mingguan, otomatis menyesuaikan lebar rentang (lv_span_days):
-*&   span <=  7 hari  -> per HARI
-*&   span <= 30 hari  -> per MINGGU (1 minggu)
-*&   span <= 60 hari  -> per 2 MINGGU
-*&   span <= 90 hari  -> per 3 MINGGU
-*&   span >  90 hari  -> per BULAN
-*& Aturan ini SATU-SATUNYA sumber kebenaran granularitas — dipakai sama utk
-*& preset (7/30/60/90/365 otomatis jatuh ke tingkatannya masing²) MAUPUN
-*& rentang custom (span dihitung dari date_from/date_to, lalu tingkatan yang
-*& sama diterapkan) — sesuai permintaan "range mengikuti konsep di atas".
-*&
-*& ⚠️ CATATAN: tombol pada bar chart utk drill-down ke Monitoring (bila ada di
-*& js.js) sebelumnya mengasumsikan SATU bucket = SATU minggu. Sekarang bucket
-*& bisa berupa hari/2-minggu/3-minggu/bulan — wdate yang dikirim ke JS tetap
-*& berupa TANGGAL AWAL bucket (kontrak lama dipertahankan), tapi js.js TIDAK
-*& saya sentuh (di luar akses) sehingga end-date klik mungkin tidak pas persis
-*& utk bucket non-mingguan. Beri tahu saya bila perlu disesuaikan.
+*& D23 — sistem tahap DIPERLUAS jadi 4 TINGKAT (permintaan eksplisit user):
+"     Pembahanan / Produksi / Ready Assy / Selesai. "Finish" (D16-D22) DIGANTI
+"     NAMA jadi "Ready Assy" DAN maknanya diperjelas: Ready Assy = komponen
+"     sudah sampai tahap Finish (EB2)/order utama ADA, TAPI order itu SENDIRI
+"     BELUM tuntas terkirim — beda dgn "Selesai" yang berarti BENAR-BENAR
+"     tuntas (order utama Delivered=Target, ATAU order Finish whitelist-nya
+"     sendiri Delivered=Target). Sebelumnya "Finish" mencampur 2 makna ini
+"     jadi satu, membingungkan (SO ber-label "Finish" padahal belum tentu
+"     selesai secara fisik).
+"
+*& D27 — js.js DIPERBARUI (isinya sudah diterima dari user): bar & donut chart
+"     kini benar-benar 4 warna (Pembahanan/Produksi/Ready Assy/Selesai), bukan
+"     lagi hasil merge 3-slot lama. Granularitas bucket (lv_gran/lv_gran_lbl)
+"     dikirim ke JS via chartGran/chartGranLabel supaya drill-down & tooltip
+"     menghitung tanggal akhir bucket yang benar (dulu hardcode "+6 hari",
+"     salah utk granularitas selain mingguan) — lihat js.js utk detail.
 *&---------------------------------------------------------------------*
 CONSTANTS lc_plant TYPE vbap-werks VALUE '2000'.
 
@@ -37,12 +29,14 @@ TYPES: BEGIN OF ty_cust_info,
        END OF ty_cust_info.
 
 TYPES: BEGIN OF ty_mth,
-         month      TYPE string,   " kunci grup (YYYYMMDD utk hari/minggu/2mgu/3mgu, YYYYMM utk bulan)
-         label      TYPE string,   " label tampil di chart
-         wdate      TYPE string,   " tanggal AWAL bucket (YYYYMMDD) — utk drill-down JS
+         month      TYPE string,
+         label      TYPE string,
+         wdate      TYPE string,   " tanggal AWAL bucket, sudah di-clip (D28)
+         wdate_end  TYPE string,   " D28: tanggal AKHIR bucket, sudah di-clip
          pembahanan TYPE i,
          produksi   TYPE i,
-         finish     TYPE i,
+         readyassy  TYPE i,   " D23: dulu "finish"
+         selesai    TYPE i,   " D23: baru
        END OF ty_mth.
 
 TYPES: BEGIN OF ty_so_prog,
@@ -53,11 +47,11 @@ TYPES: BEGIN OF ty_so_prog,
          total      TYPE i,
          pembahanan TYPE i,
          produksi   TYPE i,
-         finish     TYPE i,
+         readyassy  TYPE i,
+         selesai    TYPE i,
        END OF ty_so_prog.
 
-" === D21 (Opsi B) — PENENTU TAMBAHAN utk tahap Finish: ORDER UTAMA, dicari
-"     TANPA filter DISPO/Plant (lihat catatan lengkap di monitoring.htm D21).
+" === D21 (Opsi B) — order UTAMA, penentu genuinely-selesai (D23). ===
 TYPES: BEGIN OF ty_main_ord,
          kdauf TYPE afpo-kdauf,
          kdpos TYPE afpo-kdpos,
@@ -66,16 +60,7 @@ TYPES: BEGIN OF ty_main_ord,
        END OF ty_main_ord.
 TYPES ty_main_ord_tab TYPE SORTED TABLE OF ty_main_ord WITH UNIQUE KEY kdauf kdpos.
 
-" === D16: PERBAIKAN TAHAP — bukti COOIS: SAP meledakkan (explode) SEMUA order
-"     Pembahanan→Produksi→Finish DI MUKA saat SO dibuat, System Status masih
-"     CRTD (Dibuat) & Del.qty=0 di SEMUANYA. Definisi lama D13 ("tahap =
-"     TERJAUH yang PUNYA order") SALAH: order Finish sudah ADA sejak hari
-"     pertama walau 0% dikerjakan — item langsung diklaim "Finish" padahal
-"     belum jalan sama sekali.
-"
-"     DIPERBAIKI: tahap = tahap PALING AWAL yang MASIH BERJALAN (belum semua
-"     Delivered>=Target di tahap itu), BUKAN lagi tahap terjauh yang ada
-"     order-nya (lihat monitoring.htm D16/D21 utk detail lengkap & fallback).
+" === D23: tahap kini 1=Pembahanan 2=Produksi 3=Ready Assy 4=Selesai. ===
 TYPES: BEGIN OF ty_item_stage,
          kdauf   TYPE afpo-kdauf,
          kdpos   TYPE afpo-kdpos,
@@ -85,9 +70,9 @@ TYPES: BEGIN OF ty_item_stage,
          has_prd TYPE abap_bool,
          t_prd   TYPE afpo-psmng,
          d_prd   TYPE afpo-wemng,
-         has_fin TYPE abap_bool,
-         t_fin   TYPE afpo-psmng,   " D21
-         d_fin   TYPE afpo-wemng,   " D21
+         has_fin TYPE abap_bool,   " ADA order Finish (EB2) whitelist — basis Ready Assy
+         t_fin   TYPE afpo-psmng,
+         d_fin   TYPE afpo-wemng,
          stage   TYPE i,
        END OF ty_item_stage.
 TYPES ty_item_stage_tab TYPE SORTED TABLE OF ty_item_stage WITH UNIQUE KEY kdauf kdpos.
@@ -95,15 +80,17 @@ TYPES ty_item_stage_tab TYPE SORTED TABLE OF ty_item_stage WITH UNIQUE KEY kdauf
 TYPES: BEGIN OF ty_afpo_dispo,
          kdauf TYPE afpo-kdauf,
          kdpos TYPE afpo-kdpos,
-         psmng TYPE afpo-psmng,   " D16
-         wemng TYPE afpo-wemng,   " D16
+         psmng TYPE afpo-psmng,
+         wemng TYPE afpo-wemng,
          dispo TYPE afko-dispo,
        END OF ty_afpo_dispo.
 
-DATA: lt_main_ord TYPE ty_main_ord_tab,      " D21
-      lt_main_raw TYPE TABLE OF ty_main_ord,  " D21
-      ls_main_ord TYPE ty_main_ord,          " D21
-      lv_main_ok  TYPE abap_bool.            " D21
+DATA: lt_main_ord TYPE ty_main_ord_tab,
+      lt_main_raw TYPE TABLE OF ty_main_ord,
+      ls_main_ord TYPE ty_main_ord,
+      lv_main_ok  TYPE abap_bool,
+      lv_fin_ok   TYPE abap_bool,     " D23
+      lv_done_ok  TYPE abap_bool.     " D23: lv_main_ok OR lv_fin_ok
 FIELD-SYMBOLS <mo> TYPE ty_main_ord.
 
 DATA: lv_user        TYPE string,
@@ -113,7 +100,8 @@ DATA: lv_user        TYPE string,
       lv_total_item  TYPE i,
       lv_pembahanan  TYPE i,
       lv_produksi    TYPE i,
-      lv_finish      TYPE i,
+      lv_readyassy   TYPE i,     " D23: dulu lv_finish
+      lv_selesai     TYPE i,     " D23: baru
       lv_mm          TYPE string,
       lv_idx         TYPE i,
       lv_cur_vbeln   TYPE vbak-vbeln,
@@ -122,9 +110,11 @@ DATA: lv_user        TYPE string,
       lv_sep         TYPE string,
       lv_jmonths     TYPE string,
       lv_jwdates     TYPE string,
+      lv_jwdates_end TYPE string,   " D28
       lv_jpembahanan TYPE string,
       lv_jproduksi   TYPE string,
-      lv_jfinish     TYPE string,
+      lv_jreadyassy  TYPE string,
+      lv_jselesai    TYPE string,
       lt_cust_list   TYPE TABLE OF ty_cust_info,
       ls_cust_list   TYPE ty_cust_info,
       lv_cust_search TYPE string,
@@ -138,7 +128,6 @@ DATA: lv_user        TYPE string,
       lt_so_prog     TYPE TABLE OF ty_so_prog,
       ls_so_prog     TYPE ty_so_prog.
 
-" D15: parameter filter periode / rentang custom.
 DATA: lv_period_param TYPE string,
       lv_period_days  TYPE i,
       lv_period_lbl   TYPE string,
@@ -156,18 +145,16 @@ DATA: lv_period_param TYPE string,
       lv_lbl_from     TYPE string,
       lv_lbl_to       TYPE string.
 
-" D15: granularitas bar chart, DIHITUNG dari lebar rentang (span), berlaku
-" SERAGAM utk preset maupun rentang custom.
 DATA: lv_span_days      TYPE i,
-      lv_gran           TYPE string,   " 'D'/'W1'/'W2'/'W3'/'M'
+      lv_gran           TYPE string,
       lv_gran_lbl        TYPE string,
       lv_bucket_start   TYPE d,
+      lv_bucket_end     TYPE d,   " D28
       lv_weekday        TYPE i,
       lv_days_since_ref TYPE i,
       lv_bucket_idx     TYPE i.
-CONSTANTS lc_ref_mon TYPE d VALUE '20240101'.   " Senin, jangkar hitung minggu/2mgu/3mgu
+CONSTANTS lc_ref_mon TYPE d VALUE '20240101'.
 
-" D13: whitelist DISPO + tabel tahap per item, dari AFPO⨝AFKO — RINGAN.
 DATA: lr_wf_dispo     TYPE zcl_cs_util=>ty_dispo_range,
       lt_afpo_dispo   TYPE TABLE OF ty_afpo_dispo,
       ls_afpo_dispo   TYPE ty_afpo_dispo,
@@ -176,15 +163,12 @@ DATA: lr_wf_dispo     TYPE zcl_cs_util=>ty_dispo_range,
       lv_stage        TYPE i.
 FIELD-SYMBOLS <ist> TYPE ty_item_stage.
 
-" D12: KECUALIKAN customer "Sample".
 DATA: lt_excl_cust   TYPE TABLE OF kna1-kunnr,
       ls_excl_cust   TYPE kna1-kunnr,
       lt_excl_sorted TYPE SORTED TABLE OF kna1-kunnr WITH UNIQUE KEY table_line.
 
 lv_user = sy-uname.
 
-" === D15: tentukan rentang tanggal — rentang custom (date_from+date_to)
-"     PRIORITAS di atas tombol preset. ===
 lv_period_param = request->get_form_field( 'period' ).
 lv_ui_edf       = request->get_form_field( 'date_from' ).
 lv_ui_edt       = request->get_form_field( 'date_to' ).
@@ -193,7 +177,7 @@ IF lv_ui_edf IS NOT INITIAL AND STRLEN( lv_ui_edf ) = 10
    AND lv_ui_edt IS NOT INITIAL AND STRLEN( lv_ui_edt ) = 10.
   lv_dfrom = lv_ui_edf(4) && lv_ui_edf+5(2) && lv_ui_edf+8(2).
   lv_dto   = lv_ui_edt(4) && lv_ui_edt+5(2) && lv_ui_edt+8(2).
-  IF lv_dfrom > lv_dto.   " tukar bila user membalik tanggal
+  IF lv_dfrom > lv_dto.
     DATA lv_swap TYPE d.
     lv_swap = lv_dfrom. lv_dfrom = lv_dto. lv_dto = lv_swap.
   ENDIF.
@@ -225,7 +209,6 @@ ENDIF.
 lv_disp_from = lv_dfrom(4) && '-' && lv_dfrom+4(2) && '-' && lv_dfrom+6(2).
 lv_disp_to   = lv_dto(4)   && '-' && lv_dto+4(2)   && '-' && lv_dto+6(2).
 
-" === D15: granularitas bar chart — SATU rumus, berlaku utk preset & custom. ===
 lv_span_days = lv_dto - lv_dfrom.
 IF lv_span_days <= 7.
   lv_gran = 'D'.  lv_gran_lbl = 'Hari'.
@@ -239,12 +222,10 @@ ELSE.
   lv_gran = 'M'.  lv_gran_lbl = 'Bulan'.
 ENDIF.
 
-" D12: kumpulkan KUNNR customer "Sample" LEBIH DULU.
 SELECT kunnr FROM kna1 INTO TABLE lt_excl_cust
   WHERE mcod1 LIKE '%SAMPLE%'.
 lt_excl_sorted = lt_excl_cust.
 
-" === SELECT header SO Plant 2000, sesuai rentang terpilih ===
 SELECT vbeln erdat kunnr auart
   INTO CORRESPONDING FIELDS OF TABLE lt_vbak
   FROM vbak
@@ -253,7 +234,6 @@ SELECT vbeln erdat kunnr auart
 
 SORT lt_vbak BY vbeln.
 
-" D12: buang baris customer Sample.
 IF lt_excl_sorted IS NOT INITIAL.
   LOOP AT lt_vbak INTO ls_vbak.
     READ TABLE lt_excl_sorted TRANSPORTING NO FIELDS
@@ -265,7 +245,6 @@ IF lt_excl_sorted IS NOT INITIAL.
 ENDIF.
 
 IF lt_vbak IS NOT INITIAL.
-  " matnr ditambahkan (D21): dibutuhkan utk cari order UTAMA.
   SELECT vbeln posnr matnr
     INTO CORRESPONDING FIELDS OF TABLE lt_vbap
     FROM vbap
@@ -274,8 +253,6 @@ IF lt_vbak IS NOT INITIAL.
       AND werks = lc_plant.
   SORT lt_vbap BY vbeln.
 
-  " D21 (Opsi B): ORDER UTAMA per item — TANPA filter DISPO/Plant (lihat
-  " catatan lengkap di monitoring.htm D21), diagregasi per item.
   IF lt_vbap IS NOT INITIAL.
     SELECT kdauf kdpos psmng wemng FROM afpo
       INTO CORRESPONDING FIELDS OF TABLE lt_main_raw
@@ -295,10 +272,6 @@ IF lt_vbak IS NOT INITIAL.
     ENDLOOP.
   ENDIF.
 
-  " === D16: TAHAP per item — AFPO⨝AFKO, filter k~dispo IN whitelist LANGSUNG
-  "     di WHERE (RINGAN: tanpa RESB/MSEG). stage = tahap PALING AWAL yang
-  "     MASIH BERJALAN (bukan lagi tahap terjauh yang PUNYA order — order
-  "     Finish sudah di-explode SAP sejak SO dibuat walau 0%). ===
   IF lt_vbap IS NOT INITIAL.
     lr_wf_dispo = zcl_cs_util=>wf_dispo_range( ).
     SELECT a~kdauf a~kdpos a~psmng a~wemng k~dispo
@@ -309,12 +282,11 @@ IF lt_vbak IS NOT INITIAL.
         AND a~kdpos = lt_vbap-posnr
         AND k~dispo IN lr_wf_dispo.
 
-    " --- Akumulasi target/delivered PER TAHAP, per item (D16) ---
     LOOP AT lt_afpo_dispo INTO ls_afpo_dispo.
       CASE ls_afpo_dispo-dispo.
         WHEN 'WM1' OR 'WM2' OR 'PN1' OR 'PN2'. lv_stage = 1.
         WHEN 'GA1' OR 'GA2'.                   lv_stage = 2.
-        WHEN 'EB2'.                            lv_stage = 3.
+        WHEN 'EB2' OR 'CH1'.                   lv_stage = 3.  " D29
         WHEN OTHERS.                           CONTINUE.
       ENDCASE.
       READ TABLE lt_item_stage ASSIGNING <ist>
@@ -340,13 +312,10 @@ IF lt_vbak IS NOT INITIAL.
       ENDCASE.
     ENDLOOP.
 
-    " (D21 sebelumnya menyisipkan entri lt_item_stage utk item yang HANYA
-    " punya order utama tanpa order whitelist sama sekali — sekarang D22 di
-    " bawah SELALU membuang item semacam itu, jadi langkah sisip itu mubazir &
-    " sudah dihapus. lt_main_ord tetap dipakai di ladder finalisasi di bawah.)
-
-    " --- Finalisasi: tahap PALING AWAL yang masih berjalan (D16), dgn order
-    "     UTAMA (D21/Opsi B) sbg penentu TAMBAHAN utk Finish ---
+    " === D23: Finalisasi — 4 TAHAP (Pembahanan/Produksi/Ready Assy/Selesai) ===
+    "     Selesai TERCAPAI bila order UTAMA (D21) tuntas ATAU order Finish
+    "     whitelist-nya SENDIRI tuntas. Ready Assy = ADA order Finish tapi
+    "     BELUM ada tanda tuntas apa pun (bukan lagi sinonim "selesai").
     LOOP AT lt_item_stage ASSIGNING <ist>.
       lv_main_ok = abap_false.
       READ TABLE lt_main_ord INTO ls_main_ord
@@ -355,33 +324,31 @@ IF lt_vbak IS NOT INITIAL.
          AND ls_main_ord-wemng >= ls_main_ord-psmng.
         lv_main_ok = abap_true.
       ENDIF.
+      lv_fin_ok  = boolc( <ist>-has_fin = abap_true AND <ist>-d_fin >= <ist>-t_fin ).
+      lv_done_ok = boolc( lv_main_ok = abap_true OR lv_fin_ok = abap_true ).
 
       IF <ist>-has_pmb = abap_true AND <ist>-d_pmb < <ist>-t_pmb.
-        <ist>-stage = 1.
+        <ist>-stage = 1.   " Pembahanan
       ELSEIF <ist>-has_prd = abap_true AND <ist>-d_prd < <ist>-t_prd.
-        <ist>-stage = 2.
-      ELSEIF lv_main_ok = abap_true
-             OR ( <ist>-has_fin = abap_true AND <ist>-d_fin >= <ist>-t_fin ).
-        <ist>-stage = 3.
+        <ist>-stage = 2.   " Produksi
+      ELSEIF lv_done_ok = abap_true.
+        <ist>-stage = 4.   " Selesai
+      ELSEIF <ist>-has_fin = abap_true.
+        <ist>-stage = 3.   " Ready Assy (ada order Finish, blm tuntas)
       ELSEIF <ist>-has_prd = abap_true.
-        <ist>-stage = 2.
+        <ist>-stage = 2.   " jaring pengaman
       ELSEIF <ist>-has_pmb = abap_true.
-        <ist>-stage = 1.
+        <ist>-stage = 1.   " jaring pengaman
       ELSE.
-        <ist>-stage = 2.   " ada order utama tapi belum tuntas & tak ada
-                            " whitelist sama sekali -> anggap Produksi
+        <ist>-stage = 2.
       ENDIF.
     ENDLOOP.
 
-    " === D22: FOKUS MRP PRODUKSI & FINISH (permintaan eksplisit user) — item
-    " TANPA order Produksi (GA1/GA2) DAN TANPA order Finish (EB2) SAMA SEKALI
-    " dikeluarkan dari scope, apa pun status Pembahanan/order utamanya (lihat
-    " catatan lengkap di monitoring.htm D22). D21 (order utama) tetap dipakai
-    " utk status Finish, HANYA berlaku bagi item yang SUDAH lolos gate ini.
+    " === D22: FOKUS MRP PRODUKSI & FINISH — item TANPA order Produksi (GA1/
+    " GA2) DAN TANPA order Finish (EB2) SAMA SEKALI dikeluarkan dari scope. ===
     DELETE lt_item_stage WHERE has_prd = abap_false AND has_fin = abap_false.
   ENDIF.
 
-  " Buang item TANPA tahap (di luar scope) & SO yang habis semua item-nya.
   LOOP AT lt_vbap INTO ls_vbap.
     READ TABLE lt_item_stage TRANSPORTING NO FIELDS
       WITH TABLE KEY kdauf = ls_vbap-vbeln kdpos = ls_vbap-posnr.
@@ -400,7 +367,6 @@ IF lt_vbak IS NOT INITIAL.
   lv_total_so   = lines( lt_vbak ).
   lv_total_item = lines( lt_vbap ).
 
-  " === Klasifikasi item + akumulasi per-SO (basis TAHAP) ===
   CLEAR: lv_cur_vbeln, lv_sp_filled.
   LOOP AT lt_vbap INTO ls_vbap.
     IF ls_vbap-vbeln <> lv_cur_vbeln.
@@ -430,40 +396,59 @@ IF lt_vbak IS NOT INITIAL.
               lv_pembahanan = lv_pembahanan + 1.
       WHEN 2. ls_so_prog-produksi   = ls_so_prog-produksi   + 1.
               lv_produksi   = lv_produksi + 1.
-      WHEN 3. ls_so_prog-finish     = ls_so_prog-finish     + 1.
-              lv_finish     = lv_finish + 1.
+      WHEN 3. ls_so_prog-readyassy  = ls_so_prog-readyassy  + 1.
+              lv_readyassy  = lv_readyassy + 1.
+      WHEN 4. ls_so_prog-selesai    = ls_so_prog-selesai    + 1.
+              lv_selesai    = lv_selesai + 1.
     ENDCASE.
   ENDLOOP.
   IF lv_sp_filled = abap_true.
     APPEND ls_so_prog TO lt_so_prog.
   ENDIF.
 
-  " === D15: Agregasi bar chart — bucket key/label BERGANTUNG lv_gran. ===
   SORT lt_so_prog BY vbeln.
   LOOP AT lt_vbak INTO ls_vbak.
     CASE lv_gran.
       WHEN 'D'.
         lv_bucket_start = ls_vbak-erdat.
+        lv_bucket_end   = ls_vbak-erdat.
       WHEN 'W1'.
-        " Senin awal minggu, jangkar 2024-01-01 (Senin), aritmetika tanggal murni.
         lv_weekday      = ( ls_vbak-erdat - lc_ref_mon ) MOD 7 + 1.
         lv_bucket_start = ls_vbak-erdat - ( lv_weekday - 1 ).
+        lv_bucket_end   = lv_bucket_start + 6.
       WHEN 'W2'.
         lv_days_since_ref = ls_vbak-erdat - lc_ref_mon.
         lv_bucket_idx     = lv_days_since_ref DIV 14.
         lv_bucket_start   = lc_ref_mon + ( lv_bucket_idx * 14 ).
+        lv_bucket_end     = lv_bucket_start + 13.
       WHEN 'W3'.
         lv_days_since_ref = ls_vbak-erdat - lc_ref_mon.
         lv_bucket_idx     = lv_days_since_ref DIV 21.
         lv_bucket_start   = lc_ref_mon + ( lv_bucket_idx * 21 ).
+        lv_bucket_end     = lv_bucket_start + 20.
       WHEN 'M'.
-        lv_bucket_start = ls_vbak-erdat(6) && '01'.   " tanggal 1 bulan itu
+        lv_bucket_start = ls_vbak-erdat(6) && '01'.
+        lv_bucket_end   = lv_bucket_start + 32.        " lompat ke bulan berikutnya
+        lv_bucket_end   = lv_bucket_end(6) && '01'.
+        lv_bucket_end   = lv_bucket_end - 1.            " mundur 1 hari = akhir bulan ini
     ENDCASE.
 
+    " === D28: CLIP bucket ke rentang yg BENAR-BENAR difilter (lv_dfrom/
+    " lv_dto). Bucket W1/W2/W3 di-anchor ke tanggal TETAP (2024-01-01),
+    " TIDAK otomatis align dgn lv_dfrom — bucket pertama/terakhir bisa
+    " "menjorok" keluar rentang. TANPA clip ini, drill-down (klik bar) buka
+    " rentang LEBIH LEBAR drpd yg benar-benar dihitung di chart, sehingga
+    " monitoring.htm menampilkan jauh lebih banyak SO drpd angka di tooltip
+    " chart (bug dilaporkan user). Clip DI SINI (sebelum jadi group key)
+    " supaya SEMUA erdat yg bucket alaminya "menjorok" sebelum lv_dfrom
+    " otomatis digabung jadi satu bucket "awal terpotong" yg konsisten.
+    IF lv_bucket_start < lv_dfrom. lv_bucket_start = lv_dfrom. ENDIF.
+    IF lv_bucket_end   > lv_dto.   lv_bucket_end   = lv_dto.   ENDIF.
+
     IF lv_gran = 'M'.
-      lv_mm = ls_vbak-erdat(6).                         " kunci grup: YYYYMM
+      lv_mm = ls_vbak-erdat(6).
     ELSE.
-      lv_mm = lv_bucket_start.                          " kunci grup: YYYYMMDD bucket
+      lv_mm = lv_bucket_start.
     ENDIF.
 
     CLEAR ls_so_prog.
@@ -476,27 +461,29 @@ IF lt_vbak IS NOT INITIAL.
       lv_idx = sy-tabix.
       ls_mth-pembahanan = ls_mth-pembahanan + ls_so_prog-pembahanan.
       ls_mth-produksi   = ls_mth-produksi   + ls_so_prog-produksi.
-      ls_mth-finish     = ls_mth-finish     + ls_so_prog-finish.
+      ls_mth-readyassy  = ls_mth-readyassy  + ls_so_prog-readyassy.
+      ls_mth-selesai    = ls_mth-selesai    + ls_so_prog-selesai.
       MODIFY lt_mth FROM ls_mth INDEX lv_idx.
     ELSE.
       CLEAR ls_mth.
       ls_mth-month = lv_mm.
       IF lv_gran = 'M'.
-        CONCATENATE lv_bucket_start+4(2) '/' lv_bucket_start(4) INTO ls_mth-label.   " MM/YYYY
+        CONCATENATE lv_bucket_start+4(2) '/' lv_bucket_start(4) INTO ls_mth-label.
       ELSE.
-        CONCATENATE lv_bucket_start+6(2) '/' lv_bucket_start+4(2) INTO ls_mth-label. " DD/MM
+        CONCATENATE lv_bucket_start+6(2) '/' lv_bucket_start+4(2) INTO ls_mth-label.
       ENDIF.
       ls_mth-wdate      = lv_bucket_start.
+      ls_mth-wdate_end  = lv_bucket_end.     " D28
       ls_mth-pembahanan = ls_so_prog-pembahanan.
       ls_mth-produksi   = ls_so_prog-produksi.
-      ls_mth-finish     = ls_so_prog-finish.
+      ls_mth-readyassy  = ls_so_prog-readyassy.
+      ls_mth-selesai    = ls_so_prog-selesai.
       APPEND ls_mth TO lt_mth.
     ENDIF.
   ENDLOOP.
   SORT lt_mth BY month ASCENDING.
 ENDIF.
 
-" === Customer list by SO ===
 lv_cust_search = request->get_form_field( 'cust_search' ).
 REFRESH lt_cust_list.
 
@@ -545,30 +532,37 @@ IF lt_vbak IS NOT INITIAL.
   ENDIF.
 ENDIF.
 
-" === Build JSON arrays untuk chart ===
-" Nama variabel JS TETAP dipertahankan supaya js.js tak perlu diubah.
+" === Build JSON arrays untuk chart (D23: 4 tahap; D28: wdate SUDAH di-clip
+"     ke lv_dfrom/lv_dto — lihat catatan D28 di loop agregasi bucket) ===
 lv_jmonths     = '['.
 lv_jwdates     = '['.
-lv_jfinish     = '['.
-lv_jproduksi   = '['.
+lv_jwdates_end = '['.
 lv_jpembahanan = '['.
+lv_jproduksi   = '['.
+lv_jreadyassy  = '['.
+lv_jselesai    = '['.
 lv_sep         = ''.
 LOOP AT lt_mth INTO ls_mth.
   CONCATENATE lv_jmonths lv_sep '"' ls_mth-label '"' INTO lv_jmonths.
   CONCATENATE lv_jwdates lv_sep '"' ls_mth-wdate '"' INTO lv_jwdates.
-  lv_cnt_str = ls_mth-finish.
-  CONCATENATE lv_jfinish lv_sep lv_cnt_str INTO lv_jfinish.
-  lv_cnt_str = ls_mth-produksi.
-  CONCATENATE lv_jproduksi lv_sep lv_cnt_str INTO lv_jproduksi.
+  CONCATENATE lv_jwdates_end lv_sep '"' ls_mth-wdate_end '"' INTO lv_jwdates_end.
   lv_cnt_str = ls_mth-pembahanan.
   CONCATENATE lv_jpembahanan lv_sep lv_cnt_str INTO lv_jpembahanan.
+  lv_cnt_str = ls_mth-produksi.
+  CONCATENATE lv_jproduksi lv_sep lv_cnt_str INTO lv_jproduksi.
+  lv_cnt_str = ls_mth-readyassy.
+  CONCATENATE lv_jreadyassy lv_sep lv_cnt_str INTO lv_jreadyassy.
+  lv_cnt_str = ls_mth-selesai.
+  CONCATENATE lv_jselesai lv_sep lv_cnt_str INTO lv_jselesai.
   lv_sep = ','.
 ENDLOOP.
 CONCATENATE lv_jmonths ']' INTO lv_jmonths.
 CONCATENATE lv_jwdates ']' INTO lv_jwdates.
-CONCATENATE lv_jfinish ']' INTO lv_jfinish.
-CONCATENATE lv_jproduksi ']' INTO lv_jproduksi.
+CONCATENATE lv_jwdates_end ']' INTO lv_jwdates_end.
 CONCATENATE lv_jpembahanan ']' INTO lv_jpembahanan.
+CONCATENATE lv_jproduksi ']' INTO lv_jproduksi.
+CONCATENATE lv_jreadyassy ']' INTO lv_jreadyassy.
+CONCATENATE lv_jselesai ']' INTO lv_jselesai.
 
 DATA: lv_ts_date TYPE string,
       lv_ts_time TYPE string.
@@ -603,12 +597,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <a href="index.htm" class="nav-btn active"><span class="nav-icon">&#9782;</span>Dashboard</a>
     <a href="monitoring.htm" class="nav-btn"><span class="nav-icon">&#9741;</span>Monitoring</a>
     <a href="riwayat.htm" class="nav-btn"><span class="nav-icon">&#128220;</span>Riwayat</a>
-    <a href="transfer.htm" class="nav-btn"><span class="nav-icon">&#128666;</span>Transfer</a>
   </div>
 
   <div class="content">
 
-    <!-- D15: FILTER PERIODE — preset + rentang custom (GET → bisa di-bookmark) -->
     <div class="filter-card" style="margin-bottom:16px; padding:14px 16px;">
       <form method="get" action="index.htm">
         <input type="hidden" name="cust_search" value="<%= lv_cust_search %>">
@@ -636,12 +628,11 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       </form>
     </div>
 
-    <!-- STAT CARDS: baris 1 — total mentah -->
     <div class="stat-grid">
       <div class="stat-cell" style="width:50%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Total Sales Order <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Jumlah Sales Order Plant 2000 pada rentang terpilih yang punya minimal satu item dengan order produksi bertahap Pembahanan/Produksi/Finish (MRP WM1/WM2/PN1/PN2/GA1/GA2/EB2). Customer 'Sample' dikecualikan.">i</button></span>
+            <span class="stat-label">Total Sales Order <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Jumlah Sales Order Plant 2000 pada rentang terpilih yang punya minimal satu item dengan order produksi bertahap Pembahanan/Produksi/Ready Assy/Selesai (MRP WM1/WM2/PN1/PN2/GA1/GA2/EB2/CH1). Customer 'Sample' dikecualikan.">i</button></span>
             <span class="stat-icon"><span class="ic-blue">&#128196;</span></span>
           </div>
           <div class="stat-value"><%= lv_total_so %></div>
@@ -651,45 +642,54 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <div class="stat-cell" style="width:50%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Total Item Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Total item SO yang punya minimal satu order bertahap Pembahanan/Produksi/Finish. Item tanpa order sama sekali di 3 tahap ini TIDAK dihitung.">i</button></span>
+            <span class="stat-label">Total Item Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Total item SO yang punya minimal satu order bertahap Produksi atau Ready Assy (GA1/GA2/EB2/CH1). Item yang cuma sampai Pembahanan saja TIDAK dihitung.">i</button></span>
             <span class="stat-icon"><span class="ic-amber">&#128295;</span></span>
           </div>
           <div class="stat-value"><%= lv_total_item %></div>
-          <div class="stat-sub">Item dgn order Pembahanan/Produksi/Finish</div>
+          <div class="stat-sub">Item dgn order Produksi/Ready Assy</div>
         </div>
       </div>
     </div>
 
-    <!-- STAT CARDS: baris 2 — tahap saat ini -->
     <div class="stat-grid">
-      <div class="stat-cell" style="width:33.33%;">
+      <div class="stat-cell" style="width:25%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Proses Pembahanan <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang tahap TERJAUH order produksinya masih di Pembahanan (MRP WM1/WM2/PN1/PN2, Plant 1000) — belum ada order-nya yang masuk tahap Produksi/Finish.">i</button></span>
+            <span class="stat-label">Proses Pembahanan <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang tahap TERJAUH order produksinya masih di Pembahanan (MRP WM1/WM2/PN1/PN2, Plant 1000) — belum ada order-nya yang masuk tahap Produksi.">i</button></span>
             <span class="stat-icon"><span class="ic-blue">&#129521;</span></span>
           </div>
           <div class="stat-value"><%= lv_pembahanan %></div>
-          <div class="stat-sub">item, tahap Pembahanan (Plant 1000)</div>
+          <div class="stat-sub">item, tahap Pembahanan</div>
         </div>
       </div>
-      <div class="stat-cell" style="width:33.33%;">
+      <div class="stat-cell" style="width:25%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Proses Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang tahap TERJAUH order produksinya sudah masuk Produksi (MRP GA1/GA2, Plant 2000), tapi belum ada yang mencapai Finish (EB2).">i</button></span>
+            <span class="stat-label">Proses Produksi <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang tahap TERJAUH order produksinya sudah masuk Produksi (MRP GA1/GA2), tapi belum ada order Ready Assy (EB2/CH1).">i</button></span>
             <span class="stat-icon"><span class="ic-amber">&#9881;</span></span>
           </div>
           <div class="stat-value"><%= lv_produksi %></div>
-          <div class="stat-sub">item, tahap Produksi (Plant 2000)</div>
+          <div class="stat-sub">item, tahap Produksi</div>
         </div>
       </div>
-      <div class="stat-cell" style="width:33.33%;">
+      <div class="stat-cell" style="width:25%;">
         <div class="stat-card">
           <div class="stat-header">
-            <span class="stat-label">Proses Finish <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang sudah punya order di tahap Finish (MRP EB2, Plant 2000) — tahap terjauh dalam scope Wood Furniture.">i</button></span>
+            <span class="stat-label">Ready Assy <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang komponennya sudah sampai tahap Finish (MRP EB2/CH1) — siap dirakit — TAPI order penghasil barang jadinya SENDIRI belum tuntas terkirim (belum bisa disebut Selesai).">i</button></span>
+            <span class="stat-icon"><span class="ic-blue">&#128230;</span></span>
+          </div>
+          <div class="stat-value"><%= lv_readyassy %></div>
+          <div class="stat-sub">item, siap rakit (blm tuntas)</div>
+        </div>
+      </div>
+      <div class="stat-cell" style="width:25%;">
+        <div class="stat-card">
+          <div class="stat-header">
+            <span class="stat-label">Selesai <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Item yang order penghasil barang jadinya (order utama) SUDAH Delivered = Target — benar-benar tuntas, bukan cuma sampai tahap Finish/Ready Assy.">i</button></span>
             <span class="stat-icon"><span class="ic-green">&#10003;</span></span>
           </div>
-          <div class="stat-value"><%= lv_finish %></div>
-          <div class="stat-sub">item, tahap Finish (Plant 2000)</div>
+          <div class="stat-value"><%= lv_selesai %></div>
+          <div class="stat-sub">item, benar-benar tuntas</div>
         </div>
       </div>
     </div>
@@ -698,13 +698,14 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <div class="chart-grid">
       <div class="chart-cell chart-bar-cell">
         <div class="chart-card">
-          <div class="chart-title">Item Produksi per <%= lv_gran_lbl %> <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Distribusi tahap item (Pembahanan, Produksi, Finish) dikelompokkan per periode berdasarkan tanggal SO dibuat. Granularitas menyesuaikan lebar rentang yang dipilih: <=7 hari per hari, <=30 hari per minggu, <=60 hari per 2 minggu, <=90 hari per 3 minggu, di atas itu per bulan.">i</button></div>
+          <div class="chart-title">Item Produksi per <%= lv_gran_lbl %> <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Distribusi tahap item (Pembahanan, Produksi, Ready Assy, Selesai) dikelompokkan per periode berdasarkan tanggal SO dibuat. Klik bar untuk drill-down ke halaman Monitoring pada periode tersebut.">i</button></div>
           <div class="chart-sub">Distribusi tahap item per <%= lv_gran_lbl %> &#8212; <%= lv_period_lbl %> (Plant 2000)</div>
           <div class="chart-skel" style="height:240px;"></div>
           <canvas id="barChart" height="240"></canvas>
-          <div class="legend-row" style="margin-top:12px;">
-            <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span>Finish</div>
-            <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span>Produksi</div>
+          <div class="legend-row" style="margin-top:12px; flex-wrap:wrap;">
+            <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span>Selesai</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span>Ready Assy</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span>Produksi</div>
             <div class="legend-item"><span class="legend-dot" style="background:#d1d5db;"></span>Pembahanan</div>
           </div>
           <div class="chart-hint">&#128161; Klik bar untuk melihat detail SO di periode tersebut di halaman Monitoring</div>
@@ -712,13 +713,14 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       </div>
       <div class="chart-cell chart-donut-cell">
         <div class="chart-card">
-          <div class="chart-title">Tahap Produksi Item <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Proporsi seluruh item menurut tahap produksi (Pembahanan/Produksi/Finish).">i</button></div>
+          <div class="chart-title">Tahap Produksi Item <button type="button" class="info-btn" onclick="toggleInfo(this, event)" data-info="Proporsi seluruh item menurut tahap produksi (Pembahanan/Produksi/Ready Assy/Selesai).">i</button></div>
           <div class="chart-sub">Distribusi tahap dari seluruh item SO</div>
           <div class="chart-skel" style="width:200px;height:200px;border-radius:50%;margin:0 auto;"></div>
           <canvas id="donutChart" width="200" height="200" style="margin:0 auto;"></canvas>
-          <div class="legend-row">
-            <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span>Finish (<%= lv_finish %>)</div>
-            <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span>Produksi (<%= lv_produksi %>)</div>
+          <div class="legend-row" style="flex-wrap:wrap;">
+            <div class="legend-item"><span class="legend-dot" style="background:#10b981;"></span>Selesai (<%= lv_selesai %>)</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#3b82f6;"></span>Ready Assy (<%= lv_readyassy %>)</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span>Produksi (<%= lv_produksi %>)</div>
             <div class="legend-item"><span class="legend-dot" style="background:#d1d5db;"></span>Pembahanan (<%= lv_pembahanan %>)</div>
           </div>
         </div>
@@ -779,19 +781,29 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
   </div>
 
-  <!-- Data dari ABAP (inline, karena nilai diisi server-side oleh BSP) -->
+  <!-- Data dari ABAP -->
   <script>
     var weekLabels   = <%= lv_jmonths %>;
     var weekDates    = <%= lv_jwdates %>;
-    var doneCounts   = <%= lv_jfinish %>;
-    var inprogCounts = <%= lv_jproduksi %>;
-    var noprodCounts = <%= lv_jpembahanan %>;
-    var doneCount    = <%= lv_finish %>;
-    var progCount    = <%= lv_produksi %>;
-    var noprodCount  = <%= lv_pembahanan %>;
+    var weekDatesEnd = <%= lv_jwdates_end %>;   // D28: tanggal akhir bucket, SUDAH di-clip
+    // D27: granularitas bucket — js.js pakai ini utk label sumbu-X & menghitung
+    // tanggal akhir bucket yang benar saat drill-down/tooltip (dulu hardcode
+    // "+6 hari", salah utk granularitas selain mingguan).
+    var chartGran      = '<%= lv_gran %>';
+    var chartGranLabel = '<%= lv_gran_lbl %>';
+    // D23: 4 seri tahap — dikonsumsi LANGSUNG oleh js.js (bar chart 4-warna +
+    // donut 4-segmen).
+    var pembahananCounts = <%= lv_jpembahanan %>;
+    var produksiCounts   = <%= lv_jproduksi %>;
+    var readyAssyCounts  = <%= lv_jreadyassy %>;
+    var selesaiCounts    = <%= lv_jselesai %>;
+    var pembahananCount  = <%= lv_pembahanan %>;
+    var produksiCount    = <%= lv_produksi %>;
+    var readyAssyCount   = <%= lv_readyassy %>;
+    var selesaiCount     = <%= lv_selesai %>;
   </script>
   <!-- Semua fungsi chart & interaksi ada di js/js.js -->
-  <script src="js/js.js?r=6"></script>
+  <script src="js/js.js?r=9"></script>
   <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_user %> &bull; Plant: <%= lc_plant %></div>
 </body>
 </html>
