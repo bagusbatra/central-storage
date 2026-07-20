@@ -765,6 +765,180 @@ IF lv_trs_step = 'preview'.
   ENDIF.
 ENDIF.
 
+" === D43 Fase 4: EKSEKUSI POSTING (BAPI_GOODSMVT_CREATE, movement 311) ===
+" Logic direplikasi dari YPPI013 (SAVE3, mode r311) sebatas yang bisa
+" diverifikasi dari kode: MATERIAL_LONG, VAL_SALES_ORD/VAL_S_ORD_ITEM,
+" konversi UoM ke internal, gm_code '04', dua kali cek error (create+commit).
+" TIDAK termasuk: WM/TO (CREATE_TO_TP), fallback MCHB, cetak smartform,
+" BDC ZRMV_TIMEOUT (report itu kosong, tidak melakukan apa pun).
+DATA: lv_trs_result_ok   TYPE abap_bool,
+      lv_trs_result_msg  TYPE string,
+      lv_trs_matdoc      TYPE bapi2017_gm_head_ret-mat_doc,
+      lv_trs_matdoc_yr   TYPE bapi2017_gm_head_ret-doc_year.
+
+IF lv_trs_step = 'submit'.
+
+  DATA: ls_gm_head TYPE bapi2017_gm_head_01,
+        ls_gm_code TYPE bapi2017_gm_code,
+        lt_gm_item TYPE TABLE OF bapi2017_gm_item_create,
+        ls_gm_item TYPE bapi2017_gm_item_create,
+        lt_gm_ret  TYPE TABLE OF bapiret2,
+        ls_gm_ret  TYPE bapiret2,
+        lv_line_idx TYPE i,
+        lv_idx_str  TYPE string,   " CONCATENATE butuh operand character-like
+        lv_fname_sel   TYPE string,
+        lv_fname_matnr TYPE string,
+        lv_fname_batch TYPE string,
+        lv_fname_so    TYPE string,
+        lv_fname_item  TYPE string,
+        lv_fname_uom   TYPE string,
+        lv_fname_qty   TYPE string,
+        lv_val_sel     TYPE string,
+        lv_val_matnr   TYPE string,
+        lv_val_batch   TYPE string,
+        lv_val_so      TYPE string,
+        lv_val_item    TYPE string,
+        lv_val_uom     TYPE string,
+        lv_val_qty     TYPE string,
+        lv_err_txt     TYPE string,
+        lv_any_item    TYPE abap_bool.
+
+  " Header — pstng_date/doc_date hari ini, header_txt dari Referal MatDoc
+  " (keputusan eksplisit karena sumber asli di YPPI013 ambigu/bug).
+  ls_gm_head-pstng_date = sy-datum.
+  ls_gm_head-doc_date   = sy-datum.
+  ls_gm_head-header_txt = lv_trs_referal.
+  ls_gm_head-pr_uname   = sy-uname.
+
+  ls_gm_code-gm_code = '04'.
+
+  " Rekonstruksi baris dari field dinamis trs_sel_N / trs_matnr_N / dst,
+  " karena form preview mengirim field per-baris (bukan tabel internal).
+  DO 500 TIMES.
+    lv_line_idx = sy-index.
+    lv_idx_str  = lv_line_idx.
+    CONDENSE lv_idx_str.
+
+    CONCATENATE 'TRS_SEL_'   lv_idx_str  INTO lv_fname_sel.
+    lv_val_sel = request->get_form_field( lv_fname_sel ).
+    IF lv_val_sel IS INITIAL.
+      " Kalau baris ini tidak ada di form sama sekali (bukan cuma unchecked),
+      " asumsikan sudah lewat baris terakhir -> berhenti scan lebih awal
+      " hanya jika field matnr juga kosong (baris benar2 tidak ada).
+      CONCATENATE 'TRS_MATNR_' lv_idx_str  INTO lv_fname_matnr.
+      lv_val_matnr = request->get_form_field( lv_fname_matnr ).
+      IF lv_val_matnr IS INITIAL.
+        CONTINUE.
+      ELSE.
+        CONTINUE. " ada barisnya tapi tidak dicentang -> skip, bukan berhenti
+      ENDIF.
+    ENDIF.
+
+    lv_any_item = abap_true.
+
+    CONCATENATE 'TRS_MATNR_' lv_idx_str  INTO lv_fname_matnr.
+    CONCATENATE 'TRS_BATCH_' lv_idx_str  INTO lv_fname_batch.
+    CONCATENATE 'TRS_SO_'    lv_idx_str  INTO lv_fname_so.
+    CONCATENATE 'TRS_ITEM_'  lv_idx_str  INTO lv_fname_item.
+    CONCATENATE 'TRS_UOM_'   lv_idx_str  INTO lv_fname_uom.
+    CONCATENATE 'TRS_QTY_'   lv_idx_str  INTO lv_fname_qty.
+
+    lv_val_matnr = request->get_form_field( lv_fname_matnr ).
+    lv_val_batch = request->get_form_field( lv_fname_batch ).
+    lv_val_so    = request->get_form_field( lv_fname_so ).
+    lv_val_item  = request->get_form_field( lv_fname_item ).
+    lv_val_uom   = request->get_form_field( lv_fname_uom ).
+    lv_val_qty   = request->get_form_field( lv_fname_qty ).
+
+    CLEAR ls_gm_item.
+    ls_gm_item-material_long = lv_val_matnr.   " MATERIAL (short) & MOVE_MAT
+                                                " sengaja dibiarkan kosong,
+                                                " selaras pola asli YPPI013.
+    ls_gm_item-plant       = lv_trs_werks_f.
+    ls_gm_item-stge_loc    = lv_trs_lgort_f.
+    ls_gm_item-batch       = lv_val_batch.
+    ls_gm_item-move_type   = '311'.
+    ls_gm_item-move_plant  = lv_trs_werks_f.
+    ls_gm_item-move_stloc  = lv_trs_lgort_t.
+    ls_gm_item-move_batch  = lv_val_batch.
+    ls_gm_item-entry_qnt   = lv_val_qty.
+
+    " UoM: konversi eksternal->internal (CUNIT_INPUT) sebelum ke BAPI —
+    " kebalikan dari konversi tampilan (CUNIT_OUTPUT) yang dipakai di UI.
+    ls_gm_item-entry_uom = lv_val_uom.
+    CALL FUNCTION 'CONVERSION_EXIT_CUNIT_INPUT'
+      EXPORTING input          = ls_gm_item-entry_uom
+      IMPORTING output         = ls_gm_item-entry_uom
+      EXCEPTIONS unit_not_found = 1
+                 OTHERS         = 2.
+
+    " Stok SO: VAL_SALES_ORD/VAL_S_ORD_ITEM (bukan SALES_ORD/S_ORD_ITEM
+    " langsung) — temuan eksplisit dari SAVE3 di YPPI013.
+    IF lv_val_so IS NOT INITIAL.
+      ls_gm_item-spec_stock     = 'E'.
+      ls_gm_item-val_sales_ord  = lv_val_so.
+      ls_gm_item-val_s_ord_item = lv_val_item.
+    ENDIF.
+
+    APPEND ls_gm_item TO lt_gm_item.
+  ENDDO.
+
+  IF lv_any_item = abap_false OR lt_gm_item IS INITIAL.
+    lv_trs_result_ok  = abap_false.
+    lv_trs_result_msg = 'Tidak ada baris valid yang dicentang untuk diposting.'.
+  ELSE.
+
+    CALL FUNCTION 'BAPI_GOODSMVT_CREATE'
+      EXPORTING
+        goodsmvt_header   = ls_gm_head
+        goodsmvt_code     = ls_gm_code
+      IMPORTING
+        materialdocument  = lv_trs_matdoc
+        matdocumentyear   = lv_trs_matdoc_yr
+      TABLES
+        goodsmvt_item     = lt_gm_item
+        return            = lt_gm_ret.
+
+    CLEAR lv_err_txt.
+    LOOP AT lt_gm_ret INTO ls_gm_ret WHERE type = 'E'.
+      IF lv_err_txt IS NOT INITIAL.
+        CONCATENATE lv_err_txt '; ' ls_gm_ret-message INTO lv_err_txt.
+      ELSE.
+        lv_err_txt = ls_gm_ret-message.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_err_txt IS NOT INITIAL.
+      lv_trs_result_ok  = abap_false.
+      lv_trs_result_msg = lv_err_txt.
+    ELSE.
+      REFRESH lt_gm_ret.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING wait   = 'X'
+        IMPORTING return = ls_gm_ret.
+      APPEND ls_gm_ret TO lt_gm_ret.
+
+      CLEAR lv_err_txt.
+      LOOP AT lt_gm_ret INTO ls_gm_ret WHERE type = 'E'.
+        IF lv_err_txt IS NOT INITIAL.
+          CONCATENATE lv_err_txt '; ' ls_gm_ret-message INTO lv_err_txt.
+        ELSE.
+          lv_err_txt = ls_gm_ret-message.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_err_txt IS NOT INITIAL.
+        lv_trs_result_ok  = abap_false.
+        lv_trs_result_msg = lv_err_txt.
+      ELSE.
+        lv_trs_result_ok  = abap_true.
+        lv_trs_result_msg = 'Posting berhasil.'.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
+ENDIF.
+
 DATA: lv_ts_date TYPE string,
       lv_ts_time TYPE string.
 lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
@@ -1386,96 +1560,9 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
             </div>
           </form>
 
-          <% IF lv_trs_preview = abap_true. %>
-            <!-- ===== BLOK PREVIEW: tabel editable Qty TP ===== -->
-            <div style="margin-top:20px; padding-top:14px; border-top:2px solid #fbbf24;">
-              <div style="font-size:0.72rem; color:#92400e; letter-spacing:0.5px; font-weight:700; margin-bottom:8px;">&#9888; DATA UPLOAD TRANSFER POSTING</div>
-              <div style="font-size:0.76rem; color:#6b7280; margin-bottom:10px;">
-                Total <b><%= lv_trs_total_cnt %></b> baris, <b style="color:#15803d;"><%= lv_trs_valid_cnt %></b> siap dipost.
-                <br>Klik Submit setelah Qty TP dikonfirmasi. Kolom Qty TP dapat diedit.
-              </div>
-
-              <form method="post" action="pelacakan.htm" id="trs-preview-form" style="overflow-x:auto;">
-                <!-- Simpan field kepala utk resubmit ke Fase 4 -->
-                <input type="hidden" name="trs_step"    value="submit">
-                <input type="hidden" name="trs_werks_f" value="<%= lv_trs_werks_f %>">
-                <input type="hidden" name="trs_lgort_f" value="<%= lv_trs_lgort_f %>">
-                <input type="hidden" name="trs_lgort_t" value="<%= lv_trs_lgort_t %>">
-                <input type="hidden" name="trs_pernr"   value="<%= lv_trs_pernr %>">
-                <input type="hidden" name="trs_kpd"     value="<%= lv_trs_kpd %>">
-                <input type="hidden" name="trs_referal" value="<%= lv_trs_referal %>">
-
-                <table class="data-table" style="font-size:0.78rem;">
-                  <thead>
-                    <tr>
-                      <th style="width:5%; text-align:center;">Pilih</th>
-                      <th style="width:8%;">SO/Item</th>
-                      <th style="width:22%;">Material</th>
-                      <th style="width:14%;">Batch</th>
-                      <th style="width:11%; text-align:right;">Qty Stok</th>
-                      <th style="width:14%; text-align:right;">Qty TP</th>
-                      <th style="width:8%;">Plant</th>
-                      <th style="width:9%;">SLoc &rarr;</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <% LOOP AT lt_trs_rows INTO ls_trs_row. %>
-                    <tr style="<% IF ls_trs_row-is_valid = abap_false. %>background:#fef2f2;<% ENDIF. %>">
-                      <td style="text-align:center;">
-                        <% IF ls_trs_row-is_valid = abap_true. %>
-                        <input type="checkbox" name="trs_sel_<%= ls_trs_row-line_no %>" value="X" checked>
-                        <input type="hidden" name="trs_matnr_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-matnr %>">
-                        <input type="hidden" name="trs_batch_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-batch %>">
-                        <input type="hidden" name="trs_so_<%= ls_trs_row-line_no %>"    value="<%= ls_trs_row-so_num %>">
-                        <input type="hidden" name="trs_item_<%= ls_trs_row-line_no %>"  value="<%= ls_trs_row-so_item %>">
-                        <input type="hidden" name="trs_stok_<%= ls_trs_row-line_no %>"  value="<%= ls_trs_row-qty_stok %>">
-                        <input type="hidden" name="trs_uom_<%= ls_trs_row-line_no %>"   value="<%= ls_trs_row-meins %>">
-                        <% ELSE. %>
-                        <span title="<%= ls_trs_row-err_msg %>" style="color:#dc2626; font-size:0.9rem;">&#10005;</span>
-                        <% ENDIF. %>
-                      </td>
-                      <td style="font-family:monospace; font-size:0.72rem;">
-                        <% IF ls_trs_row-is_valid = abap_true. %>
-                          <%= ls_trs_row-so_num %>/<%= ls_trs_row-so_item %>
-                        <% ELSE. %>&mdash;<% ENDIF. %>
-                      </td>
-                      <td>
-                        <div style="font-family:monospace; font-size:0.72rem;"><%= ls_trs_row-matnr %></div>
-                        <div style="font-size:0.68rem; color:#6b7280;"><%= ls_trs_row-maktx %></div>
-                        <% IF ls_trs_row-is_valid = abap_false. %>
-                        <div style="font-size:0.68rem; color:#dc2626; margin-top:2px;">&#9888; <%= ls_trs_row-err_msg %></div>
-                        <% ENDIF. %>
-                      </td>
-                      <td style="font-family:monospace; font-size:0.72rem;"><%= ls_trs_row-batch %></td>
-                      <td style="text-align:right;">
-                        <% IF ls_trs_row-is_valid = abap_true. %>
-                          <span class="num-fmt"><%= ls_trs_row-qty_stok %></span> <%= ls_trs_row-meins %>
-                        <% ELSE. %>&mdash;<% ENDIF. %>
-                      </td>
-                      <td style="text-align:right;">
-                        <% IF ls_trs_row-is_valid = abap_true. %>
-                        <input type="number" name="trs_qty_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-qty_tp %>" step="0.001" min="0.001" max="<%= ls_trs_row-qty_stok %>" style="width:80px; padding:4px; border:1px solid #d1d5db; border-radius:4px;
-text-align:right; font-size:0.78rem;">
-                        <% ELSE. %>&mdash;<% ENDIF. %>
-                      </td>
-                      <td style="font-family:monospace; font-size:0.72rem;"><%= lv_trs_werks_f %></td>
-                      <td style="font-family:monospace; font-size:0.72rem;"><%= lv_trs_lgort_f %>&rarr;<%= lv_trs_lgort_t %></td>
-                    </tr>
-                    <% ENDLOOP. %>
-                  </tbody>
-                </table>
-
-                <div style="margin-top:14px; padding:8px; background:#fee2e2; border-radius:6px; font-size:0.75rem; color:#991b1b;">
-                  <b>Fase 4 belum aktif.</b> Tombol Submit di bawah masih dinonaktifkan &mdash; BAPI_GOODSMVT_CREATE + insert log + cetak PDF belum tersambung.
-                </div>
-
-                <div style="display:flex; gap:8px; margin-top:12px;">
-                  <button type="submit" disabled title="Fase 4 belum dibangun" style="flex:1; padding:10px; background:#9ca3af; color:white; border:none; border-radius:6px; font-weight:600; cursor:not-allowed;">Submit (Fase 4)</button>
-                  <button type="button" onclick="history.back()" style="padding:10px 14px; background:#f3f4f6; color:#374151; border:none; border-radius:6px; cursor:pointer;">&larr; Back</button>
-                </div>
-              </form>
-            </div>
-          <% ENDIF. %>
+          <!-- Blok preview/hasil posting dipindah ke MODAL di akhir halaman
+               (cari "MODAL TRANSFER POSTING"), supaya tabelnya tidak sempit
+               terjepit kolom 40% ini. -->
 
         </div>
       </div>
@@ -1483,7 +1570,173 @@ text-align:right; font-size:0.78rem;">
 
   </div>
 
+  <!-- ===================== MODAL TRANSFER POSTING (D43) =====================
+       Sengaja diletakkan di level atas dokumen, BUKAN di dalam
+       .list-container: position:fixed masih bisa terpotong kalau ada ancestor
+       ber-transform/filter, dan di sini tabelnya juga bebas dari lebar kolom
+       40% sehingga 8 kolom muat tanpa scroll horizontal.
+
+       Kondisi tampil sengaja "preview OR submit": pada step submit
+       lv_trs_preview TIDAK pernah di-set true (lihat cabang step='preview'),
+       jadi tanpa OR ini hasil posting tidak akan pernah dirender. -->
+  <% IF lv_trs_preview = abap_true OR lv_trs_step = 'submit'. %>
+  <div id="trs-modal" onclick="trsModalClose()"
+       style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(17,24,39,0.55); z-index:1000; display:flex; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto;">
+    <div role="dialog" aria-modal="true" aria-labelledby="trs-modal-title" onclick="event.stopPropagation();"
+         style="background:#fff; border-radius:12px; width:100%; max-width:900px; box-shadow:0 20px 50px rgba(0,0,0,0.35); overflow:hidden;">
+
+      <!-- Header modal -->
+      <div style="display:flex; align-items:flex-start; gap:12px; padding:14px 18px; border-bottom:1px solid #e5e7eb; background:#fffbeb;">
+        <div style="flex:1;">
+          <div id="trs-modal-title" style="font-size:0.72rem; color:#92400e; letter-spacing:0.5px; font-weight:700;">&#9888; DATA UPLOAD TRANSFER POSTING</div>
+          <div style="font-size:0.72rem; color:#6b7280; margin-top:3px;">
+            TP In Plant (311) &bull; Plant <b><%= lv_trs_werks_f %></b> &bull; <b><%= lv_trs_lgort_f %></b> &rarr; <b><%= lv_trs_lgort_t %></b>
+          </div>
+        </div>
+        <button type="button" onclick="trsModalClose()" aria-label="Tutup"
+                style="background:none; border:none; font-size:1.5rem; line-height:1; color:#9ca3af; cursor:pointer; padding:0 2px;">&times;</button>
+      </div>
+
+      <!-- Body modal -->
+      <div style="padding:16px 18px; max-height:72vh; overflow-y:auto;">
+
+      <% IF lv_trs_step = 'submit'. %>
+        <!-- ---------- Hasil eksekusi posting ---------- -->
+        <% IF lv_trs_result_ok = abap_true. %>
+        <div style="padding:14px; background:#dcfce7; border:1px solid #86efac; border-radius:8px; color:#15803d; font-size:0.88rem;">
+          &#10003; <b>Posting berhasil.</b><br>
+          No. Material Document: <b style="font-family:monospace;"><%= lv_trs_matdoc %></b> / <%= lv_trs_matdoc_yr %>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <!-- Link (GET) bukan tombol close: halaman ini hasil POST, kalau
+               user refresh setelah menutup modal browser akan mengirim ulang
+               form -> dokumen material dobel. Navigasi ke URL bersih. -->
+          <a href="pelacakan.htm" style="flex:1; text-align:center; padding:10px; background:#2563eb; color:white; text-decoration:none; border-radius:6px; font-weight:600; font-size:0.85rem;">Selesai</a>
+        </div>
+        <% ELSE. %>
+        <div style="padding:14px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; color:#991b1b; font-size:0.88rem;">
+          &#9888; <b>Posting gagal.</b><br>
+          <%= lv_trs_result_msg %>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <a href="pelacakan.htm" style="flex:1; text-align:center; padding:10px; background:#f3f4f6; color:#374151; text-decoration:none; border-radius:6px; font-size:0.85rem;">Kembali ke Form</a>
+        </div>
+        <% ENDIF. %>
+
+      <% ELSE. %>
+        <!-- ---------- Preview: tabel editable Qty TP ---------- -->
+        <div style="font-size:0.78rem; color:#6b7280; margin-bottom:12px;">
+          Total <b><%= lv_trs_total_cnt %></b> baris, <b style="color:#15803d;"><%= lv_trs_valid_cnt %></b> siap dipost.
+          <br>Kolom Qty TP dapat diedit. Baris merah tidak akan ikut diposting.
+        </div>
+
+        <form method="post" action="pelacakan.htm" id="trs-preview-form" onsubmit="return trsSubmitGuard(this);" style="overflow-x:auto;">
+          <!-- Simpan field kepala utk resubmit ke Fase 4 -->
+          <input type="hidden" name="trs_step"    value="submit">
+          <input type="hidden" name="trs_werks_f" value="<%= lv_trs_werks_f %>">
+          <input type="hidden" name="trs_lgort_f" value="<%= lv_trs_lgort_f %>">
+          <input type="hidden" name="trs_lgort_t" value="<%= lv_trs_lgort_t %>">
+          <input type="hidden" name="trs_pernr"   value="<%= lv_trs_pernr %>">
+          <input type="hidden" name="trs_kpd"     value="<%= lv_trs_kpd %>">
+          <input type="hidden" name="trs_referal" value="<%= lv_trs_referal %>">
+
+          <table class="data-table" style="font-size:0.78rem;">
+            <thead>
+              <tr>
+                <th style="width:5%; text-align:center;">Pilih</th>
+                <th style="width:8%;">SO/Item</th>
+                <th style="width:22%;">Material</th>
+                <th style="width:14%;">Batch</th>
+                <th style="width:11%; text-align:right;">Qty Stok</th>
+                <th style="width:14%; text-align:right;">Qty TP</th>
+                <th style="width:8%;">Plant</th>
+                <th style="width:9%;">SLoc &rarr;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% LOOP AT lt_trs_rows INTO ls_trs_row. %>
+              <tr style="<% IF ls_trs_row-is_valid = abap_false. %>background:#fef2f2;<% ENDIF. %>">
+                <td style="text-align:center;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                  <input type="checkbox" name="trs_sel_<%= ls_trs_row-line_no %>" value="X" checked>
+                  <input type="hidden" name="trs_matnr_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-matnr %>">
+                  <input type="hidden" name="trs_batch_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-batch %>">
+                  <input type="hidden" name="trs_so_<%= ls_trs_row-line_no %>"    value="<%= ls_trs_row-so_num %>">
+                  <input type="hidden" name="trs_item_<%= ls_trs_row-line_no %>"  value="<%= ls_trs_row-so_item %>">
+                  <input type="hidden" name="trs_stok_<%= ls_trs_row-line_no %>"  value="<%= ls_trs_row-qty_stok %>">
+                  <input type="hidden" name="trs_uom_<%= ls_trs_row-line_no %>"   value="<%= ls_trs_row-meins %>">
+                  <% ELSE. %>
+                  <span title="<%= ls_trs_row-err_msg %>" style="color:#dc2626; font-size:0.9rem;">&#10005;</span>
+                  <% ENDIF. %>
+                </td>
+                <td style="font-family:monospace; font-size:0.72rem;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                    <%= ls_trs_row-so_num %>/<%= ls_trs_row-so_item %>
+                  <% ELSE. %>&mdash;<% ENDIF. %>
+                </td>
+                <td>
+                  <div style="font-family:monospace; font-size:0.72rem;"><%= ls_trs_row-matnr %></div>
+                  <div style="font-size:0.68rem; color:#6b7280;"><%= ls_trs_row-maktx %></div>
+                  <% IF ls_trs_row-is_valid = abap_false. %>
+                  <div style="font-size:0.68rem; color:#dc2626; margin-top:2px;">&#9888; <%= ls_trs_row-err_msg %></div>
+                  <% ENDIF. %>
+                </td>
+                <td style="font-family:monospace; font-size:0.72rem;"><%= ls_trs_row-batch %></td>
+                <td style="text-align:right;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                    <span class="num-fmt"><%= ls_trs_row-qty_stok %></span> <%= ls_trs_row-meins %>
+                  <% ELSE. %>&mdash;<% ENDIF. %>
+                </td>
+                <td style="text-align:right;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                  <input type="number" name="trs_qty_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-qty_tp %>" step="0.001" min="0.001" max="<%= ls_trs_row-qty_stok %>" style="width:80px; padding:4px; border:1px solid #d1d5db; border-radius:4px; text-align:right; font-size:0.78rem;">
+                  <% ELSE. %>&mdash;<% ENDIF. %>
+                </td>
+                <td style="font-family:monospace; font-size:0.72rem;"><%= lv_trs_werks_f %></td>
+                <td style="font-family:monospace; font-size:0.72rem;"><%= lv_trs_lgort_f %>&rarr;<%= lv_trs_lgort_t %></td>
+              </tr>
+              <% ENDLOOP. %>
+            </tbody>
+          </table>
+
+          <div style="display:flex; gap:8px; margin-top:14px;">
+            <button type="submit" id="trs-submit-btn" style="flex:1; padding:10px; background:#2563eb; color:white; border:none; border-radius:6px; font-weight:600; cursor:pointer;">Submit Posting</button>
+            <button type="button" onclick="trsModalClose()" style="padding:10px 14px; background:#f3f4f6; color:#374151; border:none; border-radius:6px; cursor:pointer;">Batal</button>
+          </div>
+        </form>
+      <% ENDIF. %>
+
+      </div>
+    </div>
+  </div>
+  <% ENDIF. %>
+
   <script>
+    /* --- Modal Transfer Posting (D43) ---
+       Modal dirender server-side (sudah tampil saat load), jadi JS di sini
+       hanya perlu menutup, bukan membuka. */
+    function trsModalClose() {
+      var m = document.getElementById('trs-modal');
+      if (m) { m.style.display = 'none'; }
+      document.body.style.overflow = '';
+    }
+    /* Kunci scroll body selama modal terbuka */
+    if (document.getElementById('trs-modal')) {
+      document.body.style.overflow = 'hidden';
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' || e.keyCode === 27) { trsModalClose(); }
+    });
+    /* Cegah double-post: sekali submit, form dikunci. Tidak menggantikan
+       proteksi server-side (belum ada), cuma menutup jalur klik-ganda. */
+    function trsSubmitGuard(f) {
+      if (f.getAttribute('data-sent')) { return false; }
+      f.setAttribute('data-sent', '1');
+      var b = document.getElementById('trs-submit-btn');
+      if (b) { b.disabled = true; b.innerHTML = 'Memposting&hellip;'; }
+      return true;
+    }
+
     /* Tab lokal khusus halaman ini — sengaja TIDAK memakai switchTab() di
        js.js (butuh wrapper .detail-content yang tak ada di halaman ini), dan
        data sudah dirender penuh server-side (bukan lazy/AJAX) — cukup
