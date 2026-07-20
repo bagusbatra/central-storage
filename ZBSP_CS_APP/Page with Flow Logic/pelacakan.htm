@@ -1414,16 +1414,6 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
               <div class="info-field-val"><span class="cur-fmt"><%= ls_vbak_hdr-netwr %></span> <%= ls_vbak_hdr-waerk %></div>
             </div>
             <% ENDIF. %>
-            <div class="info-field">
-              <div class="info-field-lbl">Status SO</div>
-              <div class="info-field-val">
-                <span style="display:inline-block; padding:3px 12px; border-radius:20px; font-size:0.8rem; font-weight:700;
-                  <% IF ls_vbuk_hdr-gbstk = 'C'. %>background:#dcfce7; color:#15803d;
-                  <% ELSEIF ls_vbuk_hdr-gbstk = 'B'. %>background:#fef3c7; color:#92400e;
-                  <% ELSE. %>background:#f3f4f6; color:#6b7280;
-                  <% ENDIF. %>"><%= lv_hdr_stat_lbl %></span>
-              </div>
-            </div>
           </div>
 
           <div class="bom-title" style="margin-top:18px;">Info Item &#8212; <%= ls_vbap_hdr-posnr %></div>
@@ -1446,16 +1436,6 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
               <div class="info-field-val"><span class="cur-fmt"><%= ls_vbap_hdr-netwr %></span> <%= ls_vbak_hdr-waerk %></div>
             </div>
             <% ENDIF. %>
-            <div class="info-field">
-              <div class="info-field-lbl">Status Item</div>
-              <div class="info-field-val">
-                <span style="display:inline-block; padding:3px 12px; border-radius:20px; font-size:0.8rem; font-weight:700;
-                  <% IF ls_vbup_item-gbsta = 'C'. %>background:#dcfce7; color:#15803d;
-                  <% ELSEIF ls_vbup_item-gbsta = 'B'. %>background:#fef3c7; color:#92400e;
-                  <% ELSE. %>background:#f3f4f6; color:#6b7280;
-                  <% ENDIF. %>"><%= lv_itm_stat_lbl %></span>
-              </div>
-            </div>
             <div class="info-field">
               <div class="info-field-lbl">Kode Material</div>
               <div class="info-field-val"><%= ls_vbap_hdr-matnr %></div>
