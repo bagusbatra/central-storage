@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup Diagram — Ringkasan SO-Item (index2)</title>
+<style>
+  /* ============================================================
+     MOCKUP band "Ringkasan SO-Item" untuk index2.htm
+     Palet & aturan mengikuti skill dataviz (ordinal ramp biru +
+     palet status). Semua warna via custom properties → light/dark
+     di-step ulang, bukan flip. Data DUMMY untuk peragaan.
+     ============================================================ */
+  :root {
+    color-scheme: light;
+    --plane:        #f9f9f7;
+    --surface:      #fcfcfb;
+    --ink:          #0b0b0b;
+    --ink-2:        #52514e;
+    --muted:        #898781;
+    --hair:         #e1e0d9;
+    --track:        #ecebe6;
+    /* ordinal ramp biru (tervalidasi) */
+    --stage-1: #86b6ef;   /* Pembahanan */
+    --stage-2: #3987e5;   /* Produksi   */
+    --stage-3: #1c5cab;   /* Finish     */
+    --accent:  #256abf;
+    /* palet status (fixed) */
+    --good:     #0ca30c;
+    --warning:  #fab219;
+    --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --plane:   #0d0d0d;  --surface: #1a1a19;
+      --ink:     #ffffff;  --ink-2:   #c3c2b7;  --muted: #898781;
+      --hair:    #2c2c2a;  --track:   #2c2c2a;
+      --stage-1: #6da7ec;  --stage-2: #3987e5;  --stage-3: #184f95;
+      --accent:  #3987e5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 28px;
+    background: var(--plane); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px; line-height: 1.45;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .demo-note {
+    font-size: 0.72rem; color: var(--muted); letter-spacing: 0.3px;
+    margin-bottom: 14px;
+  }
+
+  /* ---- Band ringkasan ---- */
+  .summary-band {
+    background: var(--surface);
+    border: 1px solid var(--hair);
+    border-radius: 14px;
+    padding: 18px 20px 20px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .band-head {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .band-title { font-weight: 700; font-size: 1.02rem; }
+  .band-sub { font-size: 0.8rem; color: var(--ink-2); }
+
+  /* ---- KPI row ---- */
+  .kpi-row {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 12px; margin-bottom: 18px;
+  }
+  .kpi {
+    background: var(--plane); border: 1px solid var(--hair);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .kpi-lbl { font-size: 0.68rem; letter-spacing: 0.5px; color: var(--muted);
+    text-transform: uppercase; }
+  .kpi-val { font-size: 1.55rem; font-weight: 700; margin-top: 4px;
+    font-variant-numeric: tabular-nums; }
+  .kpi-val small { font-size: 0.8rem; font-weight: 600; color: var(--ink-2); }
+  .kpi.hero { display: flex; align-items: center; gap: 12px; }
+  .hero-num { font-size: 2.6rem; font-weight: 700; line-height: 1;
+    font-variant-numeric: tabular-nums; color: var(--accent); }
+  .ring { flex-shrink: 0; }
+
+  /* ---- 2-kolom kartu chart ---- */
+  .cards { display: flex; gap: 14px; flex-wrap: wrap; }
+  .card {
+    flex: 1 1 340px; background: var(--plane);
+    border: 1px solid var(--hair); border-radius: 10px; padding: 14px 16px;
+  }
+  .card-title { font-size: 0.74rem; letter-spacing: 0.5px; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 14px; }
+
+  /* ---- Bullet bar (pipeline tahap) ---- */
+  .bullet { margin-bottom: 16px; }
+  .bullet:last-child { margin-bottom: 4px; }
+  .bullet-top { display: flex; justify-content: space-between;
+    align-items: baseline; margin-bottom: 5px; }
+  .bullet-name { font-weight: 600; font-size: 0.85rem; }
+  .bullet-name span { font-weight: 400; color: var(--muted); font-size: 0.74rem; }
+  .bullet-qty { font-size: 0.76rem; color: var(--ink-2);
+    font-variant-numeric: tabular-nums; }
+  .bullet-track {
+    position: relative; height: 16px; background: var(--track);
+    border-radius: 8px; overflow: hidden;
+  }
+  .bullet-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    border-radius: 8px; display: flex; align-items: center;
+    justify-content: flex-end; padding-right: 7px;
+    color: #fff; font-size: 0.7rem; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .s1 { background: var(--stage-1); }
+  .s2 { background: var(--stage-2); }
+  .s3 { background: var(--stage-3); }
+  .pill-far {
+    display: inline-block; margin-top: 8px; font-size: 0.72rem;
+    color: var(--accent); font-weight: 600;
+  }
+
+  /* ---- Stacked stok bar ---- */
+  .stok-row { margin-bottom: 14px; }
+  .stok-loc { font-size: 0.76rem; font-family: monospace; color: var(--ink-2);
+    margin-bottom: 5px; display: flex; justify-content: space-between; }
+  .stok-loc b { color: var(--ink); }
+  .stacked { display: flex; height: 16px; border-radius: 8px; overflow: hidden;
+    gap: 2px; background: transparent; }
+  .seg { height: 100%; }
+  .seg:first-child { border-radius: 8px 0 0 8px; }
+  .seg:last-child { border-radius: 0 8px 8px 0; }
+  .seg.only { border-radius: 8px; }
+  .g-good { background: var(--good); }
+  .g-warn { background: var(--warning); }
+  .g-crit { background: var(--critical); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 12px;
+    font-size: 0.74rem; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  @media (max-width: 720px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="demo-note">MOCKUP — data dummy · palet dataviz tervalidasi · ganti tema OS untuk lihat mode gelap</div>
+
+  <div class="summary-band">
+    <div class="band-head">
+      <div class="band-title">Ringkasan SO-Item</div>
+      <div class="band-sub">SO 10000021 / Item 10 &middot; 20086291 &mdash; MEJA MAKAN JATI</div>
+    </div>
+
+    <!-- KPI ROW -->
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-lbl">Total Order</div>
+        <div class="kpi-val">7</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Total Target</div>
+        <div class="kpi-val">300 <small>PC</small></div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-lbl">Total Delivered</div>
+        <div class="kpi-val">185 <small>PC</small></div>
+      </div>
+      <div class="kpi hero">
+        <svg class="ring" width="52" height="52" viewBox="0 0 36 36" aria-hidden="true">
+          <circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--track)" stroke-width="4"/>
+          <circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--accent)" stroke-width="4"
+                  stroke-linecap="round" stroke-dasharray="97.4"
+                  stroke-dashoffset="37" transform="rotate(-90 18 18)"/>
+        </svg>
+        <div>
+          <div class="kpi-lbl">Progres Keseluruhan</div>
+          <div class="hero-num">62%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DUA KARTU CHART -->
+    <div class="cards">
+
+      <!-- Konsep 1: Pipeline Tahap MRP -->
+      <div class="card">
+        <div class="card-title">Pipeline Tahap MRP</div>
+
+        <div class="bullet">
+          <div class="bullet-top">
+            <div class="bullet-name">Pembahanan <span>WM/PN</span></div>
+            <div class="bullet-qty">100 / 100 PC</div>
+          </div>
+          <div class="bullet-track"><div class="bullet-fill s1" style="width:100%">100%</div></div>
+        </div>
+
+        <div class="bullet">
+          <div class="bullet-top">
+            <div class="bullet-name">Produksi <span>GA</span></div>
+            <div class="bullet-qty">65 / 100 PC</div>
+          </div>
+          <div class="bullet-track"><div class="bullet-fill s2" style="width:65%">65%</div></div>
+        </div>
+
+        <div class="bullet">
+          <div class="bullet-top">
+            <div class="bullet-name">Finish <span>EB</span></div>
+            <div class="bullet-qty">20 / 100 PC</div>
+          </div>
+          <div class="bullet-track"><div class="bullet-fill s3" style="width:20%">20%</div></div>
+        </div>
+
+        <div class="pill-far">&#9650; Tahap terjauh: Produksi</div>
+      </div>
+
+      <!-- Konsep 3: Komposisi Stok -->
+      <div class="card">
+        <div class="card-title">Stok Saat Ini (MSKA) &middot; 235 PC</div>
+
+        <div class="stok-row">
+          <div class="stok-loc"><b>2000 / 2KCS</b> <span>175 PC</span></div>
+          <div class="stacked">
+            <div class="seg g-good" style="width:68.6%"></div>
+            <div class="seg g-warn" style="width:22.9%"></div>
+            <div class="seg g-crit" style="width:8.5%"></div>
+          </div>
+        </div>
+
+        <div class="stok-row">
+          <div class="stok-loc"><b>1000 / 1D00</b> <span>60 PC</span></div>
+          <div class="stacked">
+            <div class="seg g-good only" style="width:100%"></div>
+          </div>
+        </div>
+
+        <div class="legend">
+          <span><i class="swatch g-good"></i>&#10004; Unrestricted 180</span>
+          <span><i class="swatch g-warn"></i>&#9888; Quality Insp 40</span>
+          <span><i class="swatch g-crit"></i>&#9940; Blocked 15</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="demo-note" style="margin-top:16px;">
+    Di halaman asli, band ini muncul <b>di atas tab detail</b> (Pembahanan/Produksi/Riwayat/Stok/Info),
+    hanya saat SO+Item ditemukan. Angka dihitung server-side dari <code>lt_ord</code> &amp; <code>lt_stok</code>.
+  </div>
+</div>
+</body>
+</html>
