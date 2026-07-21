@@ -1,8 +1,9 @@
-# Dokumentasi `pelacakan.htm` — Pelacakan Material per SO+Item
+# Dokumentasi Halaman Pelacakan Material per SO+Item
 
-Halaman BSP mandiri untuk **melacak satu pasang Sales Order + Item** dari sisi order produksi, pergerakan barang, dan posisi stok — plus form **Transfer Posting (MvT 311)** multi-material.
+Halaman BSP untuk **melacak satu pasang Sales Order + Item** dari sisi order produksi, pergerakan barang, dan posisi stok — plus form **Transfer Posting (MvT 311)** multi-material.
 
-> Lokasi: `ZBSP_CS_APP/Page with Flow Logic/pelacakan.htm` (±1.884 baris)
+> **Lokasi (D44):** halaman ini sekarang adalah **`index.htm`** — entry point aplikasi.
+> `pelacakan.htm` masih ada sebagai **duplikat identik** (keputusan user). Lihat §11.
 > Dokumen pendamping: [`DOKUMENTASI-SUMBER-DATA.md`](DOKUMENTASI-SUMBER-DATA.md) (sumber data seluruh app), [`DOKUMENTASI-FITUR-ELEMEN.md`](DOKUMENTASI-FITUR-ELEMEN.md) (elemen UI bersama)
 
 ---
@@ -16,7 +17,7 @@ Halaman BSP mandiri untuk **melacak satu pasang Sales Order + Item** dari sisi o
 | **Output** | 5 tab data + form Transfer Posting di kolom kanan |
 | **Sifat** | **Data mentah langsung** — sengaja TIDAK memakai mesin tahap 4-tingkat / checkpoint yang dipakai `index`/`monitoring`/`riwayat` |
 | **Rendering** | Penuh server-side, satu request. Tidak ada AJAX/lazy-load |
-| **Navigasi** | Punya entri navbar sendiri (`Pelacakan`), tapi **tidak ditautkan dari halaman lain** — hanya bisa diakses via URL langsung |
+| **Navigasi** | Entry point aplikasi. Navbar-nya **hanya berisi satu entri** (`Pelacakan`, aktif) — lihat §10 |
 
 ### Kenapa "data mentah"?
 
@@ -175,7 +176,9 @@ Empat `SELECT SINGLE` ringan, hanya jalan setelah SO+Item terkonfirmasi:
 
 Pemetaan domain `STATV`: `A` = Belum Diproses, `B` = Sebagian Diproses, `C` = Selesai Diproses, lainnya = Tidak Diketahui.
 
-> ⚠️ Ini pemetaan **langsung** dari `GBSTK`/`GBSTA`. Kalau "Overall Status" di VA03 ternyata berasal dari kombinasi status lain, label di sini bisa berbeda dari yang dilihat user di SAP GUI. Belum dikonfirmasi.
+> ⚠️ **`VBUK`/`VBUP` sekarang dead code.** Commit `b2a039f` ("Remove status fields from Sales Order and Item sections") menghapus **tampilan** Status SO & Status Item dari tab Info Order, tapi meninggalkan dua `SELECT SINGLE` + dua blok `CASE` di ABAP. Keduanya tetap dieksekusi tiap load dan hasilnya (`lv_hdr_stat_lbl`, `lv_itm_stat_lbl`) **tidak pernah dipakai**. Aman secara fungsional, tapi dua query sia-sia per request — hapus atau kembalikan tampilannya.
+>
+> ⚠️ Kalau tampilannya dikembalikan: pemetaan ini **langsung** dari `GBSTK`/`GBSTA`. Kalau "Overall Status" di VA03 ternyata berasal dari kombinasi status lain, label di sini bisa berbeda dari yang dilihat user di SAP GUI. Belum dikonfirmasi.
 
 ---
 
@@ -243,7 +246,48 @@ ls_gm_item-val_s_ord_item = <item>.    " BUKAN s_ord_item
 
 Lalu `BAPI_GOODSMVT_CREATE` → cek `return` type `'E'` → kalau bersih, `BAPI_TRANSACTION_COMMIT WAIT='X'` → cek error lagi.
 
-**Direplikasi dari `YPPI013` (SAVE3, mode r311)** sebatas yang bisa diverifikasi dari kodenya. **Tidak** termasuk: WM/Transfer Order (`CREATE_TO_TP`), fallback MCHB, cetak smartform, dan BDC `ZRMV_TIMEOUT` (report-nya kosong, tidak melakukan apa pun).
+### 5.4 Warisan dari `YPPI013`
+
+Blok posting Fase 4 **bukan tulisan dari nol** — ia meniru routine `SAVE3` (mode `r311`) di program `YPPI013`, transaksi transfer posting yang sudah dipakai sebelumnya.
+
+> ⚠️ **`YPPI013` tidak ada di repository ini.** Satu-satunya jejaknya adalah komentar di `pelacakan.htm` itu sendiri. Semua yang ada di bagian ini adalah **klaim dari komentar kode**, bukan hasil diff terhadap sumber aslinya. Kalau perilaku posting ternyata berbeda dari YPPI013, mulailah menyelidik dari sini.
+>
+> Komentar aslinya pun berhati-hati: *"sebatas yang bisa diverifikasi dari kode"* — porting dilakukan dengan membaca kode YPPI013, bukan dokumentasi atau observasi runtime-nya. Celah masih mungkin ada.
+
+#### Yang ditiru
+
+| # | Pola | Kenapa penting |
+|---|---|---|
+| 1 | **`MATERIAL_LONG` diisi, `MATERIAL` (short) & `MOVE_MAT` dibiarkan kosong** | Kalau ikut mengisi `MATERIAL` yang 18-char, BAPI bisa menolak atau bentrok pada material bernomor panjang. Pola asli YPPI013 hanya mengisi versi `_LONG` |
+| 2 | **`VAL_SALES_ORD` / `VAL_S_ORD_ITEM`, bukan `SALES_ORD` / `S_ORD_ITEM`** | Disebut komentar sebagai *"temuan eksplisit dari SAVE3"*. Nama field yang mirip ini gampang tertukar; yang versi `VAL_*` adalah yang benar untuk stok SO. Dipasang bersama `SPEC_STOCK = 'E'` |
+| 3 | **Konversi UoM eksternal → internal (`CONVERSION_EXIT_CUNIT_INPUT`) sebelum masuk BAPI** | Kebalikan dari `CUNIT_OUTPUT` yang dipakai untuk tampilan (lihat D30). UI memegang `PC`, BAPI menuntut `ST` |
+| 4 | **`GM_CODE = '04'`** | Kode transaksi goods movement untuk transfer posting |
+| 5 | **Dua kali cek error: setelah `CREATE`, lalu setelah `COMMIT`** | `BAPI_GOODSMVT_CREATE` bisa lolos tapi commit-nya gagal. Cek sekali saja akan melaporkan "berhasil" untuk posting yang tidak pernah tersimpan |
+
+#### Yang sengaja TIDAK diikutkan
+
+| Bagian YPPI013 | Alasan tidak diport |
+|---|---|
+| **WM / Transfer Order** (`CREATE_TO_TP`) | Di luar cakupan Fase 4 |
+| **Fallback MCHB** | Di luar cakupan Fase 4 |
+| **Cetak smartform** | Di luar cakupan Fase 4 |
+| **BDC `ZRMV_TIMEOUT`** | **Report-nya kosong — tidak melakukan apa pun.** Memanggilnya cuma menyalin cargo cult |
+
+#### Yang sengaja dibedakan
+
+| Field | Keputusan di sini | Alasan |
+|---|---|---|
+| `pstng_date` / `doc_date` | `sy-datum` (hari ini) | Sumber asli di YPPI013 disebut *"ambigu/bug"* — bukan pola yang layak ditiru |
+| `header_txt` | `lv_trs_referal` (Referal MatDoc) | idem — keputusan eksplisit, bukan warisan |
+| `pr_uname` | `sy-uname` | |
+
+#### Yang murni baru (tidak ada padanannya di YPPI013)
+
+YPPI013 adalah report ABAP dengan screen/ALV; `pelacakan.htm` adalah halaman BSP. Bagian berikut tidak punya asal-usul di sana dan harus dinilai sendiri:
+
+- rekonstruksi baris dari field form dinamis (`DO 500 TIMES` + `CONCATENATE`)
+- validasi preview terhadap `MSKA` (step 1)
+- modal, `trsSubmitGuard()`, persist sessionStorage
 
 ---
 
@@ -311,7 +355,7 @@ Kode ini penuh penanda `D##`. Yang paling penting untuk dipahami sebelum menguba
 | **D40** | Enhancement UI Riwayat: gabung pasangan OUT+IN, badge MvT berwarna, group tanggal, filter client-side |
 | **D41** | Persist form kanan via sessionStorage |
 | **D42** | Form Transfer Posting multi-material (Fase 3: preview) |
-| **D43** | Fase 4: eksekusi `BAPI_GOODSMVT_CREATE` + modal |
+| **D43** | Fase 4: eksekusi `BAPI_GOODSMVT_CREATE` (port dari `YPPI013` SAVE3 mode r311, lihat §5.4) + modal |
 
 ---
 
@@ -327,12 +371,88 @@ Kode ini penuh penanda `D##`. Yang paling penting untuk dipahami sebelum menguba
 | 6 | `ty_stok-umlme` & `-source` dideklarasikan, MARD tidak pernah di-query | Free stock yang dijanjikan komentar `~514` belum ada |
 | 7 | Asumsi `AFPO-LGORT` = "Stor. Loc." gaya COOIS; SLoc `22E3` tidak ada di konstanta `ZCL_CS_UTIL` | Belum dikonfirmasi ke user |
 | 8 | Enam SLoc plant 2000 di-hardcode di tiga query terpisah | Ubah satu, lupa dua |
+| 9 | **`YPPI013` tidak ada di repo ini.** Logic posting Fase 4 diklaim meniru `SAVE3` mode `r311` di sana, tapi klaim itu hanya hidup di komentar `pelacakan.htm` — tidak bisa di-diff terhadap sumber aslinya (§5.4) | Kalau posting berperilaku beda dari YPPI013, tidak ada acuan di repo untuk membandingkan. Porting juga dilakukan dari membaca kode, bukan observasi runtime — celah masih mungkin |
 
 ---
 
-## 10. Catatan untuk Pengembang
+## 10. D44 — Halaman Ini Jadi `index.htm`
 
-- **Halaman ini belum masuk git** (untracked saat dokumen ini ditulis) dan belum dicatat di `DOKUMENTASI-SUMBER-DATA.md` / `DOKUMENTASI-FITUR-ELEMEN.md`.
+Isi lama `index.htm` (Dashboard Statistik & Grafik) **dipensiunkan** atas permintaan user; halaman pelacakan mengambil alih entry point aplikasi.
+
+### Yang disesuaikan
+
+| Item | Perubahan |
+|---|---|
+| Navbar halaman ini | Entri **"Dashboard" dihapus**. "Pelacakan" jadi entri pertama + `active`, href `index.htm` |
+| Navbar halaman ini (D45) | Entri **"Monitoring" & "Riwayat" ikut dihapus** atas permintaan user — navbar tinggal **satu entri** |
+| Navbar `monitoring` / `riwayat` / `transfer` | Tombol "Dashboard" (`&#9782;` → `index.htm`) diganti jadi **"Pelacakan"** (`&#128269;`), href tetap `index.htm` |
+| Form action | `pelacakan.htm` → `index.htm` (form Cari SO, `#trs-form`, `#trs-preview-form`) |
+| Link Reset & tombol modal | `pelacakan.htm` → `index.htm` |
+| Selector reset sessionStorage | `a[href="pelacakan.htm"]` → `a[href="index.htm"]`. Tetap discope ke `form.parentNode`, jadi link navbar tidak ikut terjaring |
+| `userLogout()` | **Tidak berubah** — tetap `index.htm?~logoff`, sekarang mendarat di halaman ini |
+
+### Cadangan Dashboard
+
+| Tempat | Keterangan |
+|---|---|
+| `index_backup.htm` | Salinan byte-identik `index.htm` lama (beda line-ending saja) — **untracked di git** |
+| Git | Commit terakhir yang memuatnya: `b2a039f` |
+
+> ⚠️ `index_backup.htm` belum masuk git. Kalau working directory hilang, satu-satunya cadangan Dashboard adalah riwayat git.
+
+### Halaman tanpa navbar
+
+`monitoring_bom.htm`, `monitoring_detail.htm`, `diag_movement.htm` tidak punya navbar sama sekali — tidak terpengaruh.
+
+### D45 — Navigasi jadi satu arah
+
+Setelah "Monitoring" & "Riwayat" dihapus dari navbar `index.htm`, arah navigasi jadi **tidak simetris**:
+
+```
+index.htm ──────────────────────────────►  (buntu, tidak menaut ke mana-mana)
+                    ▲
+                    │  tombol "Pelacakan"
+                    │
+     monitoring.htm ┼─ riwayat.htm ─ transfer.htm
+        (ketiganya masih saling menaut satu sama lain)
+```
+
+| Fakta | Konsekuensi |
+|---|---|
+| `monitoring.htm`, `riwayat.htm`, `transfer.htm` **tetap ada dan tetap saling menaut** | Tidak ada yang rusak — halaman-halaman itu berfungsi normal |
+| Dari `index.htm` **tidak ada jalan** ke ketiganya | User yang mendarat di entry point hanya bisa mengaksesnya via **URL langsung** |
+| Ketiganya masih punya tombol "Pelacakan" → `index.htm` | Jalan **balik** ke entry point tetap ada |
+
+> ⚠️ Ini keputusan sadar user, bukan kelalaian. Tapi efek praktisnya: `monitoring.htm` dan `riwayat.htm` jadi **tidak dapat ditemukan** oleh user yang masuk lewat entry point — nasib yang sama dengan `transfer.htm` sejak D25 dan `diag_movement.htm` / `maintenance.htm` yang memang tidak pernah ditautkan.
+
+---
+
+## 11. Duplikasi `index.htm` ↔ `pelacakan.htm`
+
+`pelacakan.htm` **sengaja dipertahankan** (keputusan user) dan isinya identik dengan `index.htm` kecuali tiga hal:
+
+1. blok komentar `D44` di header `index.htm`
+2. susunan navbar (`pelacakan.htm` masih punya entri "Dashboard" dan "Pelacakan" terpisah)
+3. self-reference form/link (`pelacakan.htm` vs `index.htm`)
+
+> ⚠️ **Perbaikan bug wajib diterapkan ke KEDUA file.** Kalau tidak, keduanya akan menyimpang diam-diam — dan karena `pelacakan.htm` masih bisa diakses via URL langsung, user bisa saja memakai versi yang belum diperbaiki.
+>
+> ⚠️ **`STORE_KEY` sessionStorage sama di kedua file** (`'pelacakan_trs_form'`), jadi draft form Transfer Posting **terbagi** antara keduanya. Draft yang diketik di `index.htm` akan muncul di `pelacakan.htm`, dan sebaliknya.
+
+Cara cepat memeriksa keduanya masih sinkron:
+
+```bash
+diff <(sed 's/index\.htm/@P@/g' index.htm) <(sed 's/pelacakan\.htm/@P@/g' pelacakan.htm)
+```
+
+Keluaran yang diharapkan: hanya blok komentar D44, dua baris navbar, dan satu baris `userLogout()` (artefak normalisasi — nilai sebenarnya sama).
+
+---
+
+## 12. Catatan untuk Pengembang
+
+- **Cek sinkron dengan `pelacakan.htm`** setiap kali mengubah halaman ini (§11) — dua file, satu isi.
 - **Diagnostics CSS palsu.** Editor melaporkan puluhan error `css-ruleorselectorexpected` / `css-rcurlyexpected` — itu linter CSS tersedak tag `<% %>` di dalam atribut `style=`. Pola lama di seluruh app ini, bukan kerusakan.
-- **Cek balance sebelum aktivasi.** Struktur kontrol ABAP tersebar di banyak scriptlet `<% %>` multi-baris, jadi grep per-baris tidak berguna. Hitung token dari seluruh scriptlet gabungan: saat ini `IF 89 / ENDIF 89`, `LOOP AT 20 / ENDLOOP 20`, `DO 1 / ENDDO 1`.
+- **Cek balance sebelum aktivasi.** Struktur kontrol ABAP tersebar di banyak scriptlet `<% %>` multi-baris, jadi grep per-baris tidak berguna. Hitung token dari seluruh scriptlet gabungan: saat ini `IF 87 / ENDIF 87`, `ELSEIF 2`, `LOOP AT 20 / ENDLOOP 20`, `DO 1 / ENDDO 1`, `WHILE 1 / ENDWHILE 1`.
+- **Nomor baris di dokumen ini mengacu ke `pelacakan.htm`.** Di `index.htm` semuanya bergeser **+17 baris** karena blok komentar D44 di header.
 - **`CONCATENATE` butuh operand character-like.** Variabel `TYPE i` harus dikonversi dulu (`lv_idx_str = lv_line_idx. CONDENSE lv_idx_str.`) — kesalahan ini sempat memicu 8 error aktivasi sekaligus.
