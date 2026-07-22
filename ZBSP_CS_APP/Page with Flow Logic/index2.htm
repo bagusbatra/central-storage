@@ -1009,6 +1009,12 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     /* Hover highlight utk hist rows */
     .hist-row:hover { background:#fafbfc; cursor:default; }
     .hist-row[title] { cursor:help; }
+    /* D46: baris header pengelompokan per SLoc (tab Produksi & Stok) */
+    .sloc-group-row td {
+      background:#eef2ff; color:#4338ca; font-weight:700;
+      font-size:0.74rem; letter-spacing:0.3px; padding:6px 12px !important;
+      border-top:1px solid #c7d2fe;
+    }
   </style>
 </head>
 <body>
@@ -1195,7 +1201,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
               </thead>
               <tbody>
                 <% DATA lv_has_row2 TYPE abap_bool.
-                   CLEAR lv_has_row2.
+                   DATA lv_last_lgort2 TYPE lgort_d.
+                   CLEAR: lv_has_row2, lv_last_lgort2.
                    LOOP AT lt_ord INTO ls_ord WHERE pwerk = lc_werks_2000.
                      lv_has_row2 = abap_true.
                      lv_rowid = sy-tabix.
@@ -1207,7 +1214,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                        lv_pcls = zcl_cs_util=>prog_txt_class( lv_prog ).
                      ELSE.
                        lv_has_prd = abap_false. lv_prog = 0.
-                     ENDIF. %>
+                     ENDIF.
+                     " D46: kelompokkan per SLoc — sisipkan header saat lgort berubah
+                     " (lt_ord sudah SORT BY pwerk lgort matnr, jadi grup kontigu)
+                     IF ls_ord-lgort <> lv_last_lgort2.
+                       lv_last_lgort2 = ls_ord-lgort. %>
+                <tr class="sloc-group-row"><td colspan="6">&#128205;&nbsp;SLoc <%= ls_ord-lgort %></td></tr>
+                <%   ENDIF. %>
                 <tr class="clickable-item-row" onclick="pelToggleBom('<%= lv_rowid %>')">
                   <td><code class="mat-code"><%= ls_ord-matnr %></code></td>
                   <td><%= ls_ord-maktx %> <span style="font-size:0.72rem;color:#9ca3af;">(Klik BOM)</span></td>
@@ -1377,10 +1390,18 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
                 </tr>
               </thead>
               <tbody>
-                <% DATA lv_stok_any TYPE abap_bool.
-                   CLEAR lv_stok_any.
+                <% DATA: lv_stok_any TYPE abap_bool,
+                         lv_last_slk TYPE string,
+                         lv_cur_slk  TYPE string.
+                   CLEAR: lv_stok_any, lv_last_slk.
                    LOOP AT lt_stok INTO ls_stok.
-                     lv_stok_any = abap_true. %>
+                     lv_stok_any = abap_true.
+                     " D46: kelompokkan per SLoc (lt_stok SORT BY werks lgort ...)
+                     CONCATENATE ls_stok-werks ls_stok-lgort INTO lv_cur_slk.
+                     IF lv_cur_slk <> lv_last_slk.
+                       lv_last_slk = lv_cur_slk. %>
+                <tr class="sloc-group-row"><td colspan="8">&#128205;&nbsp;<%= ls_stok-werks %> / SLoc <%= ls_stok-lgort %></td></tr>
+                <%   ENDIF. %>
                 <tr>
                   <td><code class="mat-code"><%= ls_stok-matnr %></code></td>
                   <td style="font-size:0.78rem;"><%= ls_stok-maktx %></td>
