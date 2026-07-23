@@ -25,6 +25,40 @@
 "     ⚠️ STORE_KEY sessionStorage tetap 'pelacakan3_trs_form' — draft form
 "     Transfer Posting jadi TERBAGI antara index.htm & pelacakan.htm.
 *&---------------------------------------------------------------------*
+*& D47 — STATUS KOMPONEN BOM DIROMBAK TOTAL: dari tebak-tebak saldo stok
+"     level PLANT (tidak bisa bedakan SLoc konsumsi vs SLoc lain, DAN query
+"     fallback "order terbuka" GLOBAL tanpa scope SO/Item — bisa nangkap
+"     order milik SO lain utk material yg sama, sumber badge "Sedang
+"     dibuat" yg salah kaprah) MENJADI berbasis RESB (BDMNG/ENMNG) yg
+"     discope PERSIS ke AUFNR order induk komponen tsb. RESB adalah
+"     mekanisme SAP-native yg menghubungkan komponen ke production order
+"     spesifik pemiliknya; MSEG movement 261 (goods issue produksi) SELALU
+"     bawa RSNUM = nomor reservasi RESB, jadi ENMNG persis mencerminkan
+"     "sudah dimakan berapa" secara real & tidak ambigu.
+"     Field baru: ty_bomcomp-parent_aufnr (nomor order induk, kunci ke RESB).
+"     Badge baru: Sudah Dipakai Penuh / Sebagian Terpakai (+sisa qty) /
+"     Siap Dipakai / Masih di Plant Lain / Sedang Dibuat / Belum Tersedia /
+"     Stok Tersedia & Tidak Ada Data (fallback kalau RESB kosong).
+"     Query fallback stok "order terbuka" SEKARANG discope ke kdauf/kdpos
+"     (SO+Item yg sedang dilihat) — perbaikan bug lama.
+"     ⚠️ Del QTY di tabel order utama (Pembahanan/Produksi) TIDAK diubah —
+"     tetap WEMNG/PSMNG apa adanya (keputusan eksplisit user, D47).
+*&---------------------------------------------------------------------*
+*& D48 — PERBAIKAN BUG DI D47: filter "AND xloek = space" pada query RESB
+"     JUSTRU MEMBUANG baris paling penting — order yg sudah TECO/selesai
+"     100% umumnya py baris RESB dgn xloek='X' (penutupan administratif
+"     reservasi), BUKAN indikasi barang belum dipakai. Akibatnya order yg
+"     sudah tuntas malah tampil "Tidak Ada Data" (dilaporkan user dgn
+"     screenshot: material 20086291 100% selesai, tapi komponennya
+"     RWPNPLY0011 tampil "Tidak Ada Data").
+"     FIX: filter xloek dihapus dari WHERE (ambil SEMUA baris RESB), lalu
+"     dilacak field any_open (true kalau MINIMAL SATU baris masih xloek
+"     space). Badge sekarang membedakan 4 kombinasi ENMNG vs BDMNG × status
+"     buka/tutup reservasi — lihat percabangan lengkap di komentar dalam
+"     LOOP AT lt_bomcomp ASSIGNING <bc> di bawah. Badge baru: "Sudah Dipakai
+"     (Reservasi Ditutup)" & "Reservasi Dibatalkan" (kelas CSS baru
+"     cst-gray) utk kasus reservasi tertutup yg sebelumnya tidak tertangani.
+*&---------------------------------------------------------------------*
 *& REVISI 2 — kolom diganti total sesuai permintaan user (referensi COOIS):
 "     Material | No Material | Target QTY | Del QTY | Progres | Sloc
 "
@@ -197,7 +231,7 @@ TYPES: BEGIN OF ty_bomcomp,
          meins  TYPE stpo-meins,
          idnrk_disp   TYPE string,      " #1: idnrk tanpa leading zeros (display)
          parent_pwerk TYPE afpo-pwerk,  " #7: plant order pemilik BOM (konteks status)
-         parent_aufnr TYPE afpo-aufnr,  " #7-REV: nomor order induk, kunci ke RESB
+         parent_aufnr TYPE afpo-aufnr,  " D47: nomor order induk, kunci ke RESB
          status_lbl   TYPE string,      " #7: label badge status komponen
          status_cls   TYPE string,      " #7: kelas warna badge
          status_tip   TYPE string,      " #7: tooltip penjelas + detail
@@ -371,7 +405,7 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
           ls_bomcomp-idnrk = ls_stpo-idnrk.
           ls_bomcomp-menge = ls_stpo-menge.
           ls_bomcomp-meins = ls_stpo-meins.
-          " #7: plant order pemilik stlnr ini = konteks status komponen
+          " #7 / D47: plant + AUFNR order pemilik stlnr ini = konteks status komponen
           READ TABLE lt_ord INTO ls_ord WITH KEY stlnr = ls_stpo-stlnr.
           IF sy-subrc = 0.
             ls_bomcomp-parent_pwerk = ls_ord-pwerk.
@@ -415,8 +449,78 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
           ENDLOOP.
           SORT lt_bomcomp BY stlnr posnr.
 
-          " ===== #7: STATUS AKTUAL KOMPONEN (batched, nol query per-baris) =====
-          DATA: lt_idnrk TYPE TABLE OF stpo-idnrk.
+          " ===== D47: STATUS AKTUAL KOMPONEN via RESB (scoped ke AUFNR
+          "     order induk) — REVISI dari versi sebelumnya yang menebak
+          "     dari saldo stok level PLANT (tidak bisa bedakan SLoc
+          "     konsumsi vs SLoc lain) + query "order terbuka" yang TIDAK
+          "     discope ke SO+Item (bisa salah nangkap order milik SO lain
+          "     utk material yang sama, sumber "Sedang dibuat" yg salah
+          "     kaprah). RESB-BDMNG/ENMNG per AUFNR adalah sumber kebenaran
+          "     SAP-native — PERSIS mekanisme yg dipakai goods issue
+          "     produksi (MSEG bwart 261 SELALU bawa RSNUM = nomor
+          "     reservasi RESB). ===
+          DATA: BEGIN OF ls_resb_agg,
+                  aufnr    TYPE resb-aufnr,
+                  matnr    TYPE resb-matnr,
+                  bdmng    TYPE p LENGTH 15 DECIMALS 3,
+                  enmng    TYPE p LENGTH 15 DECIMALS 3,
+                  any_open TYPE abap_bool,  " D48: true kalau ADA baris RESB yg
+                                            " masih aktif (xloek space); kalau
+                                            " SEMUA baris sudah xloek='X' (order
+                                            " ditutup/TECO), any_open = false.
+                END OF ls_resb_agg.
+          DATA lt_resb_agg LIKE TABLE OF ls_resb_agg.
+          FIELD-SYMBOLS <ra> LIKE LINE OF lt_resb_agg.
+
+          DATA: BEGIN OF ls_resb_sel,
+                  aufnr TYPE resb-aufnr,
+                  matnr TYPE resb-matnr,
+                  bdmng TYPE resb-bdmng,
+                  enmng TYPE resb-enmng,
+                  xloek TYPE resb-xloek,
+                END OF ls_resb_sel.
+          DATA lt_resb_sel LIKE TABLE OF ls_resb_sel.
+          DATA lt_aufnr_range TYPE TABLE OF aufnr.
+
+          LOOP AT lt_bomcomp INTO ls_bomcomp WHERE parent_aufnr IS NOT INITIAL.
+            APPEND ls_bomcomp-parent_aufnr TO lt_aufnr_range.
+          ENDLOOP.
+          SORT lt_aufnr_range. DELETE ADJACENT DUPLICATES FROM lt_aufnr_range.
+
+          IF lt_aufnr_range IS NOT INITIAL.
+            " D48-FIX: TIDAK memfilter xloek di WHERE lagi. Filter xloek=space
+            " sebelumnya (D47) JUSTRU MEMBUANG baris RESB paling penting: order
+            " yang sudah TECO/selesai 100% biasanya xloek='X' pada baris
+            " reservasinya (penutupan administratif), BUKAN berarti barangnya
+            " belum dipakai. Akibatnya sistem "buta" pada order yang sudah
+            " tuntas & jatuh ke fallback stok yg juga sudah 0 -> "Tidak Ada
+            " Data" yg salah kaprah (dilaporkan user, Image terbaru).
+            SELECT aufnr matnr bdmng enmng xloek FROM resb
+              INTO CORRESPONDING FIELDS OF TABLE lt_resb_sel
+              FOR ALL ENTRIES IN lt_aufnr_range
+              WHERE aufnr = lt_aufnr_range-table_line.
+            " Agregasi (SUM) per (aufnr,matnr) — satu komponen bisa py >1 baris
+            " RESB. any_open jadi true kalau MINIMAL SATU baris masih aktif.
+            LOOP AT lt_resb_sel INTO ls_resb_sel.
+              READ TABLE lt_resb_agg ASSIGNING <ra>
+                WITH KEY aufnr = ls_resb_sel-aufnr matnr = ls_resb_sel-matnr.
+              IF sy-subrc <> 0.
+                APPEND INITIAL LINE TO lt_resb_agg ASSIGNING <ra>.
+                <ra>-aufnr = ls_resb_sel-aufnr.
+                <ra>-matnr = ls_resb_sel-matnr.
+              ENDIF.
+              <ra>-bdmng = <ra>-bdmng + ls_resb_sel-bdmng.
+              <ra>-enmng = <ra>-enmng + ls_resb_sel-enmng.
+              IF ls_resb_sel-xloek <> 'X'.
+                <ra>-any_open = abap_true.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+
+          " Fallback stok (dipakai HANYA kalau RESB belum ada penarikan sama
+          " sekali, atau kalau RESB tidak ditemukan) — query "order terbuka"
+          " sekarang DISCOPE ke SO+Item ini (perbaikan bug lama yg nangkap
+          " order milik SO lain untuk material yang sama).
           DATA: BEGIN OF ls_cstat,
                   matnr   TYPE mard-matnr,
                   stk1000 TYPE p LENGTH 15 DECIMALS 3,
@@ -425,6 +529,7 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
                 END OF ls_cstat.
           DATA lt_cstat LIKE TABLE OF ls_cstat.
           FIELD-SYMBOLS <cs> LIKE LINE OF lt_cstat.
+          DATA lt_idnrk TYPE TABLE OF stpo-idnrk.
           LOOP AT lt_bomcomp INTO ls_bomcomp.
             APPEND ls_bomcomp-idnrk TO lt_idnrk.
           ENDLOOP.
@@ -443,11 +548,14 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
             SELECT matnr werks labst FROM mard INTO TABLE lt_ck_mard
               FOR ALL ENTRIES IN lt_idnrk
               WHERE matnr = lt_idnrk-table_line.
-            " order produksi komponen yang masih terbuka (wemng < psmng)
+            " D47-FIX: discope ke SO+Item ini (kdauf/kdpos) — dulu query ini
+            " GLOBAL tanpa scope, bisa salah nangkap order milik SO lain.
             SELECT a~matnr FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
               INTO TABLE lt_ck_afpo
               FOR ALL ENTRIES IN lt_idnrk
-              WHERE a~matnr = lt_idnrk-table_line AND a~wemng < a~psmng.
+              WHERE a~matnr = lt_idnrk-table_line
+                AND a~kdauf = lv_so AND a~kdpos = lv_item
+                AND a~wemng < a~psmng.
             " agregasi per material
             LOOP AT lt_ck_mska INTO ls_ck_mska.
               READ TABLE lt_cstat ASSIGNING <cs> WITH KEY matnr = ls_ck_mska-matnr.
@@ -467,29 +575,91 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
               <cs>-has_ord = abap_true.
             ENDLOOP.
           ENDIF.
-          " derive badge per komponen (relatif ke plant rakit = parent_pwerk)
+
+          " ===== Derive badge per komponen — RESB dulu (sumber kebenaran),
+          "     stok jadi fallback HANYA kalau belum ada penarikan sama sekali =====
           DATA: lv_here  TYPE p LENGTH 15 DECIMALS 3,
-                lv_other TYPE p LENGTH 15 DECIMALS 3.
+                lv_other TYPE p LENGTH 15 DECIMALS 3,
+                lv_sisa  TYPE p LENGTH 15 DECIMALS 3.
           LOOP AT lt_bomcomp ASSIGNING <bc>.
-            CLEAR ls_cstat.
-            READ TABLE lt_cstat INTO ls_cstat WITH KEY matnr = <bc>-idnrk.
-            IF <bc>-parent_pwerk = lc_werks_2000.
-              lv_here = ls_cstat-stk2000. lv_other = ls_cstat-stk1000.
+            CLEAR: ls_resb_agg, ls_cstat.
+            READ TABLE lt_resb_agg INTO ls_resb_agg
+              WITH KEY aufnr = <bc>-parent_aufnr matnr = <bc>-idnrk.
+
+            IF sy-subrc = 0 AND ls_resb_agg-bdmng > 0.
+              " ---- RESB ditemukan: SUMBER KEBENARAN ----
+              IF ls_resb_agg-enmng >= ls_resb_agg-bdmng.
+                " Sudah ditarik penuh — berlaku SAMA baik reservasi masih aktif
+                " maupun sudah ditutup (xloek='X', wajar utk order yg sudah
+                " TECO/selesai 100% — penutupan administratif, BUKAN indikasi
+                " belum dipakai). Ini kasus paling umum utk order 100% selesai.
+                <bc>-status_lbl = 'Sudah Dipakai Penuh'. <bc>-status_cls = 'cst-good'.
+                <bc>-status_tip = |Seluruh kebutuhan { ls_resb_agg-bdmng } { <bc>-meins } untuk order ini sudah diambil (goods issue) dari stok.|.
+              ELSEIF ls_resb_agg-enmng > 0.
+                lv_sisa = ls_resb_agg-bdmng - ls_resb_agg-enmng.
+                IF ls_resb_agg-any_open = abap_true.
+                  <bc>-status_lbl = 'Sebagian Terpakai'. <bc>-status_cls = 'cst-blue'.
+                  <bc>-status_tip = |Sudah diambil { ls_resb_agg-enmng } dari { ls_resb_agg-bdmng } { <bc>-meins } yang dibutuhkan. Sisa { lv_sisa } { <bc>-meins }.|.
+                ELSE.
+                  " D48: reservasi SUDAH DITUTUP (xloek='X') tapi penarikan
+                  " belum penuh — mis. sisa kebutuhan dibatalkan manual saat
+                  " order ditutup. Bukan indikasi kekurangan stok yg masih
+                  " perlu ditindaklanjuti, jadi TETAP badge hijau (selesai),
+                  " dengan catatan sisa yg tidak akan ditarik lagi.
+                  <bc>-status_lbl = 'Sudah Dipakai (Reservasi Ditutup)'. <bc>-status_cls = 'cst-good'.
+                  <bc>-status_tip = |Diambil { ls_resb_agg-enmng } dari { ls_resb_agg-bdmng } { <bc>-meins }. Reservasi sudah ditutup bersama order — sisa { lv_sisa } { <bc>-meins } tidak akan ditarik lagi.|.
+                ENDIF.
+              ELSE.
+                IF ls_resb_agg-any_open = abap_false.
+                  " D48: reservasi DITUTUP tanpa pernah ditarik sama sekali —
+                  " requirement komponen ini dibatalkan/tidak jadi dipakai.
+                  " JANGAN ditampilkan sbg "Belum Tersedia" (merah) — itu akan
+                  " menyiratkan seolah ada masalah stok, padahal kebutuhannya
+                  " sendiri sudah tidak berlaku.
+                  <bc>-status_lbl = 'Reservasi Dibatalkan'. <bc>-status_cls = 'cst-gray'.
+                  <bc>-status_tip = |Reservasi komponen ini ditutup tanpa pernah diambil — kebutuhan { ls_resb_agg-bdmng } { <bc>-meins } dibatalkan/tidak jadi dipakai utk order ini.|.
+                ELSE.
+                  READ TABLE lt_cstat INTO ls_cstat WITH KEY matnr = <bc>-idnrk.
+                  IF <bc>-parent_pwerk = lc_werks_2000.
+                    lv_here = ls_cstat-stk2000. lv_other = ls_cstat-stk1000.
+                  ELSE.
+                    lv_here = ls_cstat-stk1000. lv_other = ls_cstat-stk2000.
+                  ENDIF.
+                  IF lv_here > 0.
+                    <bc>-status_lbl = 'Siap Dipakai'. <bc>-status_cls = 'cst-warn'.
+                    <bc>-status_tip = |Belum ada yang diambil, tapi stok { lv_here } { <bc>-meins } sudah tersedia di Plant { <bc>-parent_pwerk }. Kebutuhan order: { ls_resb_agg-bdmng } { <bc>-meins }.|.
+                  ELSEIF lv_other > 0.
+                    <bc>-status_lbl = 'Masih di Plant Lain'. <bc>-status_cls = 'cst-warn'.
+                    <bc>-status_tip = |Stok { lv_other } { <bc>-meins } masih di plant lain, belum sampai di Plant { <bc>-parent_pwerk }.|.
+                  ELSEIF ls_cstat-has_ord = abap_true.
+                    <bc>-status_lbl = 'Sedang Dibuat'. <bc>-status_cls = 'cst-blue'.
+                    <bc>-status_tip = 'Belum ada stok, tapi ada order produksi komponen ini yang masih berjalan untuk SO+Item yang sama.'.
+                  ELSE.
+                    <bc>-status_lbl = 'Belum Tersedia'. <bc>-status_cls = 'cst-crit'.
+                    <bc>-status_tip = |Tidak ada stok & belum ada yang diambil. Kebutuhan order: { ls_resb_agg-bdmng } { <bc>-meins }.|.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
             ELSE.
-              lv_here = ls_cstat-stk1000. lv_other = ls_cstat-stk2000.
-            ENDIF.
-            IF lv_here > 0.
-              <bc>-status_lbl = 'Sudah di lokasi rakit'. <bc>-status_cls = 'cst-good'.
-              <bc>-status_tip = |Stok komponen sudah ada di plant tempat rakitan dikerjakan. Tersedia { lv_here } di Plant { <bc>-parent_pwerk }.|.
-            ELSEIF <bc>-parent_pwerk = lc_werks_2000 AND lv_other > 0.
-              <bc>-status_lbl = 'Masih di KMI 1'. <bc>-status_cls = 'cst-warn'.
-              <bc>-status_tip = |Stok komponen masih di Plant 1000 (Pembahanan), belum dikirim ke lokasi rakit (2000). Tersedia { lv_other } di Plant 1000.|.
-            ELSEIF ls_cstat-has_ord = abap_true.
-              <bc>-status_lbl = 'Sedang dibuat'. <bc>-status_cls = 'cst-blue'.
-              <bc>-status_tip = 'Belum ada stok, tapi ada order produksi komponen yang masih berjalan.'.
-            ELSE.
-              <bc>-status_lbl = 'Belum tersedia'. <bc>-status_cls = 'cst-crit'.
-              <bc>-status_tip = 'Tidak ada stok & tidak ada order produksi terbuka untuk komponen ini.'.
+              " ---- Tidak ada baris RESB (jarang; mis. komponen non-reservasi
+              "     /bulk) -> fallback murni ke stok, ditandai netral supaya
+              "     tidak disalahartikan sbg status pasti berbasis RESB. ----
+              READ TABLE lt_cstat INTO ls_cstat WITH KEY matnr = <bc>-idnrk.
+              IF <bc>-parent_pwerk = lc_werks_2000.
+                lv_here = ls_cstat-stk2000. lv_other = ls_cstat-stk1000.
+              ELSE.
+                lv_here = ls_cstat-stk1000. lv_other = ls_cstat-stk2000.
+              ENDIF.
+              IF lv_here > 0.
+                <bc>-status_lbl = 'Stok Tersedia'. <bc>-status_cls = 'cst-good'.
+                <bc>-status_tip = |Tidak ada data reservasi (RESB) utk komponen ini, tapi stok { lv_here } { <bc>-meins } tersedia di Plant { <bc>-parent_pwerk }.|.
+              ELSEIF lv_other > 0.
+                <bc>-status_lbl = 'Masih di Plant Lain'. <bc>-status_cls = 'cst-warn'.
+                <bc>-status_tip = |Tidak ada data reservasi (RESB). Stok { lv_other } { <bc>-meins } terdeteksi di plant lain.|.
+              ELSE.
+                <bc>-status_lbl = 'Tidak Ada Data'. <bc>-status_cls = 'cst-crit'.
+                <bc>-status_tip = 'Tidak ada data reservasi (RESB) maupun stok utk komponen ini.'.
+              ENDIF.
             ENDIF.
           ENDLOOP.
         ENDIF.
@@ -927,10 +1097,14 @@ ENDIF.
 
 " === D43 Fase 4: EKSEKUSI POSTING (BAPI_GOODSMVT_CREATE, movement 311) ===
 " Logic direplikasi dari YPPI013 (SAVE3, mode r311) sebatas yang bisa
-" diverifikasi dari kode: MATERIAL_LONG, VAL_SALES_ORD/VAL_S_ORD_ITEM,
-" konversi UoM ke internal, gm_code '04', dua kali cek error (create+commit).
+" diverifikasi dari kode: VAL_SALES_ORD/VAL_S_ORD_ITEM, konversi UoM ke
+" internal, gm_code '04', dua kali cek error (create+commit).
 " TIDAK termasuk: WM/TO (CREATE_TO_TP), fallback MCHB, cetak smartform,
 " BDC ZRMV_TIMEOUT (report itu kosong, tidak melakukan apa pun).
+" ⚠️ KOREKSI (dikonfirmasi via SE11 di sistem user): struktur
+"    BAPI2017_GM_ITEM_CREATE TIDAK punya field MATERIAL_LONG — field yg
+"    benar adalah MATERIAL (18 char). Field material_long yg dipakai di
+"    kode sebelumnya akan GAGAL AKTIVASI.
 DATA: lv_trs_result_ok   TYPE abap_bool,
       lv_trs_result_msg  TYPE string,
       lv_trs_matdoc      TYPE bapi2017_gm_head_ret-mat_doc,
@@ -1011,9 +1185,10 @@ IF lv_trs_step = 'submit'.
     lv_val_qty   = request->get_form_field( lv_fname_qty ).
 
     CLEAR ls_gm_item.
-    ls_gm_item-material_long = lv_val_matnr.   " MATERIAL (short) & MOVE_MAT
-                                                " sengaja dibiarkan kosong,
-                                                " selaras pola asli YPPI013.
+    ls_gm_item-material    = lv_val_matnr.   " D48-FIX: MATERIAL (bukan MATERIAL_LONG,
+                                              " field itu tidak ada di struktur).
+                                              " MOVE_MAT dibiarkan kosong, SAP
+                                              " auto-derive dari MATERIAL.
     ls_gm_item-plant       = lv_trs_werks_f.
     ls_gm_item-stge_loc    = lv_trs_lgort_f.
     ls_gm_item-batch       = lv_val_batch.
@@ -1140,6 +1315,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .cst-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:600; cursor:help; white-space:nowrap; }
     .cst-good { background:#dcfce7; color:#15803d; } .cst-warn { background:#fef3c7; color:#92400e; }
     .cst-blue { background:#dbeafe; color:#1e40af; } .cst-crit { background:#fee2e2; color:#991b1b; }
+    .cst-gray { background:#f3f4f6; color:#6b7280; }
     /* #6: donut */
     .donut-wrap { display:flex; gap:22px; flex-wrap:wrap; margin:4px 0 14px; }
     .donut-card { display:flex; flex-direction:column; align-items:center; background:#f9fafb; border:1px solid #eef0f2; border-radius:10px; padding:12px 20px; }
@@ -1297,7 +1473,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                       <div class="bom-title">Komponen BOM — <%= ls_ord-matnr %> (BOM <%= ls_ord-stlnr %>)</div>
                       <table class="bom-table">
                         <thead>
-                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;" title="Status aktual komponen relatif ke lokasi rakit (plant tab ini).">Status</th></tr>
+                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;" title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
                         </thead>
                         <tbody>
                           <%
@@ -1401,7 +1577,7 @@ di aplikasi.">22E3 belum punya label resmi.</span></p>
                       <div class="bom-title">Komponen BOM — <%= ls_ord-matnr %> (BOM <%= ls_ord-stlnr %>)</div>
                       <table class="bom-table">
                         <thead>
-                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;" title="Status aktual komponen relatif ke lokasi rakit (plant tab ini).">Status</th></tr>
+                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;" title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
                         </thead>
                         <tbody>
                           <%

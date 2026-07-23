@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup index3 — Perbaikan #1–#7</title>
+<style>
+  :root{
+    --ink:#0b0b0b; --ink2:#52514e; --muted:#898781; --hair:#e5e7eb;
+    --plane:#f9f9f7; --surf:#fff; --accent:#2563eb;
+    --good:#0ca30c; --warn:#fab219; --crit:#d03b3b; --blue:#3987e5;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--plane);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;}
+  .demo-note{background:#fffbeb;border-bottom:1px solid #fde68a;color:#92400e;font-size:0.75rem;padding:6px 16px;}
+  .header-bar{display:flex;justify-content:space-between;align-items:center;background:#1e3a8a;color:#fff;padding:12px 18px;}
+  .header-bar h1{font-size:1.05rem;margin:0;}
+  .header-bar p{margin:2px 0 0;font-size:0.72rem;opacity:.8;}
+  .navbar{display:flex;gap:6px;background:#fff;border-bottom:1px solid var(--hair);padding:0 14px;}
+  .nav-btn{padding:11px 14px;font-size:0.85rem;color:#374151;text-decoration:none;border-bottom:2px solid transparent;}
+  .nav-btn.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600;}
+  .content{padding:16px;max-width:1180px;margin:0 auto;}
+  .filter-card{background:var(--surf);border:1px solid var(--hair);border-radius:10px;padding:12px 14px;margin-bottom:12px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;}
+  .fg label{display:block;font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;}
+  .fg input{padding:7px 9px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85rem;}
+  .btn{padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-size:0.85rem;}
+  .btn.ghost{background:#f3f4f6;color:#374151;}
+
+  /* mode bar (#2) */
+  .mode-bar{display:flex;align-items:center;gap:14px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:0.82rem;}
+  .mode-bar label{display:inline-flex;gap:5px;align-items:center;cursor:pointer;}
+
+  /* layout 2 kolom + collapsible (#2) */
+  .main{display:flex;gap:16px;align-items:flex-start;}
+  .col-left{flex:1;min-width:0;}
+  .col-right{width:360px;flex-shrink:0;}
+  .main.collapsed .col-right{display:none;}
+
+  .card{background:var(--surf);border:1px solid var(--hair);border-radius:10px;padding:14px 16px;}
+  .so-head{font-weight:700;font-size:1rem;margin-bottom:2px;}
+  .so-sub{font-size:0.8rem;color:var(--ink2);margin-bottom:12px;}
+
+  /* tabs */
+  .tab-nav{display:flex;gap:4px;border-bottom:1px solid var(--hair);margin-bottom:14px;flex-wrap:wrap;}
+  .tab-btn{padding:9px 13px;font-size:0.83rem;background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;color:#4b5563;}
+  .tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600;}
+  .tab-pane{display:none;}
+  .tab-pane.active{display:block;}
+
+  table{width:100%;border-collapse:collapse;font-size:0.83rem;}
+  th,td{text-align:left;padding:8px 9px;border-bottom:1px solid #f0f1f2;}
+  th{font-size:0.72rem;text-transform:uppercase;letter-spacing:.3px;color:var(--muted);background:#fafafa;}
+  th[title],.hint{ text-decoration:underline dotted #9ca3af; cursor:help; }
+  .mat-code{font-family:monospace;background:#f3f4f6;padding:1px 6px;border-radius:4px;font-size:0.8rem;}
+  .num{font-variant-numeric:tabular-nums;text-align:right;}
+  tr.clickable{cursor:pointer;} tr.clickable:hover{background:#f8fafc;}
+
+  /* progress bar */
+  .pbar{height:8px;background:#ecebe6;border-radius:5px;overflow:hidden;min-width:70px;}
+  .pfill{height:100%;background:var(--blue);border-radius:5px;}
+
+  /* badges */
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:0.72rem;font-weight:600;white-space:nowrap;}
+  .badge[title]{cursor:help;}
+  .b-good{background:#dcfce7;color:#15803d;} .b-warn{background:#fef3c7;color:#92400e;}
+  .b-blue{background:#dbeafe;color:#1e40af;} .b-crit{background:#fee2e2;color:#991b1b;}
+  .b-gray{background:#f3f4f6;color:#4b5563;} .b-purple{background:#ede9fe;color:#5b21b6;}
+
+  /* BOM sub-row */
+  .bomwrap{background:#fafafa;padding:8px 10px 4px;border-radius:8px;margin:2px 0 6px;}
+  .bom-title{font-size:0.78rem;font-weight:700;color:#374151;margin-bottom:6px;}
+
+  /* info order */
+  .info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:6px;}
+  .info-field{background:var(--plane);border:1px solid var(--hair);border-radius:8px;padding:9px 11px;}
+  .info-l{font-size:0.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+  .info-v{font-size:0.9rem;font-weight:600;margin-top:2px;}
+  .info-full{grid-column:1/-1;}
+  .sect-title{font-weight:700;font-size:0.9rem;margin:14px 0 8px;}
+
+  /* donut (#6) */
+  .donuts{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:6px;}
+  .donut{display:flex;flex-direction:column;align-items:center;background:var(--plane);border:1px solid var(--hair);border-radius:10px;padding:12px 22px;}
+  .donut-cap{font-size:0.74rem;color:var(--ink2);font-weight:600;margin-top:6px;letter-spacing:.3px;}
+  .donut-sub{font-size:0.68rem;color:var(--muted);}
+
+  /* transfer panel */
+  .trs-h{font-size:0.7rem;color:var(--muted);letter-spacing:.5px;}
+  .trs-t{font-weight:700;color:#1e3a8a;margin:2px 0 2px;}
+  .trs-field{margin-bottom:9px;}
+  .trs-field label{display:block;font-size:0.68rem;color:var(--muted);text-transform:uppercase;margin-bottom:3px;}
+  .trs-field input,.trs-field textarea{width:100%;padding:7px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82rem;font-family:monospace;}
+  .collapse-btn{font-size:0.76rem;color:var(--accent);background:none;border:1px solid #c7d2fe;border-radius:6px;padding:5px 10px;cursor:pointer;}
+</style>
+</head>
+<body>
+<div class="demo-note">MOCKUP STATIS — data dummy. Menunjukkan perbaikan #1 (tanpa leading zeros) · #2 (panel Transfer collapsible + Mode) · #3 (tooltip header — arahkan kursor) · #4 (urutan tab) · #5 (status SO) · #6 (donut) · #7 (status komponen BOM — klik baris material).</div>
+
+<div class="header-bar">
+  <div><h1>Central Storage — Pelacakan Material</h1><p>Pergerakan material per SO + Item · Plant 1000/2000 Surabaya</p></div>
+  <div style="font-size:0.8rem;">User SAP: BAGUS</div>
+</div>
+<div class="navbar">
+  <a class="nav-btn active">🔍 Pelacakan</a>
+  <a class="nav-btn">📊 Cockpit</a>
+</div>
+
+<div class="content">
+  <div class="filter-card">
+    <div class="fg"><label>Nomor Sales Order</label><input value="10000021" style="width:130px;"></div>
+    <div class="fg"><label>Nomor Item</label><input value="10" style="width:80px;"></div>
+    <button class="btn">CARI DATA</button>
+  </div>
+
+  <!-- #2 Mode -->
+  <div class="mode-bar">
+    <span style="font-weight:600;color:#4338ca;">MODE:</span>
+    <label><input type="radio" name="mode" checked onclick="setMode('mon')"> 🖥️ Monitoring <span style="color:var(--muted);">(tabel lebar penuh)</span></label>
+    <label><input type="radio" name="mode" onclick="setMode('trx')"> ✎ Transaksi <span style="color:var(--muted);">(tampilkan form Transfer)</span></label>
+    <button class="collapse-btn" id="collapseBtn" onclick="toggleTransfer()" style="margin-left:auto;">Transfer Posting ▶</button>
+  </div>
+
+  <div class="main collapsed" id="main">
+    <div class="col-left">
+      <div class="card">
+        <div class="so-head">SO #10000021 — Item 10</div>
+        <!-- #1: matnr tanpa leading zeros -->
+        <div class="so-sub">20086291 — MEJA MAKAN JATI</div>
+
+        <!-- #4: urutan tab -->
+        <div class="tab-nav">
+          <button class="tab-btn active" onclick="tab('info',this)">▣ Info Order</button>
+          <button class="tab-btn" onclick="tab('pmb',this)">🧪 Pembahanan</button>
+          <button class="tab-btn" onclick="tab('prod',this)">⚙️ Produksi</button>
+          <button class="tab-btn" onclick="tab('stok',this)">📦 Stok Saat Ini</button>
+          <button class="tab-btn" onclick="tab('hist',this)">🔄 Riwayat Pergerakan</button>
+        </div>
+
+        <!-- ===== INFO ORDER ===== -->
+        <div class="tab-pane active" id="info">
+          <!-- #6: 2 donut -->
+          <div class="donuts">
+            <div class="donut">
+              <svg width="110" height="110" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#ecebe6" stroke-width="12"></circle>
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#3987e5" stroke-width="12" stroke-linecap="round"
+                        stroke-dasharray="326.7" stroke-dashoffset="65.3" transform="rotate(-90 60 60)"></circle>
+                <text x="60" y="60" text-anchor="middle" dominant-baseline="central" font-size="26" font-weight="700" fill="#1e3a8a">80%</text>
+              </svg>
+              <div class="donut-cap">PEMBAHANAN</div>
+              <div class="donut-sub">rata-rata progres · 2 order (Plant 1000)</div>
+            </div>
+            <div class="donut">
+              <svg width="110" height="110" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#ecebe6" stroke-width="12"></circle>
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#3987e5" stroke-width="12" stroke-linecap="round"
+                        stroke-dasharray="326.7" stroke-dashoffset="186.2" transform="rotate(-90 60 60)"></circle>
+                <text x="60" y="60" text-anchor="middle" dominant-baseline="central" font-size="26" font-weight="700" fill="#1e3a8a">43%</text>
+              </svg>
+              <div class="donut-cap">PRODUKSI</div>
+              <div class="donut-sub">rata-rata progres · 2 order (Plant 2000)</div>
+            </div>
+          </div>
+
+          <div class="sect-title">Info Sales Order</div>
+          <div class="info-grid">
+            <div class="info-field"><div class="info-l">Nomor SO</div><div class="info-v">10000021</div></div>
+            <div class="info-field"><div class="info-l">Tanggal Dibuat</div><div class="info-v">15.07.2026</div></div>
+            <div class="info-field"><div class="info-l">Tipe Dokumen</div><div class="info-v">ZOR</div></div>
+            <!-- #5: STATUS -->
+            <div class="info-field"><div class="info-l">Status Item (Overall — VA03)</div>
+              <div class="info-v"><span class="badge b-warn" style="cursor:help;" title="Sebagian proses sudah berjalan, tapi belum tuntas seluruhnya.">Sebagian Diproses</span></div></div>
+            <div class="info-field"><div class="info-l">Status SO (Header)</div>
+              <div class="info-v"><span class="badge b-warn" style="cursor:help;" title="Sebagian proses sudah berjalan, tapi belum tuntas seluruhnya.">Sebagian Diproses</span></div></div>
+            <div class="info-field"><div class="info-l">Kode Customer</div><div class="info-v">0001000234</div></div>
+            <div class="info-field info-full"><div class="info-l">Nama Customer</div><div class="info-v">PT MEBEL NUSANTARA JAYA</div></div>
+          </div>
+
+          <div class="sect-title">Info Item — 10</div>
+          <div class="info-grid">
+            <div class="info-field"><div class="info-l">Kode Material</div><div class="info-v">20086291</div></div>
+            <div class="info-field"><div class="info-l">Qty SO</div><div class="info-v">100 PC</div></div>
+            <div class="info-field"><div class="info-l">Plant Item</div><div class="info-v">2000</div></div>
+            <div class="info-field info-full"><div class="info-l">Deskripsi Material</div><div class="info-v">MEJA MAKAN JATI 6 KURSI</div></div>
+          </div>
+        </div>
+
+        <!-- ===== PEMBAHANAN ===== -->
+        <div class="tab-pane" id="pmb">
+          <p style="font-size:0.76rem;color:var(--muted);margin:4px 0 10px;">Order Plant 1000 (Pembahanan). Klik baris untuk lihat komponen BOM &amp; statusnya.</p>
+          <table>
+            <thead><tr>
+              <th>Material</th><th>Nama</th>
+              <th title="Jumlah yang direncanakan diproduksi pada order ini.">Target QTY</th>
+              <th title="Jumlah yang sudah selesai/diterima dari order ini.">Del QTY</th>
+              <th title="Persentase Del QTY terhadap Target QTY.">Progres</th>
+              <th title="Storage Location — lokasi penyimpanan di dalam plant.">Sloc</th>
+            </tr></thead>
+            <tbody>
+              <tr class="clickable" onclick="bom('b1')"><td><span class="mat-code">20086291</span></td><td>MEJA MAKAN JATI <span style="color:var(--muted);font-size:.72rem;">(klik BOM)</span></td><td class="num">100</td><td class="num">100</td><td><div style="display:flex;gap:6px;align-items:center;"><div class="pbar"><div class="pfill" style="width:100%"></div></div><span class="num" style="font-size:.75rem;">100%</span></div></td><td>1D00</td></tr>
+              <tr id="b1" style="display:none;"><td colspan="6">
+                <div class="bomwrap">
+                  <div class="bom-title">Komponen BOM — 20086291</div>
+                  <table>
+                    <thead><tr><th>Item</th><th>Komponen</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th title="Status aktual komponen relatif ke lokasi rakit (Plant 1000).">Status</th></tr></thead>
+                    <tbody>
+                      <tr><td>0010</td><td><span class="mat-code">30086001</span></td><td>KAKI MEJA JATI</td><td class="num">4</td><td>PC</td><td><span class="badge b-good" title="Sudah di lokasi rakit — stok komponen sudah ada di plant tempat rakitan dikerjakan. Tersedia 40 PC di 1000/1D00">🟢 Sudah di lokasi rakit</span></td></tr>
+                      <tr><td>0020</td><td><span class="mat-code">30086002</span></td><td>DAUN MEJA JATI</td><td class="num">1</td><td>PC</td><td><span class="badge b-blue" title="Sedang dibuat — belum ada stok, tapi ada order produksi komponen yang masih berjalan. Order 000123456, 60% selesai">🔵 Sedang dibuat</span></td></tr>
+                      <tr><td>0030</td><td><span class="mat-code">30086003</span></td><td>SEKRUP BAJA M8</td><td class="num">24</td><td>PC</td><td><span class="badge b-good" title="Sudah di lokasi rakit — stok komponen sudah ada di plant tempat rakitan dikerjakan. Tersedia 500 PC di 1000/1D00">🟢 Sudah di lokasi rakit</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </td></tr>
+              <tr class="clickable" onclick="bom('b2')"><td><span class="mat-code">20086295</span></td><td>LACI MEJA <span style="color:var(--muted);font-size:.72rem;">(klik BOM)</span></td><td class="num">50</td><td class="num">30</td><td><div style="display:flex;gap:6px;align-items:center;"><div class="pbar"><div class="pfill" style="width:60%"></div></div><span class="num" style="font-size:.75rem;">60%</span></div></td><td>1D00</td></tr>
+              <tr id="b2" style="display:none;"><td colspan="6">
+                <div class="bomwrap"><div class="bom-title">Komponen BOM — 20086295</div>
+                  <table><thead><tr><th>Item</th><th>Komponen</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th>Status</th></tr></thead>
+                  <tbody>
+                    <tr><td>0010</td><td><span class="mat-code">30086020</span></td><td>PAPAN LACI</td><td class="num">3</td><td>PC</td><td><span class="badge b-good" title="Sudah di lokasi rakit — stok komponen sudah ada di plant tempat rakitan dikerjakan. Tersedia 22 PC di 1000/1D00">🟢 Sudah di lokasi rakit</span></td></tr>
+                    <tr><td>0020</td><td><span class="mat-code">30086021</span></td><td>REL LACI STAINLESS</td><td class="num">2</td><td>SET</td><td><span class="badge b-crit" title="Belum tersedia — tidak ada stok & tidak ada order produksi terbuka untuk komponen ini.">🔴 Belum tersedia</span></td></tr>
+                  </tbody></table>
+                </div>
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ===== PRODUKSI ===== -->
+        <div class="tab-pane" id="prod">
+          <p style="font-size:0.76rem;color:var(--muted);margin:4px 0 10px;">Order Plant 2000 (Produksi). Komponen dari KMI 1 — statusnya menunjukkan apakah sudah sampai KMI 2.</p>
+          <table>
+            <thead><tr><th>Material</th><th>Nama</th>
+              <th title="Jumlah yang direncanakan diproduksi pada order ini.">Target QTY</th>
+              <th title="Jumlah yang sudah selesai/diterima dari order ini.">Del QTY</th>
+              <th title="Persentase Del QTY terhadap Target QTY.">Progres</th>
+              <th title="Storage Location — lokasi penyimpanan di dalam plant.">Sloc</th></tr></thead>
+            <tbody>
+              <tr class="clickable" onclick="bom('p1')"><td><span class="mat-code">20086291</span></td><td>MEJA MAKAN JATI <span style="color:var(--muted);font-size:.72rem;">(klik BOM)</span></td><td class="num">100</td><td class="num">65</td><td><div style="display:flex;gap:6px;align-items:center;"><div class="pbar"><div class="pfill" style="width:65%"></div></div><span class="num" style="font-size:.75rem;">65%</span></div></td><td>2KCS</td></tr>
+              <tr id="p1" style="display:none;"><td colspan="6">
+                <div class="bomwrap"><div class="bom-title">Komponen BOM — 20086291 (di lokasi rakit Plant 2000)</div>
+                  <table><thead><tr><th>Item</th><th>Komponen</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th title="Status aktual komponen relatif ke lokasi rakit (Plant 2000).">Status</th></tr></thead>
+                  <tbody>
+                    <tr><td>0010</td><td><span class="mat-code">30086010</span></td><td>RANGKA MEJA (SUB-ASSY)</td><td class="num">1</td><td>PC</td><td><span class="badge b-warn" title="Masih di KMI 1 — stok komponen masih di Plant 1000 (Pembahanan), belum dikirim ke lokasi rakit (2000). Tersedia 12 PC di 1000/1D00">🟡 Masih di KMI 1</span></td></tr>
+                    <tr><td>0020</td><td><span class="mat-code">30086011</span></td><td>PANEL DAUN MEJA</td><td class="num">1</td><td>PC</td><td><span class="badge b-good" title="Sudah di lokasi rakit — stok komponen sudah ada di plant tempat rakitan dikerjakan. Tersedia 30 PC di 2000/2KCS">🟢 Sudah di lokasi rakit</span></td></tr>
+                    <tr><td>0030</td><td><span class="mat-code">30086012</span></td><td>FINISHING KIT (POLITUR)</td><td class="num">1</td><td>SET</td><td><span class="badge b-crit" title="Belum tersedia — tidak ada stok & tidak ada order produksi terbuka untuk komponen ini.">🔴 Belum tersedia</span></td></tr>
+                  </tbody></table>
+                  <div style="font-size:.7rem;color:var(--muted);margin-top:4px;">Hover badge untuk lihat qty &amp; lokasi. Karena transfer 1-langkah, tak ada status "sedang dikirim" — komponen "Masih di KMI 1" atau "Sudah di lokasi rakit".</div>
+                </div>
+              </td></tr>
+              <tr class="clickable" onclick="bom('p2')"><td><span class="mat-code">20086300</span></td><td>KURSI MAKAN JATI <span style="color:var(--muted);font-size:.72rem;">(klik BOM)</span></td><td class="num">100</td><td class="num">20</td><td><div style="display:flex;gap:6px;align-items:center;"><div class="pbar"><div class="pfill" style="width:20%"></div></div><span class="num" style="font-size:.75rem;">20%</span></div></td><td>2261</td></tr>
+              <tr id="p2" style="display:none;"><td colspan="6"><div class="bomwrap"><div class="bom-title">Komponen BOM — 20086300</div>
+                <table><thead><tr><th>Item</th><th>Komponen</th><th>Deskripsi</th><th>Qty</th><th>Unit</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr><td>0010</td><td><span class="mat-code">30086030</span></td><td>DUDUKAN KURSI</td><td class="num">1</td><td>PC</td><td><span class="badge b-good" title="Sudah di lokasi rakit — stok komponen sudah ada di plant tempat rakitan dikerjakan. Tersedia 55 PC di 2000/2261">🟢 Sudah di lokasi rakit</span></td></tr>
+                  <tr><td>0020</td><td><span class="mat-code">30086031</span></td><td>SANDARAN KURSI UKIR</td><td class="num">1</td><td>PC</td><td><span class="badge b-blue" title="Sedang dibuat — belum ada stok, tapi ada order produksi komponen yang masih berjalan. Order 000123999, 35% selesai">🔵 Sedang dibuat</span></td></tr>
+                </tbody></table></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ===== STOK ===== -->
+        <div class="tab-pane" id="stok">
+          <p style="font-size:0.76rem;color:var(--muted);margin:4px 0 10px;">Posisi stok saat ini (MSKA). Arahkan kursor ke judul kolom untuk penjelasan istilah.</p>
+          <table>
+            <thead><tr>
+              <th>Material</th><th>Nama</th><th>Plant/SLoc</th><th>Batch</th>
+              <th title="Stok bebas dipakai — sudah lolos QC, siap digunakan/kirim.">Unrestr.</th>
+              <th title="Stok dalam Inspeksi Kualitas — menunggu pemeriksaan QC.">Qual.Insp</th>
+              <th title="Stok diblokir — tidak boleh dipakai (mis. rusak/ditahan).">Blocked</th>
+              <th>Unit</th>
+            </tr></thead>
+            <tbody>
+              <tr><td colspan="8" style="background:#eef2ff;color:#4338ca;font-weight:700;font-size:.74rem;">📍 2000 / SLoc 2KCS</td></tr>
+              <tr><td><span class="mat-code">20086291</span></td><td>MEJA MAKAN JATI</td><td style="font-family:monospace;">2000/2KCS</td><td style="font-family:monospace;">0000000123</td><td class="num" style="color:#15803d;font-weight:600;">30</td><td class="num" style="color:#c2410c;">8</td><td class="num">0</td><td>PC</td></tr>
+              <tr><td colspan="8" style="background:#eef2ff;color:#4338ca;font-weight:700;font-size:.74rem;">📍 1000 / SLoc 1D00</td></tr>
+              <tr><td><span class="mat-code">30086010</span></td><td>RANGKA MEJA</td><td style="font-family:monospace;">1000/1D00</td><td style="font-family:monospace;">0000000098</td><td class="num" style="color:#15803d;font-weight:600;">12</td><td class="num">0</td><td class="num" style="color:#dc2626;">2</td><td>PC</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ===== RIWAYAT ===== -->
+        <div class="tab-pane" id="hist">
+          <p style="font-size:0.76rem;color:var(--muted);margin:4px 0 10px;">Riwayat pergerakan (MSEG) untuk SO+Item ini, terbaru dulu.</p>
+          <table>
+            <thead><tr><th>Waktu</th><th>Jenis</th><th>Material</th><th>Batch</th><th>Lokasi</th><th>Qty</th></tr></thead>
+            <tbody>
+              <tr><td>22.07.2026 09:14</td><td><span class="badge b-blue">301 · Cross Plant</span></td><td><span class="mat-code">30086011</span> PANEL DAUN</td><td style="font-family:monospace;">0000000110</td><td style="font-family:monospace;">1000/1D00 → 2000/2KCS</td><td class="num">30 PC</td></tr>
+              <tr><td>21.07.2026 15:40</td><td><span class="badge b-warn">311 · In Plant</span></td><td><span class="mat-code">20086291</span> MEJA MAKAN</td><td style="font-family:monospace;">0000000123</td><td style="font-family:monospace;">2000/2KCS → 2000/2261</td><td class="num">15 PC</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ===== PANEL TRANSFER (collapsible, #2) ===== -->
+    <div class="col-right">
+      <div class="card">
+        <div class="trs-h">TRANSFER POSTING — TP IN PLANT (311)</div>
+        <div class="trs-t">Multi-Material Batch</div>
+        <div style="font-size:.7rem;color:var(--muted);margin-bottom:10px;">Field kepala umum + daftar material (paste dari Excel).</div>
+        <div style="display:flex;gap:6px;">
+          <div class="trs-field" style="flex:1;"><label>From Plant *</label><input value="1000"></div>
+          <div class="trs-field" style="flex:1;"><label>From SLoc *</label><input value="1D00"></div>
+          <div class="trs-field" style="flex:1;"><label>To SLoc *</label><input value="2KCS"></div>
+        </div>
+        <div class="trs-field"><label>Daftar Material *</label><textarea rows="4" placeholder="20086291&#9;5700902895&#10;20086295&#9;5700903040"></textarea></div>
+        <button class="btn" style="width:100%;">Preview Posting →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function tab(id,btn){
+    document.querySelectorAll('.tab-pane').forEach(function(p){p.classList.remove('active');});
+    document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
+    document.getElementById(id).classList.add('active'); btn.classList.add('active');
+  }
+  function bom(id){ var r=document.getElementById(id); r.style.display = (r.style.display==='none')?'table-row':'none'; }
+  function toggleTransfer(){
+    var m=document.getElementById('main'); var b=document.getElementById('collapseBtn');
+    m.classList.toggle('collapsed');
+    b.textContent = m.classList.contains('collapsed') ? 'Transfer Posting ▶' : '◀ Sembunyikan Transfer';
+  }
+  function setMode(mode){
+    var m=document.getElementById('main'); var b=document.getElementById('collapseBtn');
+    if(mode==='trx'){ m.classList.remove('collapsed'); b.textContent='◀ Sembunyikan Transfer'; }
+    else { m.classList.add('collapsed'); b.textContent='Transfer Posting ▶'; }
+  }
+</script>
+</body>
+</html>
