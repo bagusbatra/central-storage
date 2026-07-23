@@ -1329,6 +1329,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .pel-main.trs-collapsed .pel-right { display:none; }
     .collapse-btn { margin-left:auto; font-size:0.76rem; color:#2563eb; background:#fff; border:1px solid #c7d2fe; border-radius:6px; padding:5px 10px; cursor:pointer; }
     @media (max-width:900px){ .pel-main{ flex-direction:column; } .pel-right{ width:100%; max-width:none; } }
+    .bom-collapse-btn { margin-left:auto; font-size:0.74rem; color:#1e40af; background:#eef2ff; border:1px solid #a5b4fc; border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
+    .bom-collapse-btn:hover { background:#dbeafe; }
     /* D46: baris header pengelompokan per SLoc (tab Produksi & Stok) */
     .sloc-group-row td {
       background:#eef2ff; color:#4338ca; font-weight:700;
@@ -1414,6 +1416,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           <button class="tab-btn" onclick="pelTab('tab-prod', this)">&#9881;&nbsp;Produksi</button>
           <button class="tab-btn" onclick="pelTab('tab-stok', this)">&#128230;&nbsp;Stok Saat Ini</button>
           <button class="tab-btn" onclick="pelTab('tab-hist', this)">&#128260;&nbsp;Riwayat Pergerakan</button>
+          <button class="tab-btn bom-collapse-btn" id="bom-collapse-btn" onclick="pelToggleAllBom()">&#9776;&nbsp;Expand BOM</button>
         </nav>
 
         <!-- ===== TAB PEMBAHANAN — Plant 1000 / SLoc 1D00 ===== -->
@@ -2153,37 +2156,70 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
       document.getElementById('pel-tabs').querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
       document.getElementById(id).classList.add('active');
       btn.classList.add('active');
+      if (pelAllBomExpanded) {
+        var b = document.getElementById('bom-collapse-btn');
+        pelAllBomExpanded = false;
+        if (b) b.innerHTML = '&#9776;&nbsp;Expand BOM';
+      }
     }
 
     /* REVISI 3 — expand/collapse baris Komponen BOM saat baris diklik, meniru
        double-click "BOM numb." di COOIS yang membuka layar BOM. Data sudah
        dirender penuh server-side (bukan AJAX) — cukup show/hide + transisi
        CSS (.bom-section-wrapper/.bom-open, class yang SAMA dgn monitoring_bom.htm). */
-    var pelActiveBom = null;
+    var pelAllBomExpanded = false;
     function pelToggleBom(id) {
       var tr = document.getElementById('bomrow-' + id);
       var wrapper = document.getElementById('bomwrap-' + id);
       if (!tr || !wrapper) return;
 
       if (!wrapper.classList.contains('bom-open')) {
-        if (pelActiveBom && pelActiveBom !== id) { pelCloseBom(pelActiveBom); }
         tr.style.display = 'table-row';
         void wrapper.offsetHeight;
         wrapper.classList.add('bom-open');
-        pelActiveBom = id;
       } else {
-        pelCloseBom(id);
+        wrapper.classList.remove('bom-open');
+        setTimeout(function() {
+          if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
+        }, 330);
+      }
+      if (pelAllBomExpanded) {
+        var anyClosed = document.querySelectorAll('[id^="bomrow-"]').length >
+          document.querySelectorAll('#pel-tabs .bom-open').length;
+        if (!anyClosed && document.querySelectorAll('[id^="bomrow-"]').length > 0) {
+          var btn = document.getElementById('bom-collapse-btn');
+          if (btn) btn.innerHTML = '&#9660;&nbsp;Collapse BOM';
+        }
       }
     }
-    function pelCloseBom(id) {
-      var tr = document.getElementById('bomrow-' + id);
-      var wrapper = document.getElementById('bomwrap-' + id);
-      if (!wrapper) return;
-      wrapper.classList.remove('bom-open');
-      setTimeout(function() {
-        if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
-      }, 330);
-      if (pelActiveBom === id) { pelActiveBom = null; }
+
+    function pelToggleAllBom() {
+      var btn = document.getElementById('bom-collapse-btn');
+      var allRows = document.querySelectorAll('[id^="bomrow-"]');
+      if (pelAllBomExpanded) {
+        allRows.forEach(function(tr) {
+          var wrapper = document.getElementById('bomwrap-' + tr.id.replace('bomrow-', ''));
+          if (wrapper && wrapper.classList.contains('bom-open')) {
+            wrapper.classList.remove('bom-open');
+            setTimeout(function() {
+              if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
+            }, 330);
+          }
+        });
+        pelAllBomExpanded = false;
+        if (btn) btn.innerHTML = '&#9776;&nbsp;Expand BOM';
+      } else {
+        allRows.forEach(function(tr) {
+          var wrapper = document.getElementById('bomwrap-' + tr.id.replace('bomrow-', ''));
+          if (wrapper && !wrapper.classList.contains('bom-open')) {
+            tr.style.display = 'table-row';
+            void wrapper.offsetHeight;
+            wrapper.classList.add('bom-open');
+          }
+        });
+        pelAllBomExpanded = true;
+        if (btn) btn.innerHTML = '&#9660;&nbsp;Collapse BOM';
+      }
     }
 
     /* D40 saran#4: filter cepat tab Riwayat Pergerakan — client-side, tanpa
