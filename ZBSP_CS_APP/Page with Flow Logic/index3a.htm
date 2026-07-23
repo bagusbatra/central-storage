@@ -1341,6 +1341,15 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     /* BOM section animation */
     .bom-section-wrapper { max-height:0; overflow:hidden; transition:max-height .3s ease; }
     .bom-section-wrapper.bom-open { max-height:2000px; }
+    /* Filter bar tab Pembahanan/Produksi — search material + toggle kolom (client-side) */
+    .ord-filter-bar { display:flex; gap:8px; margin:12px 0 10px 0; padding:8px 10px; background:#f9fafb; border-radius:6px; flex-wrap:wrap; align-items:center; }
+    .col-toggle-wrap { position:relative; }
+    .col-toggle-btn { font-size:0.78rem; color:#374151; background:#fff; border:1px solid #d1d5db; border-radius:5px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
+    .col-toggle-btn:hover { background:#f3f4f6; }
+    .col-menu { display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:20; background:#fff; border:1px solid #d1d5db; border-radius:7px; box-shadow:0 6px 18px rgba(0,0,0,0.12); padding:6px; min-width:170px; }
+    .col-menu label { display:flex; align-items:center; gap:8px; font-size:0.8rem; color:#374151; padding:5px 8px; border-radius:5px; cursor:pointer; white-space:nowrap; }
+    .col-menu label:hover { background:#f3f4f6; }
+    .col-menu input { cursor:pointer; }
   </style>
 </head>
 <body>
@@ -1426,6 +1435,22 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         <!-- ===== TAB PEMBAHANAN — Plant 1000 / SLoc 1D00 ===== -->
         <div class="tab-pane" id="tab-pmb">
           <p style="font-size:0.76rem;color:#9ca3af;margin:12px 0 10px 0;">Order dengan lokasi penerimaan Plant 1000 / SLoc 1D00, untuk SO+Item ini.</p>
+          <div class="ord-filter-bar">
+            <div style="font-size:0.72rem; color:#6b7280; letter-spacing:0.3px; font-weight:600;">FILTER:</div>
+            <input type="text" id="pmb-search-mat" placeholder="&#128269; Cari kode/nama material..." oninput="pelOrdFilter('pmb')" style="flex:1; min-width:180px; padding:6px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:0.82rem;">
+            <div class="col-toggle-wrap">
+              <button type="button" class="col-toggle-btn" onclick="pelToggleColMenu('pmb', event)">&#9881;&nbsp;Kolom</button>
+              <div class="col-menu" id="pmb-col-menu">
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',0,this.checked)"> Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',1,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',2,this.checked)"> Target QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',3,this.checked)"> Del QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',4,this.checked)"> Progres</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',5,this.checked)"> Sloc</label>
+              </div>
+            </div>
+            <span id="pmb-count-info" style="font-size:0.72rem; color:#9ca3af;"></span>
+          </div>
           <div style="overflow-x:auto;">
             <table class="data-table">
               <thead>
@@ -1454,7 +1479,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                      ELSE.
                        lv_has_prd = abap_false. lv_prog = 0.
                      ENDIF. %>
-                <tr class="clickable-item-row" onclick="pelToggleBom('<%= lv_rowid %>')">
+                <tr class="clickable-item-row" data-ord-mat="<%= ls_ord-matnr %> <%= ls_ord-maktx %>" onclick="pelToggleBom('<%= lv_rowid %>')">
                   <td><code class="mat-code"><%= ls_ord-matnr %></code></td>
                   <td><%= ls_ord-maktx %> <span style="font-size:0.72rem;color:#9ca3af;">(Klik BOM)</span></td>
                   <td style="text-align:right;"><span class="num-fmt"><%= ls_ord-psmng %></span> <%= ls_ord-meins %></td>
@@ -1524,6 +1549,22 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         <div class="tab-pane" id="tab-prod">
           <p style="font-size:0.76rem;color:#9ca3af;margin:12px 0 10px 0;">Order dengan lokasi penerimaan Plant 2000 (2KCS/2261/2262/22E2/22E3/229K), untuk SO+Item ini. <span title="Kode SLoc ini diketik sesuai permintaan; belum ada nama resmi terdaftar
 di aplikasi.">22E3 belum punya label resmi.</span></p>
+          <div class="ord-filter-bar">
+            <div style="font-size:0.72rem; color:#6b7280; letter-spacing:0.3px; font-weight:600;">FILTER:</div>
+            <input type="text" id="prod-search-mat" placeholder="&#128269; Cari kode/nama material..." oninput="pelOrdFilter('prod')" style="flex:1; min-width:180px; padding:6px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:0.82rem;">
+            <div class="col-toggle-wrap">
+              <button type="button" class="col-toggle-btn" onclick="pelToggleColMenu('prod', event)">&#9881;&nbsp;Kolom</button>
+              <div class="col-menu" id="prod-col-menu">
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',0,this.checked)"> Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',1,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',2,this.checked)"> Target QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',3,this.checked)"> Del QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',4,this.checked)"> Progres</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',5,this.checked)"> Sloc</label>
+              </div>
+            </div>
+            <span id="prod-count-info" style="font-size:0.72rem; color:#9ca3af;"></span>
+          </div>
           <div style="overflow-x:auto;">
             <table class="data-table">
               <thead>
@@ -1558,7 +1599,7 @@ di aplikasi.">22E3 belum punya label resmi.</span></p>
                        lv_last_lgort2 = ls_ord-lgort. %>
                 <tr class="sloc-group-row"><td colspan="6">&#128205;&nbsp;SLoc <%= ls_ord-lgort %></td></tr>
                 <%   ENDIF. %>
-                <tr class="clickable-item-row" onclick="pelToggleBom('<%= lv_rowid %>')">
+                <tr class="clickable-item-row" data-ord-mat="<%= ls_ord-matnr %> <%= ls_ord-maktx %>" onclick="pelToggleBom('<%= lv_rowid %>')">
                   <td><code class="mat-code"><%= ls_ord-matnr %></code></td>
                   <td><%= ls_ord-maktx %> <span style="font-size:0.72rem;color:#9ca3af;">(Klik BOM)</span></td>
                   <td style="text-align:right;"><span class="num-fmt"><%= ls_ord-psmng %></span> <%= ls_ord-meins %></td>
@@ -2274,6 +2315,69 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
       }
     }
 
+    /* Filter tab Pembahanan/Produksi — client-side, tanpa reload. Match by
+       kode/nama material (data-ord-mat). Baris BOM (sibling <tr id="bomrow-...">)
+       ikut disembunyikan + ditutup kalau induknya tersaring keluar; header grup
+       SLoc (tab Produksi) disembunyikan kalau semua barisnya hilang. prefix =
+       'pmb' | 'prod' -> id pane 'tab-pmb'/'tab-prod'. */
+    function pelOrdFilter(prefix) {
+      var pane = document.getElementById('tab-' + prefix);
+      if (!pane) return;
+      var q = ((document.getElementById(prefix + '-search-mat') || {}).value || '').trim().toLowerCase();
+      var rows = pane.querySelectorAll('tbody tr.clickable-item-row');
+      var visible = 0;
+      rows.forEach(function(r) {
+        var mat = (r.getAttribute('data-ord-mat') || '').toLowerCase();
+        var show = !q || mat.indexOf(q) >= 0;
+        r.style.display = show ? '' : 'none';
+        var bom = r.nextElementSibling;
+        if (bom && bom.id && bom.id.indexOf('bomrow-') === 0 && !show) {
+          bom.style.display = 'none';
+          var wrap = bom.querySelector('.bom-section-wrapper');
+          if (wrap) wrap.classList.remove('bom-open');
+        }
+        if (show) visible++;
+      });
+      /* Produksi: sembunyikan header grup SLoc yang semua barisnya tersembunyi */
+      pane.querySelectorAll('tbody tr.sloc-group-row').forEach(function(g) {
+        var any = false, n = g.nextElementSibling;
+        while (n && !n.classList.contains('sloc-group-row')) {
+          if (n.classList.contains('clickable-item-row') && n.style.display !== 'none') any = true;
+          n = n.nextElementSibling;
+        }
+        g.style.display = any ? '' : 'none';
+      });
+      var info = document.getElementById(prefix + '-count-info');
+      if (info) info.textContent = q ? (visible + ' baris cocok') : '';
+    }
+
+    /* Show/hide kolom (checkbox menu "Kolom"). colIdx 0..5 = Material, No
+       Material, Target QTY, Del QTY, Progres, Sloc. Hanya menyentuh header +
+       baris order (.clickable-item-row) — baris BOM & grup SLoc pakai colspan
+       penuh, dibiarkan apa adanya. */
+    function pelOrdCol(prefix, colIdx, show) {
+      var pane = document.getElementById('tab-' + prefix);
+      if (!pane) return;
+      var table = pane.querySelector('table.data-table');
+      if (!table) return;
+      var th = table.querySelectorAll('thead th')[colIdx];
+      if (th) th.style.display = show ? '' : 'none';
+      table.querySelectorAll('tbody tr.clickable-item-row').forEach(function(r) {
+        var td = r.children[colIdx];
+        if (td) td.style.display = show ? '' : 'none';
+      });
+    }
+
+    /* Buka/tutup dropdown "Kolom"; hanya satu menu terbuka pada satu waktu. */
+    function pelToggleColMenu(prefix, ev) {
+      ev.stopPropagation();
+      var menu = document.getElementById(prefix + '-col-menu');
+      if (!menu) return;
+      var willOpen = (menu.style.display !== 'block');
+      document.querySelectorAll('.col-menu').forEach(function(m) { m.style.display = 'none'; });
+      menu.style.display = willOpen ? 'block' : 'none';
+    }
+
     function toggleUserDropdown(e) {
       e.stopPropagation();
       var dd = document.getElementById('user-dropdown');
@@ -2283,6 +2387,10 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
       var dd = document.getElementById('user-dropdown');
       var hu = document.querySelector('.header-user');
       if (dd && hu && !hu.contains(e.target)) { dd.classList.remove('open'); }
+      /* tutup dropdown "Kolom" saat klik di luar wrapper-nya */
+      document.querySelectorAll('.col-menu').forEach(function(m) {
+        if (m.parentElement && !m.parentElement.contains(e.target)) { m.style.display = 'none'; }
+      });
     });
     function userLogout() { window.location.href = 'index3.htm?~logoff'; }
 
