@@ -1284,7 +1284,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pelacakan Material - Central Storage KMI 2</title>
+  <title>Dashboard Material - Central Storage KMI 2</title>
   <link rel="stylesheet" href="css/style.css?r=12">
   <style>
     /* D40 saran#2: movement type badges */
@@ -1335,6 +1335,12 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       font-size:0.74rem; letter-spacing:0.3px; padding:6px 12px !important;
       border-top:1px solid #c7d2fe;
     }
+    /* BOM expand/collapse all button */
+    .bom-collapse-btn { margin-left:auto; font-size:0.74rem; color:#1e40af; background:#eef2ff; border:1px solid #a5b4fc; border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
+    .bom-collapse-btn:hover { background:#dbeafe; }
+    /* BOM section animation */
+    .bom-section-wrapper { max-height:0; overflow:hidden; transition:max-height .3s ease; }
+    .bom-section-wrapper.bom-open { max-height:2000px; }
   </style>
 </head>
 <body>
@@ -1342,7 +1348,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <div class="header-bar">
     <div class="header-title">
       <h1>Central Storage Production Dashboard</h1>
-      <p>Pelacakan Pergerakan Material per SO+Item &#8212; Plant 1000/2000 Surabaya</p>
+      <p>Dashboard Pergerakan Material per SO+Item &#8212; Plant 1000/2000 Surabaya</p>
     </div>
     <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_layout_user %></span>
       <div class="user-dropdown" id="user-dropdown">
@@ -1354,7 +1360,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   </div>
 
   <div class="navbar">
-    <a href="index3.htm" class="nav-btn active"><span class="nav-icon">&#128269;</span>Pelacakan</a>
+    <a href="index3.htm" class="nav-btn active"><span class="nav-icon">&#128269;</span>Dashboard</a>
   </div>
 
   <div class="content">
@@ -1388,7 +1394,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
             </svg>
-            <h3>Mulai Pelacakan</h3>
+            <h3>Mulai</h3>
             <p>Masukkan Nomor Sales Order dan Nomor Item di atas, lalu klik <strong>CARI DATA</strong> untuk melihat daftar order per lokasi.</p>
           </div>
         </div>
@@ -1414,6 +1420,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           <button class="tab-btn" onclick="pelTab('tab-prod', this)">&#9881;&nbsp;Produksi</button>
           <button class="tab-btn" onclick="pelTab('tab-stok', this)">&#128230;&nbsp;Stok Saat Ini</button>
           <button class="tab-btn" onclick="pelTab('tab-hist', this)">&#128260;&nbsp;Riwayat Pergerakan</button>
+          <button class="tab-btn bom-collapse-btn" id="bom-collapse-btn" onclick="pelToggleAllBom()">&#9776;&nbsp;Expand BOM</button>
         </nav>
 
         <!-- ===== TAB PEMBAHANAN — Plant 1000 / SLoc 1D00 ===== -->
@@ -2149,10 +2156,16 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
        show/hide sederhana, tanpa request tambahan -> tetap ringan & cepat. */
     function pelTab(id, btn) {
       var wrap = document.getElementById('pel-tabs').parentElement;
-      wrap.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.remove('active'); });
-      document.getElementById('pel-tabs').querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      wrap.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.remove('active'); p.style.display = 'none'; });
       document.getElementById(id).classList.add('active');
+      document.getElementById(id).style.display = 'block';
+      document.getElementById('pel-tabs').querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
       btn.classList.add('active');
+      if (pelAllBomExpanded) {
+        var b = document.getElementById('bom-collapse-btn');
+        pelAllBomExpanded = false;
+        if (b) b.innerHTML = '&#9776;&nbsp;Expand BOM';
+      }
     }
 
     /* REVISI 3 — expand/collapse baris Komponen BOM saat baris diklik, meniru
@@ -2160,6 +2173,7 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
        dirender penuh server-side (bukan AJAX) — cukup show/hide + transisi
        CSS (.bom-section-wrapper/.bom-open, class yang SAMA dgn monitoring_bom.htm). */
     var pelActiveBom = null;
+    var pelAllBomExpanded = false;
     function pelToggleBom(id) {
       var tr = document.getElementById('bomrow-' + id);
       var wrapper = document.getElementById('bomwrap-' + id);
@@ -2174,6 +2188,14 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
       } else {
         pelCloseBom(id);
       }
+      if (pelAllBomExpanded) {
+        var anyClosed = document.querySelectorAll('[id^="bomrow-"]').length >
+          document.querySelectorAll('.bom-open').length;
+        if (!anyClosed && document.querySelectorAll('[id^="bomrow-"]').length > 0) {
+          var btn = document.getElementById('bom-collapse-btn');
+          if (btn) btn.innerHTML = '&#9660;&nbsp;Collapse BOM';
+        }
+      }
     }
     function pelCloseBom(id) {
       var tr = document.getElementById('bomrow-' + id);
@@ -2184,6 +2206,34 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
         if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
       }, 330);
       if (pelActiveBom === id) { pelActiveBom = null; }
+    }
+    function pelToggleAllBom() {
+      var btn = document.getElementById('bom-collapse-btn');
+      var allRows = document.querySelectorAll('[id^="bomrow-"]');
+      if (pelAllBomExpanded) {
+        allRows.forEach(function(tr) {
+          var wrapper = document.getElementById('bomwrap-' + tr.id.replace('bomrow-', ''));
+          if (wrapper && wrapper.classList.contains('bom-open')) {
+            wrapper.classList.remove('bom-open');
+            setTimeout(function() {
+              if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
+            }, 330);
+          }
+        });
+        pelAllBomExpanded = false;
+        if (btn) btn.innerHTML = '&#9776;&nbsp;Expand BOM';
+      } else {
+        allRows.forEach(function(tr) {
+          var wrapper = document.getElementById('bomwrap-' + tr.id.replace('bomrow-', ''));
+          if (wrapper && !wrapper.classList.contains('bom-open')) {
+            tr.style.display = 'table-row';
+            void wrapper.offsetHeight;
+            wrapper.classList.add('bom-open');
+          }
+        });
+        pelAllBomExpanded = true;
+        if (btn) btn.innerHTML = '&#9660;&nbsp;Collapse BOM';
+      }
     }
 
     /* D40 saran#4: filter cepat tab Riwayat Pergerakan — client-side, tanpa
