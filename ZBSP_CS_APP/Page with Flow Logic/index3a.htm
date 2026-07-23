@@ -128,15 +128,13 @@ DATA: ls_vbak_hdr TYPE vbak,
       ls_kna1_hdr TYPE kna1,
       lv_hdr_date TYPE string.
 
-" === D36: Status SO (header, VBUK-GBSTK) & Status Item (VBUP-GBSTA) —
-"     dua SELECT SINGLE ringan, sama seperti pola D35. GBSTA/GBSTK domain
-"     STATV: A=Belum Diproses, B=Sebagian Diproses, C=Selesai Diproses.
-"     ⚠️ Ini pemetaan LANGSUNG dari GBSTA/GBSTK — kalau ternyata "Overall
-"     Status" di VA03 (mis. teks "Open") berasal dari kombinasi status lain
-"     (bukan murni GBSTA), mohon dikonfirmasi & akan saya sesuaikan. ===
-DATA: ls_vbuk_hdr    TYPE vbuk,
-      ls_vbup_item   TYPE vbup,
-      lv_hdr_stat_lbl TYPE string,
+" === D36 / D49-FIX: Status SO (header, GBSTK) & Status Item (Overall — GBSTA) —
+"     GBSTA/GBSTK domain STATV: A=Belum, B=Sebagian, C=Selesai Diproses.
+"     SUMBER DIPERBAIKI: dari VBAK-GBSTK / VBAP-GBSTA (lokasi field status di
+"     S/4HANA), BUKAN lagi VBUK/VBUP yang kosong di sistem ini (lihat catatan
+"     lengkap di blok CASE di bawah). Tidak perlu SELECT sendiri — field ikut
+"     numpang di dua SELECT VBAK/VBAP yang sudah ada. ===
+DATA: lv_hdr_stat_lbl TYPE string,
       lv_itm_stat_lbl TYPE string,
       lv_hdr_stat_tip TYPE string,   " #5: tooltip penjelas status
       lv_itm_stat_tip TYPE string.
@@ -268,7 +266,7 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
   " item & material utk konteks tampilan (satu SELECT SINGLE, murah).
   " D35: field ditambah (kwmeng/vrkme/netwr/waerk) — dipakai tab Info Order.
   IF lv_item IS NOT INITIAL.
-    SELECT SINGLE vbeln posnr matnr arktx werks kwmeng vrkme netwr waerk FROM vbap
+    SELECT SINGLE vbeln posnr matnr arktx werks kwmeng vrkme netwr waerk gbsta FROM vbap
       INTO CORRESPONDING FIELDS OF ls_vbap_hdr
       WHERE vbeln = lv_so
         AND posnr = lv_item.
@@ -283,7 +281,7 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
 
       " D35: header SO (VBAK) + customer (KNA1) — dua SELECT SINGLE ringan,
       " HANYA dijalankan setelah SO+Item terkonfirmasi ada.
-      SELECT SINGLE vbeln erdat auart kunnr netwr waerk bstnk FROM vbak
+      SELECT SINGLE vbeln erdat auart kunnr netwr waerk bstnk gbstk FROM vbak
         INTO CORRESPONDING FIELDS OF ls_vbak_hdr
         WHERE vbeln = lv_so.
       IF ls_vbak_hdr-kunnr IS NOT INITIAL.
@@ -293,22 +291,29 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
       ENDIF.
       lv_hdr_date = zcl_cs_util=>fmt_date( ls_vbak_hdr-erdat ).
 
-      " === D36: Status SO (VBUK) & Status Item (VBUP) ===
-      SELECT SINGLE vbeln gbstk FROM vbuk
-        INTO CORRESPONDING FIELDS OF ls_vbuk_hdr
-        WHERE vbeln = lv_so.
-      CASE ls_vbuk_hdr-gbstk.
+      " === D36 / D49-FIX: Status SO (header) & Status Item (Overall — VA03) ===
+      " AKAR MASALAH (dilaporkan user: badge selalu kosong/"Tidak Diketahui"
+      " padahal VA03 menampilkan status): tabel VBUK/VBUP TIDAK terisi di
+      " sistem ini — pola khas S/4HANA, di mana kedua tabel status itu
+      " DIPENSIUNKAN dan field GBSTK/GBSTA-nya DIPINDAH langsung ke VBAK
+      " (header) & VBAP (item). Query lama ke VBUK/VBUP aktif secara sintaks
+      " (tabel/compat-view masih ada) tapi mengembalikan nol baris -> CASE
+      " selalu jatuh ke WHEN OTHERS. Bukti: SELECT VBAP di atas dgn key yg
+      " SAMA (vbeln = lv_so) SUKSES, jadi lv_so sudah benar; satu-satunya
+      " sebab query status kosong adalah tabelnya memang tak berdata.
+      " FIX: baca GBSTK dari VBAK & GBSTA dari VBAP (sudah ikut di dua SELECT
+      " di atas) — tidak perlu SELECT tambahan lagi.
+      " ⚠️ Kalau sistem ternyata ECC klasik (VBAK/VBAP tak punya GBSTK/GBSTA),
+      " aktivasi akan menolak field-nya — laporkan, akan saya kembalikan ke
+      " VBUK/VBUP (yang di ECC memang berdata).
+      CASE ls_vbak_hdr-gbstk.
         WHEN 'A'. lv_hdr_stat_lbl = 'Belum Diproses'.    lv_hdr_stat_tip = 'Belum ada proses yang berjalan untuk SO ini.'.
         WHEN 'B'. lv_hdr_stat_lbl = 'Sebagian Diproses'. lv_hdr_stat_tip = 'Sebagian proses sudah berjalan, tapi belum tuntas seluruhnya.'.
         WHEN 'C'. lv_hdr_stat_lbl = 'Selesai Diproses'.  lv_hdr_stat_tip = 'Seluruh proses untuk SO ini sudah selesai.'.
         WHEN OTHERS. lv_hdr_stat_lbl = 'Tidak Diketahui'. lv_hdr_stat_tip = 'Status tidak dikenal.'.
       ENDCASE.
 
-      SELECT SINGLE vbeln posnr gbsta FROM vbup
-        INTO CORRESPONDING FIELDS OF ls_vbup_item
-        WHERE vbeln = lv_so
-          AND posnr = lv_item.
-      CASE ls_vbup_item-gbsta.
+      CASE ls_vbap_hdr-gbsta.
         WHEN 'A'. lv_itm_stat_lbl = 'Belum Diproses'.    lv_itm_stat_tip = 'Belum ada proses yang berjalan untuk item ini.'.
         WHEN 'B'. lv_itm_stat_lbl = 'Sebagian Diproses'. lv_itm_stat_tip = 'Sebagian proses sudah berjalan, tapi belum tuntas seluruhnya.'.
         WHEN 'C'. lv_itm_stat_lbl = 'Selesai Diproses'.  lv_itm_stat_tip = 'Seluruh proses untuk item ini sudah selesai (mis. sudah dikirim penuh).'.
@@ -1350,6 +1355,16 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .col-menu label { display:flex; align-items:center; gap:8px; font-size:0.8rem; color:#374151; padding:5px 8px; border-radius:5px; cursor:pointer; white-space:nowrap; }
     .col-menu label:hover { background:#f3f4f6; }
     .col-menu input { cursor:pointer; }
+    /* Chip Recent/Saved SO (localStorage, maks 8) */
+    .recent-so-wrap { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:-4px 0 14px 0; padding:0 2px; }
+    .recent-so-lbl { font-size:0.72rem; color:#6b7280; font-weight:600; letter-spacing:0.3px; white-space:nowrap; }
+    .recent-so-chips { display:flex; gap:6px; flex-wrap:wrap; }
+    .recent-chip { display:inline-flex; align-items:stretch; background:#eef2ff; border:1px solid #c7d2fe; border-radius:16px; overflow:hidden; }
+    .recent-chip-main { background:none; border:none; cursor:pointer; font-size:0.76rem; color:#3730a3; padding:4px 4px 4px 12px; display:inline-flex; align-items:center; gap:6px; max-width:240px; }
+    .recent-chip-main:hover { color:#1e1b4b; }
+    .recent-chip-mat { color:#6366f1; font-family:monospace; font-size:0.72rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }
+    .recent-chip-x { background:none; border:none; cursor:pointer; color:#818cf8; font-size:0.95rem; line-height:1; padding:0 9px; }
+    .recent-chip-x:hover { color:#dc2626; background:#e0e7ff; }
   </style>
 </head>
 <body>
@@ -1384,6 +1399,15 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         </div>
       </form>
     </div>
+
+    <!-- Recent/Saved SO (localStorage, maks 8) — diisi client-side oleh pelRecent -->
+    <div id="recent-so-wrap" class="recent-so-wrap" style="display:none;">
+      <span class="recent-so-lbl">&#128337;&nbsp;Terakhir dibuka:</span>
+      <div id="recent-so-chips" class="recent-so-chips"></div>
+    </div>
+    <% IF lv_so_found = abap_true. %>
+    <div id="cs-current-so" data-so="<%= lv_ui_so %>" data-item="<%= lv_ui_item %>" data-mat="<%= ls_vbap_hdr-matnr %>" style="display:none;"></div>
+    <% ENDIF. %>
 
     <!-- #2: Mode Monitoring/Transaksi + panel Transfer collapsible -->
     <div class="mode-bar">
@@ -1850,11 +1874,11 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
             <!-- #5: Status (setara Overall Status VA03) -->
             <div class="info-field">
               <div class="info-field-lbl">Status Item (Overall &mdash; VA03)</div>
-              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbup_item-gbsta %>" title="<%= lv_itm_stat_tip %>"><%= lv_itm_stat_lbl %></span></div>
+              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbap_hdr-gbsta %>" title="<%= lv_itm_stat_tip %>"><%= lv_itm_stat_lbl %></span></div>
             </div>
             <div class="info-field">
               <div class="info-field-lbl">Status SO (Header)</div>
-              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbuk_hdr-gbstk %>" title="<%= lv_hdr_stat_tip %>"><%= lv_hdr_stat_lbl %></span></div>
+              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbak_hdr-gbstk %>" title="<%= lv_hdr_stat_tip %>"><%= lv_hdr_stat_lbl %></span></div>
             </div>
             <% IF ls_vbak_hdr-bstnk IS NOT INITIAL. %>
             <div class="info-field">
@@ -2401,6 +2425,56 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
         el.textContent = v.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
       }
     });
+
+    /* Recent/Saved SO — daftar SO+Item terakhir dibuka, disimpan di
+       localStorage (maks 8). Chip diklik -> isi ulang form Cari SO & submit;
+       tombol ✕ -> hapus satu entri. Murni client-side; entri baru ditambah
+       saat halaman ini dirender dgn SO+Item yang valid (elemen #cs-current-so). */
+    (function() {
+      var KEY = 'cs_recent_so', MAX = 8;
+      function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { return []; } }
+      function save(l) { try { localStorage.setItem(KEY, JSON.stringify(l)); } catch (e) {} }
+      function esc(s) { s = (s == null ? '' : '' + s); return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+      function removeAt(i) { var l = load(); l.splice(i, 1); save(l); render(); }
+      function go(so, item) {
+        var f = document.getElementById('so_num'), g = document.getElementById('item_num');
+        if (f && g && f.form) { f.value = so; g.value = item; f.form.submit(); }
+      }
+      function add(so, item, mat) {
+        if (!so || !item) return;
+        var l = load().filter(function(e) { return !(e.so === so && e.item === item); });
+        l.unshift({ so: so, item: item, mat: mat || '' });
+        if (l.length > MAX) l = l.slice(0, MAX);
+        save(l);
+      }
+      function render() {
+        var wrap = document.getElementById('recent-so-wrap');
+        var box = document.getElementById('recent-so-chips');
+        if (!wrap || !box) return;
+        var l = load();
+        box.innerHTML = '';
+        if (!l.length) { wrap.style.display = 'none'; return; }
+        wrap.style.display = '';
+        l.forEach(function(e, idx) {
+          var chip = document.createElement('span'); chip.className = 'recent-chip';
+          var main = document.createElement('button');
+          main.type = 'button'; main.className = 'recent-chip-main';
+          main.title = 'Buka SO ' + e.so + ' item ' + e.item + (e.mat ? ' — ' + e.mat : '');
+          main.innerHTML = '<b>' + esc(e.so) + '</b>&nbsp;&middot;&nbsp;' + esc(e.item) +
+            (e.mat ? ' <span class="recent-chip-mat">' + esc(e.mat) + '</span>' : '');
+          main.addEventListener('click', function() { go(e.so, e.item); });
+          var del = document.createElement('button');
+          del.type = 'button'; del.className = 'recent-chip-x';
+          del.setAttribute('aria-label', 'Hapus'); del.innerHTML = '&times;';
+          del.addEventListener('click', function(ev) { ev.stopPropagation(); removeAt(idx); });
+          chip.appendChild(main); chip.appendChild(del); box.appendChild(chip);
+        });
+      }
+      /* tambah entri utk SO+Item yang sedang dibuka (kalau valid) lalu render */
+      var cur = document.getElementById('cs-current-so');
+      if (cur) { add(cur.getAttribute('data-so'), cur.getAttribute('data-item'), cur.getAttribute('data-mat')); }
+      render();
+    })();
 
     /* D41 — Persist form kanan (Transfer Posting) via sessionStorage.
        Alasan: form kiri (Cari SO) & form kanan itu DUA <form> terpisah,
