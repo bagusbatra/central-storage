@@ -86,6 +86,7 @@ DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
 SELECT matnr werks lgort vbeln kalab kains FROM mska
   INTO CORRESPONDING FIELDS OF TABLE lt_mska
   WHERE sobkz = 'E'
+    AND ( kalab > 0 OR kains > 0 )   " #opt: hanya baris berstok (buang stok nol di DB)
     AND ( ( werks = lc_w1000 AND lgort = '1D00' )
        OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
 
@@ -97,7 +98,8 @@ TYPES: BEGIN OF ty_mard,
 DATA: lt_mard TYPE TABLE OF ty_mard, ls_mard TYPE ty_mard.
 SELECT matnr werks lgort labst insme FROM mard
   INTO CORRESPONDING FIELDS OF TABLE lt_mard
-  WHERE ( ( werks = lc_w1000 AND lgort = '1D00' )
+  WHERE ( labst > 0 OR insme > 0 )   " #opt: hanya baris berstok (buang stok nol di DB)
+    AND ( ( werks = lc_w1000 AND lgort = '1D00' )
        OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
 
 " --- Peta SO-stock -> customer (utk buang sample) ---

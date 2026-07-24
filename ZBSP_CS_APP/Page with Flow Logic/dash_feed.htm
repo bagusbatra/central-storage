@@ -62,16 +62,23 @@ DATA: lt_feed TYPE TABLE OF ty_feed,
 FIELD-SYMBOLS <f> TYPE ty_feed.
 
 " === Sisi TERIMA (SHKZG='S') di SLoc yang dipantau, 7 hari terakhir ===
+" #opt: DB yang MEMANGKAS ke 100 baris TERBARU (ORDER BY budat/cputm desc +
+"       UP TO n ROWS), bukan menarik semua lalu dibuang di ABAP. Otomatis
+"       bikin daftar dokumen utk query "from" (sisi H) ikut kecil. Feed
+"       hanya menampilkan 30, 100 disisakan sbg bantalan setelah exclude sample.
 SELECT m~mblnr m~mjahr m~zeile h~budat h~cputm m~bwart m~charg
        m~matnr m~werks m~lgort m~menge m~meins m~kdauf m~kdpos
   FROM mseg AS m INNER JOIN mkpf AS h ON m~mblnr = h~mblnr AND m~mjahr = h~mjahr
   INTO CORRESPONDING FIELDS OF TABLE lt_feed
+  UP TO 100 ROWS
   WHERE h~budat >= lv_from
     AND m~kdauf  <> ''
     AND m~shkzg  = 'S'
     AND ( ( m~werks = '1000' AND m~lgort = '1D00' )
-       OR ( m~werks = '2000' AND m~lgort IN ( '2KCS', '2261', '2262', '22E2', '22E3', '229K' ) ) ).
+       OR ( m~werks = '2000' AND m~lgort IN ( '2KCS', '2261', '2262', '22E2', '22E3', '229K' ) ) )
+  ORDER BY h~budat DESCENDING h~cputm DESCENDING.
 
+" Tie-break tambahan (mblnr/zeile) di ABAP; urutan utama sudah dari DB.
 SORT lt_feed BY budat DESCENDING cputm DESCENDING mblnr DESCENDING zeile DESCENDING.
 
 IF lt_feed IS NOT INITIAL.
