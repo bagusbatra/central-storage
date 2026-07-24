@@ -1465,8 +1465,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <div class="col-toggle-wrap">
               <button type="button" class="col-toggle-btn" onclick="pelToggleColMenu('pmb', event)">&#9881;&nbsp;Kolom</button>
               <div class="col-menu" id="pmb-col-menu">
-                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',0,this.checked)"> Material</label>
-                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',1,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',0,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',1,this.checked)"> Material</label>
                 <label><input type="checkbox" checked onchange="pelOrdCol('pmb',2,this.checked)"> Target QTY</label>
                 <label><input type="checkbox" checked onchange="pelOrdCol('pmb',3,this.checked)"> Del QTY</label>
                 <label><input type="checkbox" checked onchange="pelOrdCol('pmb',4,this.checked)"> Progres</label>
@@ -1479,8 +1479,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width:16%;">Material</th>
-                  <th style="width:32%;">No Material</th>
+                  <th style="width:16%;">No Material</th>
+                  <th style="width:32%;">Material</th>
                   <th style="width:12%;text-align:right;" title="Jumlah yang direncanakan diproduksi pada order ini.">Target QTY</th>
                   <th style="width:12%;text-align:right;" title="Jumlah yang sudah selesai/diterima dari order ini.">Del QTY</th>
                   <th style="width:20%;text-align:center;" title="Persentase Del QTY terhadap Target QTY.">Progres</th>
@@ -1579,8 +1579,8 @@ di aplikasi.">22E3 belum punya label resmi.</span></p>
             <div class="col-toggle-wrap">
               <button type="button" class="col-toggle-btn" onclick="pelToggleColMenu('prod', event)">&#9881;&nbsp;Kolom</button>
               <div class="col-menu" id="prod-col-menu">
-                <label><input type="checkbox" checked onchange="pelOrdCol('prod',0,this.checked)"> Material</label>
-                <label><input type="checkbox" checked onchange="pelOrdCol('prod',1,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',0,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',1,this.checked)"> Material</label>
                 <label><input type="checkbox" checked onchange="pelOrdCol('prod',2,this.checked)"> Target QTY</label>
                 <label><input type="checkbox" checked onchange="pelOrdCol('prod',3,this.checked)"> Del QTY</label>
                 <label><input type="checkbox" checked onchange="pelOrdCol('prod',4,this.checked)"> Progres</label>
@@ -1593,8 +1593,8 @@ di aplikasi.">22E3 belum punya label resmi.</span></p>
             <table class="data-table">
               <thead>
                 <tr>
-                  <th style="width:16%;">Material</th>
-                  <th style="width:32%;">No Material</th>
+                  <th style="width:16%;">No Material</th>
+                  <th style="width:32%;">Material</th>
                   <th style="width:12%;text-align:right;" title="Jumlah yang direncanakan diproduksi pada order ini.">Target QTY</th>
                   <th style="width:12%;text-align:right;" title="Jumlah yang sudah selesai/diterima dari order ini.">Del QTY</th>
                   <th style="width:20%;text-align:center;" title="Persentase Del QTY terhadap Target QTY.">Progres</th>
@@ -2027,7 +2027,7 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
             <div style="margin-bottom:14px;">
               <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">DAFTAR MATERIAL <span style="color:#dc2626;">*</span></label>
               <div style="font-size:0.68rem; color:#9ca3af; margin-bottom:4px;">Paste dari Excel (Material &lt;Tab&gt; Batch, 1 baris per material). Batch opsional &mdash; kalau kosong, sistem ambil batch pertama tersedia.</div>
-              <textarea name="trs_matlist" rows="6" required placeholder="20086291&#9;5700902895&#10;20086295&#9;5700903040&#10;20086300" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family:monospace;
+              <textarea name="trs_matlist" rows="6" required placeholder="20086291" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family:monospace;
 font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
             </div>
 
