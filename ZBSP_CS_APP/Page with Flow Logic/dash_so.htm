@@ -1,0 +1,156 @@
+<%@ page language="abap" %><%
+*&---------------------------------------------------------------------*
+*& BSP Page — dash_so.htm
+*&---------------------------------------------------------------------*
+*& Side panel drill-down: PROGRES PRODUKSI (AFPO) untuk satu SO, discope
+*& ke plant/SLoc kartu KPI (sec). Dipanggil openSo() di index3a.htm:
+*&   fetch('dash_so.htm?so=<no.SO>&sec=N')
+*& Balas: { "buyer":"..","scope":"..",
+*&          "rows":[ {aufnr,matnr,maktx,target,del,prog,status}, ... ] }
+*& Logika mirip kolom inti monitoring: Target=AFPO-PSMNG, Del=AFPO-WEMNG,
+*& Progres=WEMNG/PSMNG*100. sec -> plant+SLoc sama dgn dash_detail/index3a.
+*& ⚠️ set_header_field: fallback set_content_type spt endpoint lain.
+*&---------------------------------------------------------------------*
+CONSTANTS lc_sample TYPE kna1-kunnr VALUE '2000000004'.
+DATA: lv_so_in TYPE string, lv_sec_s TYPE string, lv_sec TYPE i, lv_so TYPE vbak-vbeln.
+lv_so_in = request->get_form_field( 'so' ).
+lv_sec_s = request->get_form_field( 'sec' ).
+lv_sec   = lv_sec_s.
+" No. SO dari UI sudah tanpa leading zero -> kembalikan ke format internal NUMC10.
+CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+  EXPORTING input = lv_so_in IMPORTING output = lv_so.
+
+DATA: lv_werks TYPE werks_d, lv_scope TYPE string.
+DATA: lt_lg TYPE RANGE OF lgort_d, ls_lg LIKE LINE OF lt_lg.
+DEFINE add_lg.
+  ls_lg-sign = 'I'. ls_lg-option = 'EQ'. ls_lg-low = &1. APPEND ls_lg TO lt_lg.
+END-OF-DEFINITION.
+CASE lv_sec.
+  WHEN 1. lv_werks = '1000'. add_lg '1D00'. lv_scope = 'Pembahanan - 1000/1D00'.
+  WHEN 2. lv_werks = '2000'. add_lg '2KCS'. lv_scope = 'Central Storage - 2000/2KCS'.
+  WHEN 3. lv_werks = '2000'. add_lg '2261'. add_lg '2262'. lv_scope = 'Machining - 2000/2261,2262'.
+  WHEN 4. lv_werks = '2000'. add_lg '22E2'. add_lg '22E3'. lv_scope = 'Banding - 2000/22E2,22E3'.
+  WHEN 5. lv_werks = '2000'. add_lg '229K'. lv_scope = 'Sanding - 2000/229K'.
+  WHEN 6. lv_werks = '1000'. add_lg '1D00'. lv_scope = 'QI 1000 - 1000/1D00'.
+  WHEN 7. lv_werks = '2000'. add_lg '2KCS'. add_lg '2261'. add_lg '2262'. add_lg '22E2'. add_lg '22E3'. add_lg '229K'. lv_scope = 'QI 2000 - 2000/2KCS..229K'.
+  WHEN OTHERS.
+    response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+%>{"buyer":"","scope":"","rows":[]}<%
+    RETURN.
+ENDCASE.
+
+" --- Order produksi (AFPO) utk SO ini di plant/SLoc kartu ---
+TYPES: BEGIN OF ty_ord,
+         aufnr TYPE afpo-aufnr, matnr TYPE afpo-matnr,
+         psmng TYPE afpo-psmng, wemng TYPE afpo-wemng, meins TYPE afpo-meins,
+       END OF ty_ord.
+DATA: lt_ord TYPE TABLE OF ty_ord, ls_ord TYPE ty_ord.
+SELECT aufnr matnr psmng wemng meins FROM afpo
+  INTO CORRESPONDING FIELDS OF TABLE lt_ord
+  WHERE kdauf = lv_so
+    AND pwerk = lv_werks
+    AND lgort IN lt_lg.
+SORT lt_ord BY aufnr.
+
+" --- Buyer (VBAK -> KNA1) ---
+DATA: lv_kunnr TYPE vbak-kunnr, lv_name1 TYPE kna1-name1, lv_buyer TYPE string.
+SELECT SINGLE kunnr FROM vbak INTO lv_kunnr WHERE vbeln = lv_so.
+IF lv_kunnr IS NOT INITIAL AND lv_kunnr <> lc_sample.
+  SELECT SINGLE name1 FROM kna1 INTO lv_name1 WHERE kunnr = lv_kunnr.
+  lv_buyer = lv_name1.
+ENDIF.
+
+" --- Nama material (MAKT) batched ---
+TYPES: BEGIN OF ty_makt, matnr TYPE makt-matnr, maktx TYPE makt-maktx, END OF ty_makt.
+DATA: lt_makt TYPE TABLE OF ty_makt, ls_makt TYPE ty_makt, lt_matr TYPE TABLE OF matnr.
+LOOP AT lt_ord INTO ls_ord.
+  APPEND ls_ord-matnr TO lt_matr.
+ENDLOOP.
+SORT lt_matr. DELETE ADJACENT DUPLICATES FROM lt_matr.
+IF lt_matr IS NOT INITIAL.
+  SELECT matnr maktx FROM makt INTO TABLE lt_makt
+    FOR ALL ENTRIES IN lt_matr
+    WHERE matnr = lt_matr-table_line AND spras = sy-langu.
+  SORT lt_makt BY matnr.
+ENDIF.
+
+" --- Bentuk baris tampilan ---
+TYPES: BEGIN OF ty_out,
+         aufnr TYPE string, matnr TYPE string, maktx TYPE string,
+         target TYPE string, del TYPE string, prog TYPE i, status TYPE string,
+       END OF ty_out.
+DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
+DATA: lv_qc TYPE c LENGTH 40, lv_qs TYPE string, lv_ql TYPE i, lv_qo TYPE i,
+      lv_meins_ext TYPE meins, lv_mat TYPE matnr, lv_auf TYPE afpo-aufnr.
+" Macro format qty: WRITE NO-GROUPING -> string -> koma jadi titik -> buang nol desimal.
+DEFINE fmt_qty.
+  CLEAR: lv_qc, lv_qs.
+  WRITE &1 TO lv_qc NO-GROUPING.
+  lv_qs = lv_qc. CONDENSE lv_qs.
+  REPLACE ALL OCCURRENCES OF ',' IN lv_qs WITH '.'.
+  IF lv_qs CS '.'.
+    DO.
+      lv_ql = strlen( lv_qs ). IF lv_ql = 0. EXIT. ENDIF.
+      lv_qo = lv_ql - 1.
+      IF lv_qs+lv_qo(1) <> '0'. EXIT. ENDIF.
+      lv_qs = lv_qs(lv_qo).
+    ENDDO.
+    lv_ql = strlen( lv_qs ).
+    IF lv_ql > 0.
+      lv_qo = lv_ql - 1.
+      IF lv_qs+lv_qo(1) = '.'. lv_qs = lv_qs(lv_qo). ENDIF.
+    ENDIF.
+  ENDIF.
+  &2 = lv_qs && ` ` && lv_meins_ext.
+END-OF-DEFINITION.
+
+LOOP AT lt_ord INTO ls_ord.
+  CLEAR ls_out.
+  lv_auf = ls_ord-aufnr.
+  SHIFT lv_auf LEFT DELETING LEADING '0'.
+  ls_out-aufnr = lv_auf.
+  lv_mat = ls_ord-matnr.
+  CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT' EXPORTING input = lv_mat IMPORTING output = lv_mat.
+  ls_out-matnr = lv_mat.
+  READ TABLE lt_makt INTO ls_makt WITH KEY matnr = ls_ord-matnr BINARY SEARCH.
+  IF sy-subrc = 0. ls_out-maktx = ls_makt-maktx. ENDIF.
+  lv_meins_ext = ls_ord-meins.
+  CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT' EXPORTING input = lv_meins_ext IMPORTING output = lv_meins_ext.
+  fmt_qty ls_ord-psmng ls_out-target.
+  fmt_qty ls_ord-wemng ls_out-del.
+  IF ls_ord-psmng > 0.
+    ls_out-prog = ls_ord-wemng * 100 / ls_ord-psmng.
+    IF ls_out-prog > 100. ls_out-prog = 100. ENDIF.
+  ELSE.
+    ls_out-prog = 0.
+  ENDIF.
+  IF ls_out-prog >= 100.        ls_out-status = 'Selesai'.
+  ELSEIF ls_ord-wemng > 0.      ls_out-status = 'Berjalan'.
+  ELSE.                         ls_out-status = 'Belum'.
+  ENDIF.
+  APPEND ls_out TO lt_out.
+ENDLOOP.
+
+" --- Output JSON ---
+DATA: lv_first TYPE abap_bool VALUE abap_true,
+      lv_e_maktx TYPE string, lv_e_buyer TYPE string, lv_e_scope TYPE string.
+lv_e_buyer = lv_buyer.
+REPLACE ALL OCCURRENCES OF '\' IN lv_e_buyer WITH '\\'.
+REPLACE ALL OCCURRENCES OF '"' IN lv_e_buyer WITH '\"'.
+lv_e_scope = lv_scope.
+REPLACE ALL OCCURRENCES OF '"' IN lv_e_scope WITH '\"'.
+
+response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+%>{"buyer":"<%= lv_e_buyer %>","scope":"<%= lv_e_scope %>","rows":[<%
+LOOP AT lt_out INTO ls_out.
+  IF lv_first = abap_false. %>,<% ENDIF.
+  lv_first = abap_false.
+  lv_e_maktx = ls_out-maktx.
+  REPLACE ALL OCCURRENCES OF '\' IN lv_e_maktx WITH '\\'.
+  REPLACE ALL OCCURRENCES OF '"' IN lv_e_maktx WITH '\"'.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_maktx WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_maktx WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_maktx WITH ` `.
+%>{"aufnr":"<%= ls_out-aufnr %>","matnr":"<%= ls_out-matnr %>","maktx":"<%= lv_e_maktx %>","target":"<%= ls_out-target %>","del":"<%= ls_out-del %>","prog":<%= ls_out-prog %>,"status":"<%= ls_out-status %>"}<%
+ENDLOOP.
+%>]}

@@ -255,13 +255,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .kpi-caret { font-size:0.6rem; color:#9ca3af; }
     .kpi-card.active .kpi-caret { color:#2563eb; display:inline-block; transform:rotate(180deg); }
     /* --- Panel detail drill-down --- */
-    .kpi-detail { background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin:0 0 24px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
+    .kpi-detail { background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin:0 0 24px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.05); min-height:560px; }
     .kpi-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:12px 16px; border-bottom:1px solid #f3f4f6; }
     .kpi-detail-title { font-weight:700; color:#0f172a; }
     .kpi-detail-sub { font-size:0.75rem; color:#6b7280; margin-top:2px; }
     .kpi-detail-close { cursor:pointer; color:#9ca3af; font-size:1.05rem; border:none; background:none; padding:2px 6px; line-height:1; }
     .kpi-detail-close:hover { color:#374151; }
-    .kpi-detail-scroll { max-height:420px; overflow:auto; }
+    .kpi-detail-scroll { height:440px; overflow:auto; }   /* tinggi tetap: ganti kartu tak mengubah ukuran */
     .kpi-detail table { width:100%; border-collapse:collapse; }
     .kpi-detail th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.72rem; text-transform:uppercase; padding:9px 14px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
     .kpi-detail td { padding:9px 14px; font-size:0.84rem; border-bottom:1px solid #f3f4f6; color:#374151; }
@@ -273,6 +273,32 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .dd-filters { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; padding:10px 16px; border-bottom:1px solid #f3f4f6; }
     .dd-f { display:flex; flex-direction:column; gap:3px; font-size:0.68rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px; }
     .dd-f select { font-size:0.82rem; font-weight:400; text-transform:none; padding:5px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#374151; }
+    /* No. SO dapat diklik + panel geser kanan (progres produksi SO) */
+    .so-link { color:#2563eb; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-weight:600; }
+    .so-link:hover { color:#1e3a8a; }
+    .so-overlay { position:fixed; inset:0; background:rgba(15,23,42,0.35); opacity:0; visibility:hidden; transition:opacity .2s ease; z-index:990; }
+    .so-overlay.open { opacity:1; visibility:visible; }
+    .so-panel { position:fixed; top:0; right:0; height:100%; width:min(480px,92vw); background:#fff;
+      box-shadow:-6px 0 18px rgba(0,0,0,0.20); transform:translateX(100%); transition:transform .25s ease;
+      z-index:1000; display:flex; flex-direction:column; }
+    .so-panel.open { transform:translateX(0); }
+    .so-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid #e5e7eb; background:#f9fafb; }
+    .so-title { font-weight:800; color:#0f172a; font-size:1.05rem; }
+    .so-scope { font-size:0.75rem; color:#6b7280; margin-top:2px; }
+    .so-close { border:none; background:none; font-size:1.15rem; color:#9ca3af; cursor:pointer; line-height:1; padding:2px 6px; }
+    .so-close:hover { color:#374151; }
+    .so-body { flex:1 1 auto; overflow:auto; padding:14px 18px; }
+    .so-meta { font-size:0.82rem; color:#374151; margin-bottom:12px; }
+    .so-table { width:100%; border-collapse:collapse; }
+    .so-table th { text-align:left; font-size:0.68rem; text-transform:uppercase; color:#6b7280; font-weight:700; border-bottom:1px solid #e5e7eb; padding:8px; white-space:nowrap; }
+    .so-table td { font-size:0.82rem; color:#374151; border-bottom:1px solid #f3f4f6; padding:8px; vertical-align:top; }
+    .so-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .so-mat-d { font-size:0.72rem; color:#9ca3af; }
+    .so-prog { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; min-width:80px; }
+    .so-prog-fill { height:100%; background:#16a34a; border-radius:4px; }
+    .so-prog-t { font-size:0.7rem; color:#6b7280; }
+    .so-body .loading, .so-body .err { padding:14px 4px; font-size:0.85rem; color:#6b7280; }
+    .so-body .err { color:#b91c1c; }
     /* --- Filter tanggal --- */
     .date-filter-form { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
     .date-filter-form .form-group { display:block; }
@@ -421,6 +447,16 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <div class="ticker-label">&#9889; Pergerakan Barang <span id="feed-status" class="ticker-status">&mdash;</span></div>
     <div class="ticker-viewport"><div id="feed-list"></div></div>
   </div>
+
+  <!-- Side panel kanan: progres produksi SO (dibuka dari klik No. SO di drill-down) -->
+  <div id="so-overlay" class="so-overlay" onclick="closeSo()"></div>
+  <aside id="so-panel" class="so-panel" aria-hidden="true">
+    <div class="so-head">
+      <div><div id="so-title" class="so-title">SO</div><div id="so-scope" class="so-scope"></div></div>
+      <button class="so-close" onclick="closeSo()" title="Tutup">&#10007;</button>
+    </div>
+    <div id="so-body" class="so-body"></div>
+  </aside>
 
   <script>
     /* User dropdown (header) */
@@ -652,12 +688,19 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         + '<th>Material</th><th>Deskripsi</th><th>SLoc</th><th>Qty</th><th>No. SO</th><th>Buyer</th><th>Terakhir Masuk</th>'
         + '</tr></thead><tbody>';
       fr.forEach(function(r){
+        var soCell = (r.so && r.so!=='-')
+          ? '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Lihat progres produksi SO ini">'+feedEsc(r.so)+'</span>'
+          : feedEsc(r.so);
         h += '<tr><td>'+feedEsc(r.matnr)+'</td><td>'+feedEsc(r.maktx)+'</td><td>'+feedEsc(r.lgort)+'</td>'
-          + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+feedEsc(r.so)+'</td><td>'+feedEsc(r.buyer)+'</td>'
+          + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+soCell+'</td><td>'+feedEsc(r.buyer)+'</td>'
           + '<td>'+feedEsc(r.lastin||'-')+'</td></tr>';
       });
       h += '</tbody></table></div>';
       panel.innerHTML = h;
+      // klik No. SO -> panel geser kanan (progres produksi SO di kategori kartu)
+      panel.querySelectorAll('.so-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec); });
+      });
     }
     function dashDetailClose(){
       var panel = document.getElementById('kpi-detail');
@@ -665,6 +708,55 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       panel.setAttribute('data-open', '');
       document.querySelectorAll('.kpi-card').forEach(function(c){ c.classList.remove('active'); });
     }
+
+    /* --- Side panel kanan: progres produksi SO (dash_so.htm) --- */
+    function openSo(so, sec){
+      var panel = document.getElementById('so-panel');
+      var ov    = document.getElementById('so-overlay');
+      var body  = document.getElementById('so-body');
+      document.getElementById('so-title').textContent = 'SO ' + so;
+      document.getElementById('so-scope').textContent = '';
+      body.innerHTML = '<div class="loading">Memuat&hellip;</div>';
+      panel.classList.add('open'); panel.setAttribute('aria-hidden','false');
+      ov.classList.add('open');
+      fetch('dash_so.htm?so='+encodeURIComponent(so)+'&sec='+encodeURIComponent(sec), { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          document.getElementById('so-scope').textContent = d.scope || '';
+          renderSo(body, d);
+        })
+        .catch(function(){ body.innerHTML = '<div class="err">Gagal memuat data SO.</div>'; });
+    }
+    function closeSo(){
+      var panel = document.getElementById('so-panel');
+      panel.classList.remove('open'); panel.setAttribute('aria-hidden','true');
+      document.getElementById('so-overlay').classList.remove('open');
+    }
+    function renderSo(body, d){
+      var rows = (d && d.rows) ? d.rows : [];
+      var h = '<div class="so-meta">Buyer: <b>'+feedEsc(d.buyer||'-')+'</b></div>';
+      if(!rows.length){ body.innerHTML = h + '<div class="loading">Tidak ada order produksi untuk SO ini di bagian tsb.</div>'; return; }
+      h += '<table class="so-table"><thead><tr><th>Order</th><th>Material</th><th>Target</th><th>Del</th><th>Progres</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        var p = parseInt(r.prog, 10); if (isNaN(p)) p = 0;
+        h += '<tr><td>'+feedEsc(r.aufnr)+'</td>'
+          + '<td>'+feedEsc(r.matnr)+'<div class="so-mat-d">'+feedEsc(r.maktx)+'</div></td>'
+          + '<td class="num">'+feedEsc(r.target)+'</td>'
+          + '<td class="num">'+feedEsc(r.del)+'</td>'
+          + '<td><div class="so-prog"><div class="so-prog-fill" style="width:'+p+'%"></div></div>'
+          + '<span class="so-prog-t">'+p+'% &middot; '+feedEsc(r.status)+'</span></td></tr>';
+      });
+      body.innerHTML = h + '</tbody></table>';
+    }
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeSo(); });
+
+    /* Default: buka drill-down Pembahanan (sec 1) saat halaman dibuka.
+       HARUS paling akhir: setelah SEMUA "var _dd..." dieksekusi, supaya
+       _ddSec yang di-set dashDetail(1) tidak ter-reset oleh deklarasi state. */
+    (function(){
+      var first = document.querySelector('.kpi-card[data-sec="1"]');
+      if(first) dashDetail(1, first);
+    })();
   </script>
   <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %></div>
 </body>
