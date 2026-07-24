@@ -288,7 +288,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .so-close { border:none; background:none; font-size:1.15rem; color:#9ca3af; cursor:pointer; line-height:1; padding:2px 6px; }
     .so-close:hover { color:#374151; }
     .so-body { flex:1 1 auto; overflow:auto; padding:14px 18px; }
-    .so-meta { font-size:0.82rem; color:#374151; margin-bottom:12px; }
+    .so-meta { font-size:0.82rem; color:#374151; margin-bottom:10px; }
+    .so-search-wrap { margin-bottom:12px; }
+    .so-search { width:100%; box-sizing:border-box; font-size:0.85rem; padding:8px 12px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#374151; }
+    .so-search:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.18); }
     .so-table { width:100%; border-collapse:collapse; }
     .so-table th { text-align:left; font-size:0.68rem; text-transform:uppercase; color:#6b7280; font-weight:700; border-bottom:1px solid #e5e7eb; padding:8px; white-space:nowrap; }
     .so-table td { font-size:0.82rem; color:#374151; border-bottom:1px solid #f3f4f6; padding:8px; vertical-align:top; }
@@ -710,6 +713,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     }
 
     /* --- Side panel kanan: progres produksi SO (dash_so.htm) --- */
+    /* State side panel SO */
+    var _soRows=[], _soBuyer='';
     function openSo(so, sec){
       var panel = document.getElementById('so-panel');
       var ov    = document.getElementById('so-overlay');
@@ -723,7 +728,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
         .then(function(d){
           document.getElementById('so-scope').textContent = d.scope || '';
-          renderSo(body, d);
+          _soRows  = (d && d.rows) ? d.rows : [];
+          _soBuyer = (d && d.buyer) ? d.buyer : '';
+          soRender();
         })
         .catch(function(){ body.innerHTML = '<div class="err">Gagal memuat data SO.</div>'; });
     }
@@ -732,21 +739,42 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       panel.classList.remove('open'); panel.setAttribute('aria-hidden','true');
       document.getElementById('so-overlay').classList.remove('open');
     }
-    function renderSo(body, d){
-      var rows = (d && d.rows) ? d.rows : [];
-      var h = '<div class="so-meta">Buyer: <b>'+feedEsc(d.buyer||'-')+'</b></div>';
+    function soRender(){
+      var body = document.getElementById('so-body');
+      var rows = _soRows;
+      var h = '<div class="so-meta">Buyer: <b>'+feedEsc(_soBuyer||'-')+'</b></div>';
       if(!rows.length){ body.innerHTML = h + '<div class="loading">Tidak ada order produksi untuk SO ini di bagian tsb.</div>'; return; }
-      h += '<table class="so-table"><thead><tr><th>Order</th><th>Material</th><th>Target</th><th>Del</th><th>Progres</th></tr></thead><tbody>';
+      // kotak pencarian filter SO item (di bawah buyer)
+      h += '<div class="so-search-wrap"><input type="text" id="so-search" class="so-search" placeholder="Cari SO item (mis. 10)&hellip;" autocomplete="off"></div>';
+      h += '<table class="so-table"><thead><tr><th>Item</th><th>Order</th><th>Material</th><th>Target</th><th>Del</th><th>Progres</th></tr></thead><tbody id="so-tbody">';
       rows.forEach(function(r){
         var p = parseInt(r.prog, 10); if (isNaN(p)) p = 0;
-        h += '<tr><td>'+feedEsc(r.aufnr)+'</td>'
+        h += '<tr data-item="'+feedEsc(r.item||'')+'"><td>'+feedEsc(r.item)+'</td><td>'+feedEsc(r.aufnr)+'</td>'
           + '<td>'+feedEsc(r.matnr)+'<div class="so-mat-d">'+feedEsc(r.maktx)+'</div></td>'
           + '<td class="num">'+feedEsc(r.target)+'</td>'
           + '<td class="num">'+feedEsc(r.del)+'</td>'
           + '<td><div class="so-prog"><div class="so-prog-fill" style="width:'+p+'%"></div></div>'
           + '<span class="so-prog-t">'+p+'% &middot; '+feedEsc(r.status)+'</span></td></tr>';
       });
-      body.innerHTML = h + '</tbody></table>';
+      h += '</tbody></table><div id="so-empty" class="loading" style="display:none;">Tidak ada SO item yang cocok.</div>';
+      body.innerHTML = h;
+      // filter tanpa re-render (fokus ketik tetap terjaga)
+      var inp = document.getElementById('so-search');
+      if(inp) inp.addEventListener('input', function(){ soFilter(inp.value); });
+    }
+    function soFilter(q){
+      q = (q || '').trim().toLowerCase();
+      var tb = document.getElementById('so-tbody');
+      if(!tb) return;
+      var trs = tb.querySelectorAll('tr'), shown = 0;
+      trs.forEach(function(tr){
+        var it = (tr.getAttribute('data-item') || '').toLowerCase();
+        var ok = (q === '') || (it.indexOf(q) !== -1);
+        tr.style.display = ok ? '' : 'none';
+        if(ok) shown++;
+      });
+      var em = document.getElementById('so-empty');
+      if(em) em.style.display = shown ? 'none' : 'block';
     }
     document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeSo(); });
 

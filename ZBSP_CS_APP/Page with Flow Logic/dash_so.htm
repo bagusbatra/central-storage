@@ -41,16 +41,16 @@ ENDCASE.
 
 " --- Order produksi (AFPO) utk SO ini di plant/SLoc kartu ---
 TYPES: BEGIN OF ty_ord,
-         aufnr TYPE afpo-aufnr, matnr TYPE afpo-matnr,
+         aufnr TYPE afpo-aufnr, kdpos TYPE afpo-kdpos, matnr TYPE afpo-matnr,
          psmng TYPE afpo-psmng, wemng TYPE afpo-wemng, meins TYPE afpo-meins,
        END OF ty_ord.
 DATA: lt_ord TYPE TABLE OF ty_ord, ls_ord TYPE ty_ord.
-SELECT aufnr matnr psmng wemng meins FROM afpo
+SELECT aufnr kdpos matnr psmng wemng meins FROM afpo
   INTO CORRESPONDING FIELDS OF TABLE lt_ord
   WHERE kdauf = lv_so
     AND pwerk = lv_werks
     AND lgort IN lt_lg.
-SORT lt_ord BY aufnr.
+SORT lt_ord BY kdpos aufnr.
 
 " --- Buyer (VBAK -> KNA1) ---
 DATA: lv_kunnr TYPE vbak-kunnr, lv_name1 TYPE kna1-name1, lv_buyer TYPE string.
@@ -76,7 +76,7 @@ ENDIF.
 
 " --- Bentuk baris tampilan ---
 TYPES: BEGIN OF ty_out,
-         aufnr TYPE string, matnr TYPE string, maktx TYPE string,
+         item TYPE string, aufnr TYPE string, matnr TYPE string, maktx TYPE string,
          target TYPE string, del TYPE string, prog TYPE i, status TYPE string,
        END OF ty_out.
 DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
@@ -104,8 +104,12 @@ DEFINE fmt_qty.
   &2 = lv_qs && ` ` && lv_meins_ext.
 END-OF-DEFINITION.
 
+DATA lv_pos TYPE afpo-kdpos.
 LOOP AT lt_ord INTO ls_ord.
   CLEAR ls_out.
+  lv_pos = ls_ord-kdpos.
+  SHIFT lv_pos LEFT DELETING LEADING '0'.
+  ls_out-item = lv_pos.
   lv_auf = ls_ord-aufnr.
   SHIFT lv_auf LEFT DELETING LEADING '0'.
   ls_out-aufnr = lv_auf.
@@ -151,6 +155,6 @@ LOOP AT lt_out INTO ls_out.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_maktx WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_maktx WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_maktx WITH ` `.
-%>{"aufnr":"<%= ls_out-aufnr %>","matnr":"<%= ls_out-matnr %>","maktx":"<%= lv_e_maktx %>","target":"<%= ls_out-target %>","del":"<%= ls_out-del %>","prog":<%= ls_out-prog %>,"status":"<%= ls_out-status %>"}<%
+%>{"item":"<%= ls_out-item %>","aufnr":"<%= ls_out-aufnr %>","matnr":"<%= ls_out-matnr %>","maktx":"<%= lv_e_maktx %>","target":"<%= ls_out-target %>","del":"<%= ls_out-del %>","prog":<%= ls_out-prog %>,"status":"<%= ls_out-status %>"}<%
 ENDLOOP.
 %>]}
