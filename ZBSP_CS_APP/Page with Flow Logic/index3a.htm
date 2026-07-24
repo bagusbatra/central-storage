@@ -307,17 +307,17 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
       " aktivasi akan menolak field-nya — laporkan, akan saya kembalikan ke
       " VBUK/VBUP (yang di ECC memang berdata).
       CASE ls_vbak_hdr-gbstk.
-        WHEN 'A'. lv_hdr_stat_lbl = 'Belum Diproses'.    lv_hdr_stat_tip = 'Belum ada proses yang berjalan untuk SO ini.'.
-        WHEN 'B'. lv_hdr_stat_lbl = 'Sebagian Diproses'. lv_hdr_stat_tip = 'Sebagian proses sudah berjalan, tapi belum tuntas seluruhnya.'.
-        WHEN 'C'. lv_hdr_stat_lbl = 'Selesai Diproses'.  lv_hdr_stat_tip = 'Seluruh proses untuk SO ini sudah selesai.'.
-        WHEN OTHERS. lv_hdr_stat_lbl = 'Tidak Diketahui'. lv_hdr_stat_tip = 'Status tidak dikenal.'.
+        WHEN 'A'. lv_hdr_stat_lbl = 'Open'.            lv_hdr_stat_tip = 'Open (belum diproses).'.
+        WHEN 'B'. lv_hdr_stat_lbl = 'Being processed'. lv_hdr_stat_tip = 'Being processed (sebagian diproses).'.
+        WHEN 'C'. lv_hdr_stat_lbl = 'Completed'.       lv_hdr_stat_tip = 'Completed (selesai diproses).'.
+        WHEN OTHERS. lv_hdr_stat_lbl = ls_vbak_hdr-gbstk. lv_hdr_stat_tip = 'Status tidak dikenal.'.
       ENDCASE.
 
       CASE ls_vbap_hdr-gbsta.
-        WHEN 'A'. lv_itm_stat_lbl = 'Belum Diproses'.    lv_itm_stat_tip = 'Belum ada proses yang berjalan untuk item ini.'.
-        WHEN 'B'. lv_itm_stat_lbl = 'Sebagian Diproses'. lv_itm_stat_tip = 'Sebagian proses sudah berjalan, tapi belum tuntas seluruhnya.'.
-        WHEN 'C'. lv_itm_stat_lbl = 'Selesai Diproses'.  lv_itm_stat_tip = 'Seluruh proses untuk item ini sudah selesai (mis. sudah dikirim penuh).'.
-        WHEN OTHERS. lv_itm_stat_lbl = 'Tidak Diketahui'. lv_itm_stat_tip = 'Status tidak dikenal.'.
+        WHEN 'A'. lv_itm_stat_lbl = 'Open'.            lv_itm_stat_tip = 'Open (belum diproses).'.
+        WHEN 'B'. lv_itm_stat_lbl = 'Being processed'. lv_itm_stat_tip = 'Being processed (sebagian diproses).'.
+        WHEN 'C'. lv_itm_stat_lbl = 'Completed'.       lv_itm_stat_tip = 'Completed (selesai diproses).'.
+        WHEN OTHERS. lv_itm_stat_lbl = ls_vbap_hdr-gbsta. lv_itm_stat_tip = 'Status tidak dikenal.'.
       ENDCASE.
     ENDIF.
   ENDIF.
@@ -1873,15 +1873,6 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
               <div class="info-field-lbl">Tipe Dokumen</div>
               <div class="info-field-val"><%= ls_vbak_hdr-auart %></div>
             </div>
-            <!-- #5: Status (setara Overall Status VA03) -->
-            <div class="info-field">
-              <div class="info-field-lbl">Status Item (Overall &mdash; VA03)</div>
-              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbap_hdr-gbsta %>" title="<%= lv_itm_stat_tip %>"><%= lv_itm_stat_lbl %></span></div>
-            </div>
-            <div class="info-field">
-              <div class="info-field-lbl">Status SO (Header)</div>
-              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbak_hdr-gbstk %>" title="<%= lv_hdr_stat_tip %>"><%= lv_hdr_stat_lbl %></span></div>
-            </div>
             <% IF ls_vbak_hdr-bstnk IS NOT INITIAL. %>
             <div class="info-field">
               <div class="info-field-lbl">No. PO Customer</div>
@@ -1925,6 +1916,10 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
             <div class="info-field">
               <div class="info-field-lbl">Plant Item</div>
               <div class="info-field-val"><%= ls_vbap_hdr-werks %></div>
+            </div>
+            <div class="info-field">
+              <div class="info-field-lbl">Status SO (Header)</div>
+              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbak_hdr-gbstk %>" title="<%= lv_hdr_stat_tip %>"><%= lv_hdr_stat_lbl %></span></div>
             </div>
             <div class="info-field">
               <div class="info-field-lbl">Qty SO</div>
