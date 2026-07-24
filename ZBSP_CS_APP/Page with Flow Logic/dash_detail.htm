@@ -172,7 +172,7 @@ TYPES: BEGIN OF ty_out,
        END OF ty_out.
 DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
 DATA: lv_meins TYPE mara-meins, lv_qty_c TYPE c LENGTH 40, lv_qty_num TYPE string,
-      lv_mat TYPE matnr.
+      lv_mat TYPE matnr, lv_qlen TYPE i, lv_qoff TYPE i.
 LOOP AT lt_agg INTO ls_agg.
   CLEAR ls_out.
   " matnr display (tanpa leading zero)
@@ -194,6 +194,20 @@ LOOP AT lt_agg INTO ls_agg.
   lv_qty_num = lv_qty_c.
   CONDENSE lv_qty_num.
   REPLACE ALL OCCURRENCES OF ',' IN lv_qty_num WITH '.'.
+  " Buang nol desimal berlebih: "30.000" -> "30", "12.500" -> "12.5".
+  IF lv_qty_num CS '.'.
+    DO.
+      lv_qlen = strlen( lv_qty_num ). IF lv_qlen = 0. EXIT. ENDIF.
+      lv_qoff = lv_qlen - 1.
+      IF lv_qty_num+lv_qoff(1) <> '0'. EXIT. ENDIF.
+      lv_qty_num = lv_qty_num(lv_qoff).
+    ENDDO.
+    lv_qlen = strlen( lv_qty_num ).
+    IF lv_qlen > 0.
+      lv_qoff = lv_qlen - 1.
+      IF lv_qty_num+lv_qoff(1) = '.'. lv_qty_num = lv_qty_num(lv_qoff). ENDIF.
+    ENDIF.
+  ENDIF.
   ls_out-qty_str = |{ lv_qty_num } { lv_meins }|.
   " SO + buyer (kalau SO-stock)
   IF ls_agg-vbeln IS NOT INITIAL.

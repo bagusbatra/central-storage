@@ -244,6 +244,21 @@ IF lt_feed IS NOT INITIAL.
     lv_qty_num = lv_qty_c.   " C -> string: blank ekor otomatis dibuang
     CONDENSE lv_qty_num.
     REPLACE ALL OCCURRENCES OF ',' IN lv_qty_num WITH '.'.
+    " Buang nol desimal berlebih: "30.000" -> "30", "12.500" -> "12.5".
+    DATA: lv_qlen TYPE i, lv_qoff TYPE i.
+    IF lv_qty_num CS '.'.
+      DO.
+        lv_qlen = strlen( lv_qty_num ). IF lv_qlen = 0. EXIT. ENDIF.
+        lv_qoff = lv_qlen - 1.
+        IF lv_qty_num+lv_qoff(1) <> '0'. EXIT. ENDIF.
+        lv_qty_num = lv_qty_num(lv_qoff).
+      ENDDO.
+      lv_qlen = strlen( lv_qty_num ).
+      IF lv_qlen > 0.
+        lv_qoff = lv_qlen - 1.
+        IF lv_qty_num+lv_qoff(1) = '.'. lv_qty_num = lv_qty_num(lv_qoff). ENDIF.
+      ENDIF.
+    ENDIF.
     <f>-qty_str = |{ lv_qty_num } { <f>-meins }|.
 
     " Matnr eksternal (tanpa leading zero).
