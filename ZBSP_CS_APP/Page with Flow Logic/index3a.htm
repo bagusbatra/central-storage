@@ -1529,7 +1529,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                       <div class="bom-title">Komponen BOM — <%= ls_ord-matnr %> (BOM <%= ls_ord-stlnr %>)</div>
                       <table class="bom-table">
                         <thead>
-                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;" title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
+                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;"
+title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
                         </thead>
                         <tbody>
                           <%
@@ -1649,7 +1650,8 @@ di aplikasi.">22E3 belum punya label resmi.</span></p>
                       <div class="bom-title">Komponen BOM — <%= ls_ord-matnr %> (BOM <%= ls_ord-stlnr %>)</div>
                       <table class="bom-table">
                         <thead>
-                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;" title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
+                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;"
+title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
                         </thead>
                         <tbody>
                           <%
@@ -2167,7 +2169,8 @@ font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
                 </td>
                 <td style="text-align:right;">
                   <% IF ls_trs_row-is_valid = abap_true. %>
-                  <input type="number" name="trs_qty_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-qty_tp %>" step="0.001" min="0.001" max="<%= ls_trs_row-qty_stok %>" style="width:80px; padding:4px; border:1px solid #d1d5db; border-radius:4px; text-align:right; font-size:0.78rem;">
+                  <input type="number" name="trs_qty_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-qty_tp %>" step="0.001" min="0.001" max="<%= ls_trs_row-qty_stok %>" style="width:80px; padding:4px; border:1px solid #d1d5db; border-radius:4px;
+text-align:right; font-size:0.78rem;">
                   <% ELSE. %>&mdash;<% ENDIF. %>
                 </td>
                 <td style="font-family:monospace; font-size:0.72rem;"><%= lv_trs_werks_f %></td>
