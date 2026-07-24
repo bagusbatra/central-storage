@@ -1,0 +1,125 @@
+<%@ page language="abap" %><%
+*&---------------------------------------------------------------------*
+*& BSP Page — dash_kpi.htm
+*&---------------------------------------------------------------------*
+*& Endpoint JSON angka KPI dashboard (index3a.htm) utk AUTO-REFRESH tanpa
+*& reload halaman. Balas: { "tot": [t1,t2,t3,t4,t5,t6,t7] }
+*&   t1 Pembahanan(1000/1D00) t2 CentralStorage(2000/2KCS)
+*&   t3 Machining(2261,2262)  t4 Banding(22E2,22E3) t5 Sanding(229K)
+*&   t6 QI-1000  t7 QI-2000  (Unrestricted utk 1-5, Quality Insp utk 6-7)
+*& Nilai = COUNT DISTINCT MATNR berstok > 0 (MSKA SO-stock + MARD bebas),
+*& sample customer 2000000004 dibuang. Snapshot SAAT INI.
+*& ⚠️ LOGIKA HITUNG INI DIKEMBARKAN dari data-layer index3a.htm — kalau salah
+*&    satu diubah, ubah KEDUANYA agar angka konsisten. (Tidak ada include di
+*&    BSP app ini.) set_header_field: fallback set_content_type spt endpoint lain.
+*&---------------------------------------------------------------------*
+CONSTANTS lc_sample TYPE kna1-kunnr VALUE '2000000004'.
+CONSTANTS: lc_w1000 TYPE werks_d VALUE '1000',
+           lc_w2000 TYPE werks_d VALUE '2000'.
+
+TYPES: BEGIN OF ty_src,
+         matnr TYPE matnr, werks TYPE werks_d, lgort TYPE lgort_d,
+         vbeln TYPE mska-vbeln,
+         unr TYPE p LENGTH 15 DECIMALS 3, qi TYPE p LENGTH 15 DECIMALS 3,
+       END OF ty_src.
+DATA: lt_src TYPE TABLE OF ty_src, ls_src TYPE ty_src.
+
+TYPES: BEGIN OF ty_mska,
+         matnr TYPE mska-matnr, werks TYPE mska-werks, lgort TYPE mska-lgort,
+         vbeln TYPE mska-vbeln, kalab TYPE mska-kalab, kains TYPE mska-kains,
+       END OF ty_mska.
+DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
+SELECT matnr werks lgort vbeln kalab kains FROM mska
+  INTO CORRESPONDING FIELDS OF TABLE lt_mska
+  WHERE sobkz = 'E'
+    AND ( kalab > 0 OR kains > 0 )
+    AND ( ( werks = lc_w1000 AND lgort = '1D00' )
+       OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
+
+TYPES: BEGIN OF ty_mard,
+         matnr TYPE mard-matnr, werks TYPE mard-werks, lgort TYPE mard-lgort,
+         labst TYPE mard-labst, insme TYPE mard-insme,
+       END OF ty_mard.
+DATA: lt_mard TYPE TABLE OF ty_mard, ls_mard TYPE ty_mard.
+SELECT matnr werks lgort labst insme FROM mard
+  INTO CORRESPONDING FIELDS OF TABLE lt_mard
+  WHERE ( labst > 0 OR insme > 0 )
+    AND ( ( werks = lc_w1000 AND lgort = '1D00' )
+       OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
+
+TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
+DATA: lt_vbeln_r TYPE TABLE OF vbak-vbeln,
+      lt_vbak    TYPE TABLE OF ty_vbak, ls_vbak TYPE ty_vbak.
+LOOP AT lt_mska INTO ls_mska.
+  APPEND ls_mska-vbeln TO lt_vbeln_r.
+ENDLOOP.
+SORT lt_vbeln_r. DELETE ADJACENT DUPLICATES FROM lt_vbeln_r.
+IF lt_vbeln_r IS NOT INITIAL.
+  SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
+    FOR ALL ENTRIES IN lt_vbeln_r
+    WHERE vbeln = lt_vbeln_r-table_line.
+  SORT lt_vbak BY vbeln.
+ENDIF.
+
+LOOP AT lt_mska INTO ls_mska.
+  READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
+  IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
+    CONTINUE.
+  ENDIF.
+  CLEAR ls_src.
+  ls_src-matnr = ls_mska-matnr. ls_src-werks = ls_mska-werks. ls_src-lgort = ls_mska-lgort.
+  ls_src-vbeln = ls_mska-vbeln. ls_src-unr = ls_mska-kalab. ls_src-qi = ls_mska-kains.
+  APPEND ls_src TO lt_src.
+ENDLOOP.
+LOOP AT lt_mard INTO ls_mard.
+  CLEAR ls_src.
+  ls_src-matnr = ls_mard-matnr. ls_src-werks = ls_mard-werks. ls_src-lgort = ls_mard-lgort.
+  ls_src-unr = ls_mard-labst. ls_src-qi = ls_mard-insme.
+  APPEND ls_src TO lt_src.
+ENDLOOP.
+
+TYPES: BEGIN OF ty_stk, col TYPE i, matnr TYPE matnr, END OF ty_stk.
+DATA: lt_stk TYPE TABLE OF ty_stk, ls_stk TYPE ty_stk.
+DATA: lv_ucol TYPE i, lv_qcol TYPE i.
+LOOP AT lt_src INTO ls_src.
+  CLEAR: lv_ucol, lv_qcol.
+  IF     ls_src-werks = lc_w1000 AND ls_src-lgort = '1D00'.
+    lv_ucol = 1.
+  ELSEIF ls_src-werks = lc_w2000 AND ls_src-lgort = '2KCS'.
+    lv_ucol = 2.
+  ELSEIF ls_src-werks = lc_w2000 AND ( ls_src-lgort = '2261' OR ls_src-lgort = '2262' ).
+    lv_ucol = 3.
+  ELSEIF ls_src-werks = lc_w2000 AND ( ls_src-lgort = '22E2' OR ls_src-lgort = '22E3' ).
+    lv_ucol = 4.
+  ELSEIF ls_src-werks = lc_w2000 AND ls_src-lgort = '229K'.
+    lv_ucol = 5.
+  ENDIF.
+  IF     ls_src-werks = lc_w1000. lv_qcol = 6.
+  ELSEIF ls_src-werks = lc_w2000. lv_qcol = 7.
+  ENDIF.
+  IF ls_src-unr > 0 AND lv_ucol > 0.
+    ls_stk-col = lv_ucol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+  ENDIF.
+  IF ls_src-qi > 0 AND lv_qcol > 0.
+    ls_stk-col = lv_qcol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+  ENDIF.
+ENDLOOP.
+SORT lt_stk BY col matnr.
+DELETE ADJACENT DUPLICATES FROM lt_stk COMPARING ALL FIELDS.
+
+DATA: lv_tot1 TYPE i, lv_tot2 TYPE i, lv_tot3 TYPE i, lv_tot4 TYPE i,
+      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i.
+LOOP AT lt_stk INTO ls_stk.
+  CASE ls_stk-col.
+    WHEN 1. lv_tot1 = lv_tot1 + 1.
+    WHEN 2. lv_tot2 = lv_tot2 + 1.
+    WHEN 3. lv_tot3 = lv_tot3 + 1.
+    WHEN 4. lv_tot4 = lv_tot4 + 1.
+    WHEN 5. lv_tot5 = lv_tot5 + 1.
+    WHEN 6. lv_tot6 = lv_tot6 + 1.
+    WHEN 7. lv_tot7 = lv_tot7 + 1.
+  ENDCASE.
+ENDLOOP.
+
+response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+%>{"tot":[<%= lv_tot1 %>,<%= lv_tot2 %>,<%= lv_tot3 %>,<%= lv_tot4 %>,<%= lv_tot5 %>,<%= lv_tot6 %>,<%= lv_tot7 %>]}

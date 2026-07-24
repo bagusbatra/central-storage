@@ -1,28 +1,29 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Page — Dashboard Grafis Central Storage (Task 3)
+*& BSP Page — Dashboard Grafis Central Storage (index3a.htm)
 *&---------------------------------------------------------------------*
-*& Halaman ini DITULIS ULANG TOTAL: sebelumnya = pelacakan SO+Item; isi
-"     lama itu SUDAH DIPINDAH ke monitoring.htm (aman). Sekarang halaman
-"     ini menampilkan Dashboard Grafis: matriks jumlah SO+Item (COUNT
-"     DISTINCT KDAUF/KDPOS) yang MASUK ke tiap lokasi produksi, dipecah
-"     per buyer (customer), dalam rentang tanggal MKPF-BUDAT.
-"
-"   Kolom (URUTAN TETAP 1..7):
-"     1 Pembahanan     = Plant 1000 / SLoc 1D00
-"     2 Central Storage= Plant 2000 / SLoc 2KCS
-"     3 Machining      = Plant 2000 / SLoc 2261, 2262
-"     4 Banding        = Plant 2000 / SLoc 22E2, 22E3
-"     5 Sanding        = Plant 2000 / SLoc 229K
-"     6 QI Plant 1000  = pergerakan QI (bwart 321/322) di werks 1000
-"     7 QI Plant 2000  = pergerakan QI (bwart 321/322) di werks 2000
-"   "Masuk ke lokasi" = baris MSEG sisi terima SHKZG='S'.
-"   Nilai sel = COUNT DISTINCT (KDAUF,KDPOS).
-"   Sample customer KUNNR='2000000004' SELALU dikecualikan.
-"
-"   Panel "Pergerakan Barang (realtime)" DIISI Task 4 — di sini hanya
-"   disediakan container placeholder (#feed-status, #feed-list) yang KOSONG.
+*& Dua bagian:
+*&  (1) KPI STOK per bagian — 7 kartu; tiap kartu = COUNT DISTINCT MATNR
+*&      yang punya STOK > 0 SAAT INI (snapshot; TIDAK tergantung tanggal).
+*&      Sumber MSKA (SO-stock, sobkz='E') + MARD (stok bebas):
+*&        1 Pembahanan     1000/1D00        Unrestricted (KALAB+LABST)
+*&        2 Central Storage 2000/2KCS       Unrestricted
+*&        3 Machining       2000/2261,2262  Unrestricted
+*&        4 Banding         2000/22E2,22E3  Unrestricted
+*&        5 Sanding         2000/229K       Unrestricted
+*&        6 QI Plant 1000   1000/1D00       Quality Insp (KAINS+INSME)
+*&        7 QI Plant 2000   2000/2KCS..229K Quality Insp
+*&      Sample customer KUNNR='2000000004' dibuang dari SO-stock (via VBAK).
+*&      Kartu diklik -> drill-down daftar material (AJAX dash_detail.htm),
+*&      difilter buyer + dikelompokkan per No. SO. Angka AUTO-REFRESH 60 dtk
+*&      via dash_kpi.htm (LOGIKA HITUNG DIKEMBARKAN di sana -> ubah KEDUANYA).
+*&  (2) BAR REALTIME fixed di dasar layar — 1 pergerakan barang berganti
+*&      fade tiap ~4 dtk; data dari dash_feed.htm (refresh 15 dtk).
+*&
+*& Filter tanggal (MKPF-BUDAT) masih tampil di UI atas permintaan user, tetapi
+*& TIDAK dipakai KPI (KPI = snapshot stok saat ini).
+*& Halaman ini dulunya pelacakan SO+Item; isi lama SUDAH pindah ke monitoring.htm.
 *&---------------------------------------------------------------------*
 CONSTANTS lc_sample TYPE kna1-kunnr VALUE '2000000004'.
 DATA: lv_layout_user TYPE string.
@@ -227,6 +228,21 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .kpi-label { font-size:0.70rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; }
     .kpi-value { font-size:1.7rem; font-weight:800; color:#0f172a; margin:4px 0 2px; line-height:1; }
     .kpi-cap { font-size:0.66rem; color:#9ca3af; margin:0 0 8px; }
+    /* Baris kontrol auto-refresh KPI */
+    .kpi-refresh { display:flex; align-items:center; gap:10px; margin:0 2px 14px; }
+    .kpi-refresh-btn { font-size:0.76rem; padding:5px 12px; border:1px solid #d1d5db; background:#fff;
+      color:#374151; border-radius:8px; cursor:pointer; }
+    .kpi-refresh-btn:hover { background:#f3f4f6; }
+    .kpi-stamp { font-size:0.74rem; color:#6b7280; }
+    /* --- Mode TV: perbesar elemen untuk tampilan monitor/pantau --- */
+    body.tv-mode { padding-bottom:68px; }
+    body.tv-mode .kpi-card { min-width:200px; padding:20px 22px; }
+    body.tv-mode .kpi-value { font-size:2.6rem; }
+    body.tv-mode .kpi-label { font-size:0.9rem; }
+    body.tv-mode .kpi-cap { font-size:0.8rem; }
+    body.tv-mode .ticker-bar { height:60px; }
+    body.tv-mode .ticker-label { font-size:1rem; }
+    body.tv-mode #feed-list { font-size:1.05rem; }
     .kpi-track { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; }
     .kpi-fill  { height:100%; background:#2563eb; border-radius:4px; transition:width .3s ease; }
     /* QI kolom diberi warna beda supaya mudah dibedakan dari tahap produksi */
@@ -267,29 +283,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .date-filter-form button { padding:10px 20px; background:#2563eb; color:#fff; border:none; border-radius:8px; font-weight:700; cursor:pointer; }
     .date-range-note { font-size:0.8rem; color:#6b7280; margin:12px 2px 20px; }
     .date-range-note b { color:#111827; }
-    /* --- Tabel per buyer --- */
-    .dash-table { width:100%; border-collapse:collapse; }
-    .dash-table th { background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.74rem;
-      padding:12px 14px; border-bottom:2px solid #e5e7eb; text-transform:uppercase; text-align:right; white-space:nowrap; }
-    .dash-table th:first-child { text-align:left; }
-    .dash-table td { padding:12px 14px; font-size:0.88rem; border-bottom:1px solid #f3f4f6; color:#374151; text-align:right; }
-    .dash-table td:first-child { text-align:left; font-weight:600; color:#111827; }
-    .dash-table tbody tr:hover td { background:#fafbfc; }
-    .dash-table tfoot td { font-weight:800; background:#f9fafb; border-top:2px solid #e5e7eb; color:#0f172a; }
-    .dash-table .zero { color:#cbd5e1; }
-    .table-scroll { overflow-x:auto; }
-    /* --- Panel realtime feed --- */
-    #feed-list { margin-top:10px; }
-    .feed-item { display:grid; grid-template-columns:52px 1.6fr 1.1fr 0.8fr 1.2fr;
-      gap:10px; align-items:center; padding:9px 6px; border-bottom:1px solid #f3f4f6; font-size:0.82rem; }
-    .feed-item:hover { background:#fafbfc; }
-    .feed-time { color:#6b7280; font-variant-numeric:tabular-nums; }
-    .feed-mat { color:#111827; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .feed-move { color:#374151; }
-    .feed-qty { text-align:right; color:#0f172a; font-weight:600; }
-    .feed-buyer { color:#6b7280; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .feed-gerakan { font-size:0.7rem; color:#2563eb; }
-    .feed-empty { color:#9ca3af; padding:10px 6px; }
+    /* (CSS .dash-table & .feed-* lama dihapus — tabel per-buyer & panel feed
+       versi lama sudah tidak dipakai; ganti drill-down .kpi-detail & ticker .fd-*) */
     /* --- Bar realtime fixed di dasar layar: 1 item, berganti fade (tak scroll) --- */
     body { padding-bottom:52px; }   /* ruang agar konten tak tertutup bar */
     .ticker-bar { position:fixed; left:0; right:0; bottom:0; height:44px; z-index:900;
@@ -357,6 +352,12 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       KPI menampilkan <b>stok saat ini</b> (jumlah jenis material berstok per bagian) &#8212;
       snapshot langsung, tidak tergantung tanggal. Filter tanggal:
       <b><%= lv_from_disp %></b> s/d <b><%= lv_to_disp %></b>.
+    </div>
+
+    <div class="kpi-refresh">
+      <button type="button" class="kpi-refresh-btn" onclick="loadKpi()" title="Perbarui angka stok sekarang">&#8635;&nbsp;Refresh</button>
+      <button type="button" class="kpi-refresh-btn" onclick="toggleTv()" title="Mode layar besar untuk monitor/TV">&#128250;&nbsp;Mode TV</button>
+      <span id="kpi-stamp" class="kpi-stamp">Stok per <%= lv_ts_time %></span>
     </div>
 
     <!-- KPI bar: jumlah JENIS MATERIAL berstok per bagian (hover = SLoc cakupan;
@@ -515,6 +516,39 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       if(!bar) return;
       bar.addEventListener('mouseenter', function(){ _fdPaused = true; });
       bar.addEventListener('mouseleave', function(){ _fdPaused = false; });
+    })();
+
+    /* --- Auto-refresh angka KPI (stok) tanpa reload halaman --- */
+    function setKpiStamp(){
+      var s = document.getElementById('kpi-stamp');
+      if(s) s.textContent = 'Stok per ' + new Date().toLocaleTimeString('id-ID');
+    }
+    function loadKpi(){
+      fetch('dash_kpi.htm', { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          var tot = (d && d.tot) ? d.tot : [];
+          var vals  = document.querySelectorAll('.kpi-bar .kpi-value');
+          var fills = document.querySelectorAll('.kpi-bar .kpi-fill');
+          var max = 0; tot.forEach(function(v){ if(v > max) max = v; });
+          if(max === 0) max = 1;
+          tot.forEach(function(v, i){
+            if(vals[i])  vals[i].textContent = v;
+            if(fills[i]) fills[i].style.width = Math.round(v * 100 / max) + '%';
+          });
+          setKpiStamp();
+        })
+        .catch(function(){ /* gagal -> biarkan angka terakhir */ });
+    }
+    setInterval(loadKpi, 60000);   // stok berubah lambat -> 60 dtk cukup
+
+    /* --- Mode TV (layar besar) — disimpan di localStorage --- */
+    function toggleTv(){
+      var on = document.body.classList.toggle('tv-mode');
+      try { localStorage.setItem('dashTvMode', on ? '1' : '0'); } catch(e){}
+    }
+    (function(){
+      try { if(localStorage.getItem('dashTvMode') === '1') document.body.classList.add('tv-mode'); } catch(e){}
     })();
 
     /* --- Drill-down KPI: klik kartu -> daftar material berstok (AJAX) --- */
