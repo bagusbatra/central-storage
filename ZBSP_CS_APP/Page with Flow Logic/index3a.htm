@@ -47,162 +47,137 @@ ELSE.
   lv_from = sy-datum - 30.
 ENDIF.
 
-" --- Pergerakan: incoming ke SLoc dipantau (SHKZG='S') + QI (321/322) ---
-" ⚠️ ASUMSI: movement type QI = 321/322 (release/reverse Quality Inspection).
-"    Kalau kolom "QI 1000/2000" KOSONG padahal ada aktivitas QI, set movement
-"    type ini perlu disesuaikan dgn kustomisasi plant (mis. tambah 101 yg
-"    ber-INSMK, atau bwart QI lain). JANGAN memblokir data lain karena ini —
-"    biarkan kolom 1..5 tetap terisi.
-TYPES: BEGIN OF ty_mv,
-         werks TYPE mseg-werks, lgort TYPE mseg-lgort,
-         bwart TYPE mseg-bwart, shkzg TYPE mseg-shkzg,
-         kdauf TYPE mseg-kdauf, kdpos TYPE mseg-kdpos,
-       END OF ty_mv.
-DATA: lt_mv TYPE TABLE OF ty_mv, ls_mv TYPE ty_mv.
-SELECT m~werks m~lgort m~bwart m~shkzg m~kdauf m~kdpos
-  FROM mseg AS m INNER JOIN mkpf AS h ON m~mblnr = h~mblnr AND m~mjahr = h~mjahr
-  INTO CORRESPONDING FIELDS OF TABLE lt_mv
-  WHERE h~budat BETWEEN lv_from AND lv_to
-    AND m~kdauf <> ''
-    AND ( ( m~shkzg = 'S'
-            AND ( ( m~werks = '1000' AND m~lgort = '1D00' )
-               OR ( m~werks = '2000' AND m~lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ) )
-       OR ( m~bwart IN ( '321','322' ) ) ).
+" ============================================================
+"  KPI = JUMLAH JENIS MATERIAL yang punya STOK di tiap bagian (permintaan
+"  user: KPI pakai stok RIIL saat ini, bukan hitung pergerakan).
+"    Kolom 1..5 (lokasi): stok UNRESTRICTED > 0 (MSKA-KALAB SO-stock +
+"      MARD-LABST stok bebas) pada SLoc bagian tsb.
+"    Kolom 6/7 (QI 1000/2000): stok status QUALITY INSPECTION > 0
+"      (MSKA-KAINS + MARD-INSME) pada SLoc dipantau di plant tsb.
+"  Nilai kartu = COUNT DISTINCT MATNR (bukan jumlah kuantitas -> bebas
+"  masalah beda satuan). Snapshot SAAT INI: filter tanggal TIDAK dipakai
+"  utk KPI (filter tetap tampil di UI atas permintaan user).
+"  Sample customer 2000000004 dikecualikan dari SO-stock (MSKA via VBAK).
+"  ⚠️ ASUMSI AKTIVASI: MSKA punya kolom LGORT (SO-stock ter-manage per
+"     storage location). Bila kernel menolak MSKA-LGORT, SO-stock tidak
+"     SLoc-managed di sistem ini -> lapor, akan saya alihkan ke sumber
+"     stok SLoc lain. MARD sudah pasti punya LGORT.
+" ============================================================
+CONSTANTS: lc_w1000 TYPE werks_d VALUE '1000',
+           lc_w2000 TYPE werks_d VALUE '2000'.
 
-" --- Resolusi buyer per KDAUF (VBAK->KNA1), buang sample customer ---
-"  FOR ALL ENTRIES batched (pola sama seperti versi index3a lama):
-"    1) kumpulkan kdauf unik dari lt_mv
-"    2) SELECT vbeln kunnr FROM vbak FOR ALL ENTRIES
-"    3) SELECT kunnr name1 FROM kna1 FOR ALL ENTRIES
-"  hasil: map lt_buyer (kdauf -> name1) HANYA utk kunnr <> lc_sample.
+" Sumber stok tergabung: unr (unrestricted) & qi (quality insp) per SLoc.
+TYPES: BEGIN OF ty_src,
+         matnr TYPE matnr,
+         werks TYPE werks_d,
+         lgort TYPE lgort_d,
+         vbeln TYPE mska-vbeln,   " terisi hanya utk SO-stock (MSKA)
+         unr   TYPE p LENGTH 15 DECIMALS 3,
+         qi    TYPE p LENGTH 15 DECIMALS 3,
+       END OF ty_src.
+DATA: lt_src TYPE TABLE OF ty_src, ls_src TYPE ty_src.
+
+" --- SO-stock (MSKA, sobkz='E') di SLoc dipantau ---
+TYPES: BEGIN OF ty_mska,
+         matnr TYPE mska-matnr, werks TYPE mska-werks, lgort TYPE mska-lgort,
+         vbeln TYPE mska-vbeln, kalab TYPE mska-kalab, kains TYPE mska-kains,
+       END OF ty_mska.
+DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
+SELECT matnr werks lgort vbeln kalab kains FROM mska
+  INTO CORRESPONDING FIELDS OF TABLE lt_mska
+  WHERE sobkz = 'E'
+    AND ( ( werks = lc_w1000 AND lgort = '1D00' )
+       OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
+
+" --- Stok bebas (MARD) di SLoc dipantau ---
+TYPES: BEGIN OF ty_mard,
+         matnr TYPE mard-matnr, werks TYPE mard-werks, lgort TYPE mard-lgort,
+         labst TYPE mard-labst, insme TYPE mard-insme,
+       END OF ty_mard.
+DATA: lt_mard TYPE TABLE OF ty_mard, ls_mard TYPE ty_mard.
+SELECT matnr werks lgort labst insme FROM mard
+  INTO CORRESPONDING FIELDS OF TABLE lt_mard
+  WHERE ( ( werks = lc_w1000 AND lgort = '1D00' )
+       OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
+
+" --- Peta SO-stock -> customer (utk buang sample) ---
 TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
-TYPES: BEGIN OF ty_kna1, kunnr TYPE kna1-kunnr, name1 TYPE kna1-name1, END OF ty_kna1.
-TYPES: BEGIN OF ty_buyer, kdauf TYPE mseg-kdauf, name1 TYPE kna1-name1, END OF ty_buyer.
-DATA: lt_kdauf_r TYPE TABLE OF vbak-vbeln,
-      lt_vbak    TYPE TABLE OF ty_vbak, ls_vbak TYPE ty_vbak,
-      lt_kna1    TYPE TABLE OF ty_kna1, ls_kna1 TYPE ty_kna1,
-      lt_buyer   TYPE TABLE OF ty_buyer, ls_buyer TYPE ty_buyer.
-
-LOOP AT lt_mv INTO ls_mv.
-  APPEND ls_mv-kdauf TO lt_kdauf_r.
+DATA: lt_vbeln_r TYPE TABLE OF vbak-vbeln,
+      lt_vbak    TYPE TABLE OF ty_vbak, ls_vbak TYPE ty_vbak.
+LOOP AT lt_mska INTO ls_mska.
+  APPEND ls_mska-vbeln TO lt_vbeln_r.
 ENDLOOP.
-SORT lt_kdauf_r. DELETE ADJACENT DUPLICATES FROM lt_kdauf_r.
-
-IF lt_kdauf_r IS NOT INITIAL.
+SORT lt_vbeln_r. DELETE ADJACENT DUPLICATES FROM lt_vbeln_r.
+IF lt_vbeln_r IS NOT INITIAL.
   SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
-    FOR ALL ENTRIES IN lt_kdauf_r
-    WHERE vbeln = lt_kdauf_r-table_line.
-  IF lt_vbak IS NOT INITIAL.
-    SELECT kunnr name1 FROM kna1 INTO TABLE lt_kna1
-      FOR ALL ENTRIES IN lt_vbak
-      WHERE kunnr = lt_vbak-kunnr.
-    SORT lt_kna1 BY kunnr.
-  ENDIF.
-  LOOP AT lt_vbak INTO ls_vbak.
-    " sample customer SELALU dikecualikan
-    IF ls_vbak-kunnr = lc_sample.
-      CONTINUE.
-    ENDIF.
-    CLEAR ls_buyer.
-    ls_buyer-kdauf = ls_vbak-vbeln.
-    READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = ls_vbak-kunnr BINARY SEARCH.
-    IF sy-subrc = 0.
-      ls_buyer-name1 = ls_kna1-name1.
-    ENDIF.
-    " fallback bila nama customer tidak ketemu: tampilkan kode customer
-    IF ls_buyer-name1 IS INITIAL.
-      ls_buyer-name1 = ls_vbak-kunnr.
-    ENDIF.
-    APPEND ls_buyer TO lt_buyer.
-  ENDLOOP.
-  SORT lt_buyer BY kdauf.
+    FOR ALL ENTRIES IN lt_vbeln_r
+    WHERE vbeln = lt_vbeln_r-table_line.
+  SORT lt_vbak BY vbeln.
 ENDIF.
 
-" --- Bangun sel distinct (buyer,col,kdauf,kdpos) lalu agregasi ke baris ---
-TYPES: BEGIN OF ty_cell,
-         buyer TYPE kna1-name1, col TYPE i,
-         kdauf TYPE mseg-kdauf, kdpos TYPE mseg-kdpos,
-       END OF ty_cell.
-DATA: lt_cell TYPE TABLE OF ty_cell, ls_cell TYPE ty_cell.
-DATA: lv_col TYPE i.
-LOOP AT lt_mv INTO ls_mv.
-  " tentukan buyer dari kdauf; kalau tidak ketemu (tak ada di lt_buyer,
-  " termasuk kasus sample yg sudah dibuang) -> skip
-  READ TABLE lt_buyer INTO ls_buyer WITH KEY kdauf = ls_mv-kdauf BINARY SEARCH.
-  IF sy-subrc <> 0.
+" --- Gabung MSKA (skip sample) + MARD ke lt_src ---
+LOOP AT lt_mska INTO ls_mska.
+  READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
+  IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
     CONTINUE.
   ENDIF.
-  " tentukan kolom
-  CLEAR lv_col.
-  IF ls_mv-bwart = '321' OR ls_mv-bwart = '322'.
-    " QI: kolom 6 (Plant 1000) / kolom 7 (Plant 2000)
-    IF ls_mv-werks = '1000'.
-      lv_col = 6.
-    ELSEIF ls_mv-werks = '2000'.
-      lv_col = 7.
-    ELSE.
-      CONTINUE.
-    ENDIF.
-  ELSE.
-    " incoming shkzg='S' ke SLoc dipantau
-    IF     ls_mv-werks = '1000' AND ls_mv-lgort = '1D00'.
-      lv_col = 1.
-    ELSEIF ls_mv-werks = '2000' AND ls_mv-lgort = '2KCS'.
-      lv_col = 2.
-    ELSEIF ls_mv-werks = '2000' AND ( ls_mv-lgort = '2261' OR ls_mv-lgort = '2262' ).
-      lv_col = 3.
-    ELSEIF ls_mv-werks = '2000' AND ( ls_mv-lgort = '22E2' OR ls_mv-lgort = '22E3' ).
-      lv_col = 4.
-    ELSEIF ls_mv-werks = '2000' AND ls_mv-lgort = '229K'.
-      lv_col = 5.
-    ELSE.
-      CONTINUE.
-    ENDIF.
-  ENDIF.
-  CLEAR ls_cell.
-  ls_cell-buyer = ls_buyer-name1.
-  ls_cell-col   = lv_col.
-  ls_cell-kdauf = ls_mv-kdauf.
-  ls_cell-kdpos = ls_mv-kdpos.
-  APPEND ls_cell TO lt_cell.
+  CLEAR ls_src.
+  ls_src-matnr = ls_mska-matnr. ls_src-werks = ls_mska-werks. ls_src-lgort = ls_mska-lgort.
+  ls_src-vbeln = ls_mska-vbeln. ls_src-unr = ls_mska-kalab. ls_src-qi = ls_mska-kains.
+  APPEND ls_src TO lt_src.
 ENDLOOP.
-SORT lt_cell BY buyer col kdauf kdpos.
-DELETE ADJACENT DUPLICATES FROM lt_cell COMPARING ALL FIELDS.
+LOOP AT lt_mard INTO ls_mard.
+  CLEAR ls_src.
+  ls_src-matnr = ls_mard-matnr. ls_src-werks = ls_mard-werks. ls_src-lgort = ls_mard-lgort.
+  ls_src-unr = ls_mard-labst. ls_src-qi = ls_mard-insme.
+  APPEND ls_src TO lt_src.
+ENDLOOP.
 
-TYPES: BEGIN OF ty_row,
-         buyer TYPE kna1-name1,
-         c1 TYPE i, c2 TYPE i, c3 TYPE i, c4 TYPE i, c5 TYPE i, c6 TYPE i, c7 TYPE i,
-         tot TYPE i,
-       END OF ty_row.
-DATA: lt_row TYPE TABLE OF ty_row, ls_row TYPE ty_row.
-FIELD-SYMBOLS <r> TYPE ty_row.
-DATA: lv_tot1 TYPE i, lv_tot2 TYPE i, lv_tot3 TYPE i, lv_tot4 TYPE i,
-      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i, lv_grand TYPE i.
-" agregasi: tiap sel distinct menambah 1 ke kolom yg sesuai (baris buyer &
-" total kolom global), tot per baris = c1+..+c7.
-" ⚠️ ASUMSI: baris dikunci pada NAMA buyer (KNA1-NAME1), bukan KUNNR. Dua
-"    customer berbeda dgn NAME1 identik akan MENYATU jadi satu baris. Dipilih
-"    krn tampilan diminta "berdasarkan nama buyer"; kalau perlu pisah per
-"    KUNNR, ganti kunci ke kdauf->kunnr.
-LOOP AT lt_cell INTO ls_cell.
-  READ TABLE lt_row ASSIGNING <r> WITH KEY buyer = ls_cell-buyer.
-  IF sy-subrc <> 0.
-    APPEND INITIAL LINE TO lt_row ASSIGNING <r>.
-    <r>-buyer = ls_cell-buyer.
+" --- Set distinct (col, matnr) utk material berstok > 0 ---
+TYPES: BEGIN OF ty_stk, col TYPE i, matnr TYPE matnr, END OF ty_stk.
+DATA: lt_stk TYPE TABLE OF ty_stk, ls_stk TYPE ty_stk.
+DATA: lv_ucol TYPE i, lv_qcol TYPE i.
+LOOP AT lt_src INTO ls_src.
+  CLEAR: lv_ucol, lv_qcol.
+  " kolom lokasi (unrestricted) dari (werks,lgort)
+  IF     ls_src-werks = lc_w1000 AND ls_src-lgort = '1D00'.
+    lv_ucol = 1.
+  ELSEIF ls_src-werks = lc_w2000 AND ls_src-lgort = '2KCS'.
+    lv_ucol = 2.
+  ELSEIF ls_src-werks = lc_w2000 AND ( ls_src-lgort = '2261' OR ls_src-lgort = '2262' ).
+    lv_ucol = 3.
+  ELSEIF ls_src-werks = lc_w2000 AND ( ls_src-lgort = '22E2' OR ls_src-lgort = '22E3' ).
+    lv_ucol = 4.
+  ELSEIF ls_src-werks = lc_w2000 AND ls_src-lgort = '229K'.
+    lv_ucol = 5.
   ENDIF.
-  CASE ls_cell-col.
-    WHEN 1. <r>-c1 = <r>-c1 + 1. lv_tot1 = lv_tot1 + 1.
-    WHEN 2. <r>-c2 = <r>-c2 + 1. lv_tot2 = lv_tot2 + 1.
-    WHEN 3. <r>-c3 = <r>-c3 + 1. lv_tot3 = lv_tot3 + 1.
-    WHEN 4. <r>-c4 = <r>-c4 + 1. lv_tot4 = lv_tot4 + 1.
-    WHEN 5. <r>-c5 = <r>-c5 + 1. lv_tot5 = lv_tot5 + 1.
-    WHEN 6. <r>-c6 = <r>-c6 + 1. lv_tot6 = lv_tot6 + 1.
-    WHEN 7. <r>-c7 = <r>-c7 + 1. lv_tot7 = lv_tot7 + 1.
-  ENDCASE.
-  <r>-tot  = <r>-tot + 1.
-  lv_grand = lv_grand + 1.
+  " kolom QI dari plant
+  IF     ls_src-werks = lc_w1000. lv_qcol = 6.
+  ELSEIF ls_src-werks = lc_w2000. lv_qcol = 7.
+  ENDIF.
+  IF ls_src-unr > 0 AND lv_ucol > 0.
+    ls_stk-col = lv_ucol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+  ENDIF.
+  IF ls_src-qi > 0 AND lv_qcol > 0.
+    ls_stk-col = lv_qcol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+  ENDIF.
 ENDLOOP.
-SORT lt_row BY buyer.
+SORT lt_stk BY col matnr.
+DELETE ADJACENT DUPLICATES FROM lt_stk COMPARING ALL FIELDS.
+
+DATA: lv_tot1 TYPE i, lv_tot2 TYPE i, lv_tot3 TYPE i, lv_tot4 TYPE i,
+      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i.
+LOOP AT lt_stk INTO ls_stk.
+  CASE ls_stk-col.
+    WHEN 1. lv_tot1 = lv_tot1 + 1.
+    WHEN 2. lv_tot2 = lv_tot2 + 1.
+    WHEN 3. lv_tot3 = lv_tot3 + 1.
+    WHEN 4. lv_tot4 = lv_tot4 + 1.
+    WHEN 5. lv_tot5 = lv_tot5 + 1.
+    WHEN 6. lv_tot6 = lv_tot6 + 1.
+    WHEN 7. lv_tot7 = lv_tot7 + 1.
+  ENDCASE.
+ENDLOOP.
 
 " --- KPI bar: lebar bar proporsional thd nilai kolom terbesar ---
 DATA: lv_max TYPE i,
@@ -248,7 +223,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .kpi-card { flex:1 1 140px; min-width:140px; background:#fff; border:1px solid #e5e7eb;
       border-radius:10px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
     .kpi-label { font-size:0.70rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; }
-    .kpi-value { font-size:1.7rem; font-weight:800; color:#0f172a; margin:4px 0 8px; line-height:1; }
+    .kpi-value { font-size:1.7rem; font-weight:800; color:#0f172a; margin:4px 0 2px; line-height:1; }
+    .kpi-cap { font-size:0.66rem; color:#9ca3af; margin:0 0 8px; }
     .kpi-track { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; }
     .kpi-fill  { height:100%; background:#2563eb; border-radius:4px; transition:width .3s ease; }
     /* QI kolom diberi warna beda supaya mudah dibedakan dari tahap produksi */
@@ -291,7 +267,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <div class="header-bar">
     <div class="header-title">
       <h1>Central Storage Dashboard</h1>
-      <p>Dashboard Grafis Pergerakan Material per Lokasi &amp; Buyer &#8212; Plant 1000/2000 Surabaya</p>
+      <p>Stok material per bagian &amp; pergerakan barang realtime &#8212; Plant 1000/2000 Surabaya</p>
     </div>
     <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_layout_user %></span>
       <div class="user-dropdown" id="user-dropdown">
@@ -326,107 +302,61 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       </form>
     </div>
     <div class="date-range-note">
-      Menampilkan pergerakan masuk lokasi (COUNT DISTINCT SO+Item) &#8212;
-      rentang aktif: <b><%= lv_from_disp %></b> s/d <b><%= lv_to_disp %></b>.
+      KPI menampilkan <b>stok saat ini</b> (jumlah jenis material berstok per bagian) &#8212;
+      snapshot langsung, tidak tergantung tanggal. Filter tanggal:
+      <b><%= lv_from_disp %></b> s/d <b><%= lv_to_disp %></b>.
     </div>
 
-    <!-- KPI bar: 7 lokasi/tahap -->
+    <!-- KPI bar: jumlah JENIS MATERIAL berstok per bagian (hover = SLoc cakupan) -->
     <div class="kpi-bar">
-      <div class="kpi-card">
+      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 1000 &middot; SLoc 1D00">
         <div class="kpi-label">Pembahanan</div>
         <div class="kpi-value num-fmt"><%= lv_tot1 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w1 %>%;"></div></div>
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2KCS">
         <div class="kpi-label">Central Storage</div>
         <div class="kpi-value num-fmt"><%= lv_tot2 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w2 %>%;"></div></div>
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2261, 2262">
         <div class="kpi-label">Machining</div>
         <div class="kpi-value num-fmt"><%= lv_tot3 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w3 %>%;"></div></div>
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 22E2, 22E3">
         <div class="kpi-label">Banding</div>
         <div class="kpi-value num-fmt"><%= lv_tot4 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w4 %>%;"></div></div>
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 229K">
         <div class="kpi-label">Sanding</div>
         <div class="kpi-value num-fmt"><%= lv_tot5 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w5 %>%;"></div></div>
       </div>
-      <div class="kpi-card kpi-qi">
+      <div class="kpi-card kpi-qi" title="Stok Quality Inspection &mdash; Plant 1000 &middot; SLoc 1D00">
         <div class="kpi-label">QI 1000</div>
         <div class="kpi-value num-fmt"><%= lv_tot6 %></div>
+        <div class="kpi-cap">material dlm QI</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w6 %>%;"></div></div>
       </div>
-      <div class="kpi-card kpi-qi">
+      <div class="kpi-card kpi-qi" title="Stok Quality Inspection &mdash; Plant 2000 &middot; SLoc 2KCS, 2261, 2262, 22E2, 22E3, 229K">
         <div class="kpi-label">QI 2000</div>
         <div class="kpi-value num-fmt"><%= lv_tot7 %></div>
+        <div class="kpi-cap">material dlm QI</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w7 %>%;"></div></div>
       </div>
     </div>
 
-    <!-- Tabel per buyer -->
-    <div class="list-container" style="padding:18px 20px; margin-bottom:24px;">
-      <div class="bom-title">&#128101; Jumlah SO+Item per Buyer &amp; Lokasi</div>
-      <% IF lt_row IS INITIAL. %>
-        <div class="empty-state">
-          <h3>Tidak ada data pada rentang ini</h3>
-          <p>Tidak ditemukan pergerakan masuk lokasi untuk rentang tanggal yang dipilih. Coba perlebar rentang tanggal.</p>
-        </div>
-      <% ELSE. %>
-      <div class="table-scroll">
-      <table class="dash-table">
-        <thead>
-          <tr>
-            <th>Buyer</th>
-            <th>Pembahanan</th>
-            <th>Central Storage</th>
-            <th>Machining</th>
-            <th>Banding</th>
-            <th>Sanding</th>
-            <th>QI 1000</th>
-            <th>QI 2000</th>
-            <th>Total</th>
-          </tr>
-        </thead>
-        <tbody id="buyer-rows">
-          <% LOOP AT lt_row INTO ls_row. %>
-          <tr>
-            <td><%= ls_row-buyer %></td>
-            <td class="<% IF ls_row-c1 = 0. %>zero<% ENDIF. %>"><span class="num-fmt"><%= ls_row-c1 %></span></td>
-            <td class="<% IF ls_row-c2 = 0. %>zero<% ENDIF. %>"><span class="num-fmt"><%= ls_row-c2 %></span></td>
-            <td class="<% IF ls_row-c3 = 0. %>zero<% ENDIF. %>"><span class="num-fmt"><%= ls_row-c3 %></span></td>
-            <td class="<% IF ls_row-c4 = 0. %>zero<% ENDIF. %>"><span class="num-fmt"><%= ls_row-c4 %></span></td>
-            <td class="<% IF ls_row-c5 = 0. %>zero<% ENDIF. %>"><span class="num-fmt"><%= ls_row-c5 %></span></td>
-            <td class="<% IF ls_row-c6 = 0. %>zero<% ENDIF. %>"><span class="num-fmt"><%= ls_row-c6 %></span></td>
-            <td class="<% IF ls_row-c7 = 0. %>zero<% ENDIF. %>"><span class="num-fmt"><%= ls_row-c7 %></span></td>
-            <td><b class="num-fmt"><%= ls_row-tot %></b></td>
-          </tr>
-          <% ENDLOOP. %>
-        </tbody>
-        <tfoot>
-          <tr>
-            <td>Total</td>
-            <td><span class="num-fmt"><%= lv_tot1 %></span></td>
-            <td><span class="num-fmt"><%= lv_tot2 %></span></td>
-            <td><span class="num-fmt"><%= lv_tot3 %></span></td>
-            <td><span class="num-fmt"><%= lv_tot4 %></span></td>
-            <td><span class="num-fmt"><%= lv_tot5 %></span></td>
-            <td><span class="num-fmt"><%= lv_tot6 %></span></td>
-            <td><span class="num-fmt"><%= lv_tot7 %></span></td>
-            <td><span class="num-fmt"><%= lv_grand %></span></td>
-          </tr>
-        </tfoot>
-      </table>
-      </div>
-      <% ENDIF. %>
-    </div>
+    <!-- (Tabel "Jumlah SO+Item per Buyer & Lokasi" DIHAPUS atas permintaan user;
+         KPI di atas kini memakai stok riil, panel realtime di bawah tetap.) -->
 
-    <!-- Placeholder panel realtime (DIISI Task 4 — jangan tulis polling JS di sini) -->
+    <!-- Panel realtime pergerakan barang -->
     <div class="list-container" style="padding:18px 20px;">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div class="bom-title">&#9889; Pergerakan Barang (realtime)</div>
