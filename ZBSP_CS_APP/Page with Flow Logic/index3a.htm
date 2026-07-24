@@ -231,6 +231,34 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .kpi-fill  { height:100%; background:#2563eb; border-radius:4px; transition:width .3s ease; }
     /* QI kolom diberi warna beda supaya mudah dibedakan dari tahap produksi */
     .kpi-qi .kpi-fill { background:#7c3aed; }
+    /* --- Kartu KPI dapat diklik (drill-down) --- */
+    .kpi-card { cursor:pointer; transition:box-shadow .15s ease, transform .15s ease; }
+    .kpi-card:hover { box-shadow:0 3px 10px rgba(0,0,0,0.10); transform:translateY(-1px); }
+    .kpi-card.active { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.25); }
+    .kpi-qi.active   { border-color:#7c3aed; box-shadow:0 0 0 2px rgba(124,58,237,0.25); }
+    .kpi-caret { font-size:0.6rem; color:#9ca3af; }
+    .kpi-card.active .kpi-caret { color:#2563eb; display:inline-block; transform:rotate(180deg); }
+    /* --- Panel detail drill-down --- */
+    .kpi-detail { background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin:0 0 24px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
+    .kpi-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:12px 16px; border-bottom:1px solid #f3f4f6; }
+    .kpi-detail-title { font-weight:700; color:#0f172a; }
+    .kpi-detail-sub { font-size:0.75rem; color:#6b7280; margin-top:2px; }
+    .kpi-detail-close { cursor:pointer; color:#9ca3af; font-size:1.05rem; border:none; background:none; padding:2px 6px; line-height:1; }
+    .kpi-detail-close:hover { color:#374151; }
+    .kpi-detail-scroll { max-height:420px; overflow:auto; }
+    .kpi-detail table { width:100%; border-collapse:collapse; }
+    .kpi-detail th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.72rem; text-transform:uppercase; padding:9px 14px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
+    .kpi-detail td { padding:9px 14px; font-size:0.84rem; border-bottom:1px solid #f3f4f6; color:#374151; }
+    .kpi-detail td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .kpi-detail tbody tr:hover td { background:#fafbfc; }
+    .kpi-detail .loading, .kpi-detail .err { padding:16px; font-size:0.85rem; color:#6b7280; }
+    .kpi-detail .err { color:#b91c1c; }
+    /* Filter buyer + grup No. SO di dalam panel detail */
+    .dd-filters { display:flex; flex-wrap:wrap; gap:6px; padding:10px 16px; border-bottom:1px solid #f3f4f6; }
+    .dd-btn { font-size:0.76rem; padding:5px 12px; border:1px solid #d1d5db; background:#fff; color:#374151; border-radius:999px; cursor:pointer; white-space:nowrap; }
+    .dd-btn:hover { background:#f3f4f6; }
+    .dd-btn.active { background:#2563eb; border-color:#2563eb; color:#fff; }
+    .kpi-detail tr.dd-group td { background:#eff6ff; font-weight:700; color:#1e3a8a; font-size:0.76rem; text-transform:none; padding:8px 14px; }
     /* --- Filter tanggal --- */
     .date-filter-form { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
     .date-filter-form .form-group { display:block; }
@@ -262,6 +290,28 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .feed-buyer { color:#6b7280; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .feed-gerakan { font-size:0.7rem; color:#2563eb; }
     .feed-empty { color:#9ca3af; padding:10px 6px; }
+    /* --- Bar realtime fixed di dasar layar: 1 item, berganti fade (tak scroll) --- */
+    body { padding-bottom:52px; }   /* ruang agar konten tak tertutup bar */
+    .ticker-bar { position:fixed; left:0; right:0; bottom:0; height:44px; z-index:900;
+      background:#0f172a; color:#e5e7eb; display:flex; align-items:center; box-shadow:0 -2px 8px rgba(0,0,0,0.18); }
+    .ticker-label { flex:0 0 auto; display:flex; align-items:center; gap:8px; height:100%;
+      padding:0 14px; background:#1e3a8a; font-weight:700; font-size:0.8rem; white-space:nowrap; }
+    .ticker-status { font-weight:400; font-size:0.66rem; color:#93c5fd; }
+    .ticker-viewport { flex:1 1 auto; height:100%; overflow:hidden; display:flex; align-items:center; }
+    /* satu item ditampilkan; berganti dgn transisi opacity (fade) */
+    #feed-list { display:inline-flex; align-items:center; gap:10px; padding:0 18px;
+      font-size:0.84rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      opacity:1; transition:opacity .35s ease; }
+    #feed-list.fd-out { opacity:0; }
+    .fd-time { color:#93c5fd; font-variant-numeric:tabular-nums; }
+    .fd-mat { color:#fff; font-weight:600; }
+    .fd-move { color:#cbd5e1; }
+    .fd-gerakan { color:#fcd34d; font-size:0.72rem; }
+    .fd-qty { color:#fff; font-weight:600; }
+    .fd-buyer { color:#94a3b8; }
+    .ticker-empty { color:#94a3b8; }
+    /* Hormati preferensi kurangi-gerak: fade dimatikan (ganti seketika) */
+    @media (prefers-reduced-motion: reduce) { #feed-list { transition:none; } }
   </style>
 </head>
 <body>
@@ -309,64 +359,67 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       <b><%= lv_from_disp %></b> s/d <b><%= lv_to_disp %></b>.
     </div>
 
-    <!-- KPI bar: jumlah JENIS MATERIAL berstok per bagian (hover = SLoc cakupan) -->
+    <!-- KPI bar: jumlah JENIS MATERIAL berstok per bagian (hover = SLoc cakupan;
+         KLIK kartu = tampilkan daftar material-nya di panel bawah) -->
     <div class="kpi-bar">
-      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 1000 &middot; SLoc 1D00">
-        <div class="kpi-label">Pembahanan</div>
+      <div class="kpi-card" data-sec="1" onclick="dashDetail(1,this)" title="Stok Unrestricted &mdash; Plant 1000 &middot; SLoc 1D00">
+        <div class="kpi-label">Pembahanan <span class="kpi-caret">&#9662;</span></div>
         <div class="kpi-value num-fmt"><%= lv_tot1 %></div>
         <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w1 %>%;"></div></div>
       </div>
-      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2KCS">
-        <div class="kpi-label">Central Storage</div>
+      <div class="kpi-card" data-sec="2" onclick="dashDetail(2,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2KCS">
+        <div class="kpi-label">Central Storage <span class="kpi-caret">&#9662;</span></div>
         <div class="kpi-value num-fmt"><%= lv_tot2 %></div>
         <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w2 %>%;"></div></div>
       </div>
-      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2261, 2262">
-        <div class="kpi-label">Machining</div>
+      <div class="kpi-card" data-sec="3" onclick="dashDetail(3,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2261, 2262">
+        <div class="kpi-label">Machining <span class="kpi-caret">&#9662;</span></div>
         <div class="kpi-value num-fmt"><%= lv_tot3 %></div>
         <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w3 %>%;"></div></div>
       </div>
-      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 22E2, 22E3">
-        <div class="kpi-label">Banding</div>
+      <div class="kpi-card" data-sec="4" onclick="dashDetail(4,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 22E2, 22E3">
+        <div class="kpi-label">Banding <span class="kpi-caret">&#9662;</span></div>
         <div class="kpi-value num-fmt"><%= lv_tot4 %></div>
         <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w4 %>%;"></div></div>
       </div>
-      <div class="kpi-card" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 229K">
-        <div class="kpi-label">Sanding</div>
+      <div class="kpi-card" data-sec="5" onclick="dashDetail(5,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 229K">
+        <div class="kpi-label">Sanding <span class="kpi-caret">&#9662;</span></div>
         <div class="kpi-value num-fmt"><%= lv_tot5 %></div>
         <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w5 %>%;"></div></div>
       </div>
-      <div class="kpi-card kpi-qi" title="Stok Quality Inspection &mdash; Plant 1000 &middot; SLoc 1D00">
-        <div class="kpi-label">QI 1000</div>
+      <div class="kpi-card kpi-qi" data-sec="6" onclick="dashDetail(6,this)" title="Stok Quality Inspection &mdash; Plant 1000 &middot; SLoc 1D00">
+        <div class="kpi-label">QI 1000 <span class="kpi-caret">&#9662;</span></div>
         <div class="kpi-value num-fmt"><%= lv_tot6 %></div>
         <div class="kpi-cap">material dlm QI</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w6 %>%;"></div></div>
       </div>
-      <div class="kpi-card kpi-qi" title="Stok Quality Inspection &mdash; Plant 2000 &middot; SLoc 2KCS, 2261, 2262, 22E2, 22E3, 229K">
-        <div class="kpi-label">QI 2000</div>
+      <div class="kpi-card kpi-qi" data-sec="7" onclick="dashDetail(7,this)" title="Stok Quality Inspection &mdash; Plant 2000 &middot; SLoc 2KCS, 2261, 2262, 22E2, 22E3, 229K">
+        <div class="kpi-label">QI 2000 <span class="kpi-caret">&#9662;</span></div>
         <div class="kpi-value num-fmt"><%= lv_tot7 %></div>
         <div class="kpi-cap">material dlm QI</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w7 %>%;"></div></div>
       </div>
     </div>
 
+    <!-- Panel drill-down: diisi via AJAX (dash_detail.htm?sec=N) saat kartu diklik -->
+    <div id="kpi-detail" class="kpi-detail" style="display:none;"></div>
+
     <!-- (Tabel "Jumlah SO+Item per Buyer & Lokasi" DIHAPUS atas permintaan user;
          KPI di atas kini memakai stok riil, panel realtime di bawah tetap.) -->
 
-    <!-- Panel realtime pergerakan barang -->
-    <div class="list-container" style="padding:18px 20px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div class="bom-title">&#9889; Pergerakan Barang (realtime)</div>
-        <span id="feed-status" style="font-size:0.72rem;color:#9ca3af;">&mdash;</span>
-      </div>
-      <div id="feed-list"></div>
-    </div>
+    <!-- (Panel realtime dipindah ke ticker fixed di dasar layar, lihat #ticker-bar) -->
 
+  </div>
+
+  <!-- Ticker realtime: item pergerakan berjalan kanan->kiri, fixed di dasar layar -->
+  <div class="ticker-bar" id="ticker-bar" title="Arahkan kursor untuk menjeda">
+    <div class="ticker-label">&#9889; Pergerakan Barang <span id="feed-status" class="ticker-status">&mdash;</span></div>
+    <div class="ticker-viewport"><div id="feed-list"></div></div>
   </div>
 
   <script>
@@ -393,21 +446,52 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
     /* --- Realtime feed: polling dash_feed.htm tiap 15 dtk --- */
     function feedEsc(s){ var d=document.createElement('div'); d.textContent = (s==null?'':String(s)); return d.innerHTML; }
-    function renderFeed(rows){
+    /* Bar realtime: satu item, berganti fade tiap ~4 dtk (tak scroll).
+       Data (rows) di-refresh tiap 15 dtk oleh loadFeed; rotasi berjalan
+       terpisah & pakai data terbaru. Jeda saat kursor hover. */
+    var _fdRows = [], _fdIdx = 0, _fdPaused = false, _fdTimer = null;
+    function feedItemHtml(r){
+      return '<span class="fd-time">'+feedEsc(r.waktu)+'</span>'
+        + '<span class="fd-mat">'+feedEsc(r.matnr)+' '+feedEsc(r.maktx)+'</span>'
+        + '<span class="fd-move">'+feedEsc(r.from)+' &rarr; '+feedEsc(r.to)+'</span>'
+        + '<span class="fd-gerakan">'+feedEsc(r.gerakan)+'</span>'
+        + '<span class="fd-qty">'+feedEsc(r.qty)+'</span>'
+        + '<span class="fd-buyer">'+feedEsc(r.buyer)+'</span>';
+    }
+    function setFeedItem(html, noFade){
       var el = document.getElementById('feed-list');
       if(!el) return;
-      if(!rows || !rows.length){ el.innerHTML = '<div class="feed-empty">Belum ada pergerakan pada window terkini.</div>'; return; }
-      var h = '';
-      rows.forEach(function(r){
-        h += '<div class="feed-item">'
-          +    '<span class="feed-time">'+feedEsc(r.waktu)+'</span>'
-          +    '<span class="feed-mat">'+feedEsc(r.matnr)+' &middot; '+feedEsc(r.maktx)+'</span>'
-          +    '<span class="feed-move">'+feedEsc(r.from)+' &rarr; '+feedEsc(r.to)+' <span class="feed-gerakan">'+feedEsc(r.gerakan)+'</span></span>'
-          +    '<span class="feed-qty">'+feedEsc(r.qty)+'</span>'
-          +    '<span class="feed-buyer">'+feedEsc(r.buyer)+'</span>'
-          +  '</div>';
-      });
-      el.innerHTML = h;
+      if(noFade){ el.classList.remove('fd-out'); el.innerHTML = html; return; }
+      el.classList.add('fd-out');            // fade-out
+      setTimeout(function(){                 // ganti isi lalu fade-in
+        el.innerHTML = html;
+        el.classList.remove('fd-out');
+      }, 350);
+    }
+    function showFeedItem(){
+      if(!_fdRows.length) return;
+      if(_fdIdx >= _fdRows.length) _fdIdx = 0;
+      setFeedItem(feedItemHtml(_fdRows[_fdIdx]));
+    }
+    function startFeedRotate(){
+      if(_fdTimer) return;                   // sudah jalan
+      _fdTimer = setInterval(function(){
+        if(_fdPaused || _fdRows.length < 2) return;
+        _fdIdx = (_fdIdx + 1) % _fdRows.length;
+        showFeedItem();
+      }, 4000);
+    }
+    function renderFeed(rows){
+      var wasEmpty = (_fdRows.length === 0);
+      _fdRows = rows || [];
+      if(!_fdRows.length){
+        _fdIdx = 0;
+        setFeedItem('<span class="ticker-empty">Belum ada pergerakan pada window terkini.</span>', true);
+        return;
+      }
+      if(_fdIdx >= _fdRows.length) _fdIdx = 0;
+      if(wasEmpty){ showFeedItem(); }        // tampilkan segera saat pertama ada data
+      startFeedRotate();
     }
     function loadFeed(){
       fetch('dash_feed.htm', { headers: { 'Accept': 'application/json' }, cache: 'no-store' })
@@ -424,6 +508,100 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     }
     loadFeed();
     setInterval(loadFeed, 15000);
+
+    /* Jeda rotasi saat kursor di atas bar (biar bisa dibaca) */
+    (function(){
+      var bar = document.getElementById('ticker-bar');
+      if(!bar) return;
+      bar.addEventListener('mouseenter', function(){ _fdPaused = true; });
+      bar.addEventListener('mouseleave', function(){ _fdPaused = false; });
+    })();
+
+    /* --- Drill-down KPI: klik kartu -> daftar material berstok (AJAX) --- */
+    function dashDetail(sec, card){
+      var panel = document.getElementById('kpi-detail');
+      var cards = document.querySelectorAll('.kpi-card');
+      // toggle: klik kartu yang sedang terbuka -> tutup
+      if (panel.getAttribute('data-open') === String(sec) && panel.style.display !== 'none') {
+        dashDetailClose(); return;
+      }
+      cards.forEach(function(c){ c.classList.remove('active'); });
+      card.classList.add('active');
+      panel.setAttribute('data-open', String(sec));
+      var label = card.querySelector('.kpi-label')
+        ? card.querySelector('.kpi-label').textContent.replace(/▾/g,'').trim()
+        : ('Bagian ' + sec);
+      var tip = card.getAttribute('title') || '';
+      panel.style.display = 'block';
+      panel.innerHTML = '<div class="loading">Memuat data ' + feedEsc(label) + '&hellip;</div>';
+      fetch('dash_detail.htm?sec=' + encodeURIComponent(sec), { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(data){ renderDetail(panel, label, tip, data); })
+        .catch(function(){ panel.innerHTML = '<div class="err">Gagal memuat detail. Coba klik lagi.</div>'; });
+    }
+    /* State drill-down: disimpan agar filter buyer bisa re-render tanpa fetch ulang */
+    var _ddPanel=null, _ddRows=[], _ddLabel='', _ddTip='', _ddCount=0,
+        _ddFilter='__all__', _ddBuyerList=['__all__'];
+    function renderDetail(panel, label, tip, data){
+      _ddPanel = panel;
+      _ddRows  = (data && data.rows) ? data.rows : [];
+      _ddCount = (data && typeof data.matcount !== 'undefined') ? data.matcount : _ddRows.length;
+      _ddLabel = label; _ddTip = tip; _ddFilter = '__all__';
+      dashRender();
+    }
+    function dashSetBuyer(b){ _ddFilter = b; dashRender(); }
+    function dashRender(){
+      var panel = _ddPanel; if(!panel) return;
+      var rows = _ddRows;
+      var h = '<div class="kpi-detail-head"><div>'
+        + '<div class="kpi-detail-title">' + feedEsc(_ddLabel) + '</div>'
+        + '<div class="kpi-detail-sub">' + feedEsc(_ddTip) + ' &middot; <b>' + _ddCount + '</b> jenis material (' + rows.length + ' baris stok)</div>'
+        + '</div><button class="kpi-detail-close" onclick="dashDetailClose()" title="Tutup">&#10007;</button></div>';
+      if(!rows.length){ panel.innerHTML = h + '<div class="loading">Tidak ada material berstok di bagian ini.</div>'; return; }
+      // daftar buyer unik -> tombol filter
+      var seen={}, buyers=[];
+      rows.forEach(function(r){ var b=r.buyer||''; if(!seen[b]){ seen[b]=1; buyers.push(b); } });
+      buyers.sort();
+      _ddBuyerList = ['__all__'].concat(buyers);
+      h += '<div class="dd-filters">';
+      _ddBuyerList.forEach(function(b, i){
+        var lbl = (b==='__all__') ? 'Semua' : b;
+        var act = (b===_ddFilter) ? ' active' : '';
+        h += '<button class="dd-btn'+act+'" data-b="'+i+'">'+feedEsc(lbl)+'</button>';
+      });
+      h += '</div>';
+      // baris terfilter -> urut & KELOMPOKKAN per No. SO
+      var fr = (_ddFilter==='__all__') ? rows.slice() : rows.filter(function(r){ return (r.buyer||'')===_ddFilter; });
+      fr.sort(function(a,b){
+        var x=(a.so||''), y=(b.so||''); if(x<y)return -1; if(x>y)return 1;
+        var m=(a.matnr||''), n=(b.matnr||''); return m<n?-1:(m>n?1:0);
+      });
+      h += '<div class="kpi-detail-scroll"><table><thead><tr>'
+        +  '<th>Material</th><th>Deskripsi</th><th>SLoc</th><th>Qty</th></tr></thead><tbody>';
+      var lastSo=null;
+      fr.forEach(function(r){
+        var so = r.so || '-';
+        if(so!==lastSo){
+          lastSo = so;
+          var head = (so==='-') ? 'Tanpa SO (stok bebas)' : ('No. SO ' + feedEsc(so));
+          if(r.buyer && r.buyer!=='(stok bebas)') head += ' &middot; ' + feedEsc(r.buyer);
+          h += '<tr class="dd-group"><td colspan="4">' + head + '</td></tr>';
+        }
+        h += '<tr><td>'+feedEsc(r.matnr)+'</td><td>'+feedEsc(r.maktx)+'</td><td>'+feedEsc(r.lgort)+'</td><td class="num">'+feedEsc(r.qty)+'</td></tr>';
+      });
+      h += '</tbody></table></div>';
+      panel.innerHTML = h;
+      // pasang handler tombol (hindari escaping nama buyer di atribut onclick)
+      panel.querySelectorAll('.dd-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){ dashSetBuyer(_ddBuyerList[+btn.getAttribute('data-b')]); });
+      });
+    }
+    function dashDetailClose(){
+      var panel = document.getElementById('kpi-detail');
+      panel.style.display = 'none';
+      panel.setAttribute('data-open', '');
+      document.querySelectorAll('.kpi-card').forEach(function(c){ c.classList.remove('active'); });
+    }
   </script>
   <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %></div>
 </body>
