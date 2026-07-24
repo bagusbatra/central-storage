@@ -1,384 +1,1283 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Page — Monitoring Produksi, Plant 2000 Surabaya
+*& BSP Page — Pelacakan Material per SO+Item (HALAMAN BARU, mandiri)
 *&---------------------------------------------------------------------*
-*& D23 — status SO kini 4 TAHAP: Pembahanan / Produksi / Ready Assy / Selesai.
-"     "Finish" DIGANTI NAMA jadi "Ready Assy" dan dipisah dari "Selesai" (lihat
-"     catatan lengkap D23 di index.htm) — Ready Assy = komponen sampai tahap
-"     Finish (EB2) tapi order utamanya BELUM tuntas; Selesai = BENAR-BENAR
-"     tuntas (order utama atau order Finish whitelist-nya sendiri Delivered=
-"     Target).
-*& D24 — filter pencarian TAMBAH "Nomor Item" (VBAP-POSNR), berdampingan dgn
-"     Nomor SO. Mendukung angka pendek (mis. "10" -> otomatis dicocokkan
-"     dgn "000010") maupun pencarian substring.
-*& D25 — menu "Transfer" DISEMBUNYIKAN dari navbar (permintaan user).
+*& D44 — HALAMAN INI SEKARANG ENTRY POINT APLIKASI (index.htm).
+"     Isi lama index.htm (Dashboard Statistik & Grafik) DIPENSIUNKAN atas
+"     permintaan user; salinannya ada di index_backup.htm dan di git
+"     (commit terakhir yg memuatnya: b2a039f).
+"     Konsekuensi yang sudah disesuaikan:
+"       - navbar: entri "Dashboard" DIHAPUS, "Pelacakan" jadi entri pertama
+"         & aktif, href-nya index.htm (bukan pelacakan.htm lagi)
+"       - D45: entri "Monitoring" & "Riwayat" IKUT DIHAPUS (permintaan user)
+"         -> navbar halaman ini tinggal 1 entri. monitoring.htm & riwayat.htm
+"         TETAP ADA & masih saling menaut; dari sini cuma tidak dijangkau.
+"         Jalan balik ke sini dari kedua halaman itu tetap ada (tombol
+"         "Pelacakan" di navbar mereka).
+"       - semua form action & link Reset diarahkan ke index.htm
+"       - selector reset sessionStorage ikut jadi a[href="index3.htm"]
+"         (tetap discope ke form.parentNode, jadi navbar tidak terjaring)
+"       - userLogout() -> index3.htm?~logoff TETAP, sekarang mendarat di sini
+"     ⚠️ pelacakan.htm SENGAJA DIPERTAHANKAN (keputusan user) — file itu
+"     duplikat isi halaman ini. Perbaikan bug WAJIB diterapkan ke KEDUANYA,
+"     kalau tidak keduanya akan menyimpang diam-diam.
+"     ⚠️ STORE_KEY sessionStorage tetap 'pelacakan3_trs_form' — draft form
+"     Transfer Posting jadi TERBAGI antara index.htm & pelacakan.htm.
 *&---------------------------------------------------------------------*
-CONSTANTS: lc_plant TYPE vbap-werks VALUE '2000'.
+*& D47 — STATUS KOMPONEN BOM DIROMBAK TOTAL: dari tebak-tebak saldo stok
+"     level PLANT (tidak bisa bedakan SLoc konsumsi vs SLoc lain, DAN query
+"     fallback "order terbuka" GLOBAL tanpa scope SO/Item — bisa nangkap
+"     order milik SO lain utk material yg sama, sumber badge "Sedang
+"     dibuat" yg salah kaprah) MENJADI berbasis RESB (BDMNG/ENMNG) yg
+"     discope PERSIS ke AUFNR order induk komponen tsb. RESB adalah
+"     mekanisme SAP-native yg menghubungkan komponen ke production order
+"     spesifik pemiliknya; MSEG movement 261 (goods issue produksi) SELALU
+"     bawa RSNUM = nomor reservasi RESB, jadi ENMNG persis mencerminkan
+"     "sudah dimakan berapa" secara real & tidak ambigu.
+"     Field baru: ty_bomcomp-parent_aufnr (nomor order induk, kunci ke RESB).
+"     Badge baru: Sudah Dipakai Penuh / Sebagian Terpakai (+sisa qty) /
+"     Siap Dipakai / Masih di Plant Lain / Sedang Dibuat / Belum Tersedia /
+"     Stok Tersedia & Tidak Ada Data (fallback kalau RESB kosong).
+"     Query fallback stok "order terbuka" SEKARANG discope ke kdauf/kdpos
+"     (SO+Item yg sedang dilihat) — perbaikan bug lama.
+"     ⚠️ Del QTY di tabel order utama (Pembahanan/Produksi) TIDAK diubah —
+"     tetap WEMNG/PSMNG apa adanya (keputusan eksplisit user, D47).
+*&---------------------------------------------------------------------*
+*& D48 — PERBAIKAN BUG DI D47: filter "AND xloek = space" pada query RESB
+"     JUSTRU MEMBUANG baris paling penting — order yg sudah TECO/selesai
+"     100% umumnya py baris RESB dgn xloek='X' (penutupan administratif
+"     reservasi), BUKAN indikasi barang belum dipakai. Akibatnya order yg
+"     sudah tuntas malah tampil "Tidak Ada Data" (dilaporkan user dgn
+"     screenshot: material 20086291 100% selesai, tapi komponennya
+"     RWPNPLY0011 tampil "Tidak Ada Data").
+"     FIX: filter xloek dihapus dari WHERE (ambil SEMUA baris RESB), lalu
+"     dilacak field any_open (true kalau MINIMAL SATU baris masih xloek
+"     space). Badge sekarang membedakan 4 kombinasi ENMNG vs BDMNG × status
+"     buka/tutup reservasi — lihat percabangan lengkap di komentar dalam
+"     LOOP AT lt_bomcomp ASSIGNING <bc> di bawah. Badge baru: "Sudah Dipakai
+"     (Reservasi Ditutup)" & "Reservasi Dibatalkan" (kelas CSS baru
+"     cst-gray) utk kasus reservasi tertutup yg sebelumnya tidak tertangani.
+*&---------------------------------------------------------------------*
+*& REVISI 2 — kolom diganti total sesuai permintaan user (referensi COOIS):
+"     Material | No Material | Target QTY | Del QTY | Progres | Sloc
+"
+"   Sumber data GANTI dari agregasi net MSEG (revisi 1) menjadi AFPO per
+"   ORDER — SATU BARIS = SATU ORDER produksi, PERSIS gaya COOIS:
+"     Target QTY = AFPO-PSMNG, Del QTY = AFPO-WEMNG, Sloc = AFPO-LGORT.
+"   Ini BUKAN "mesin checkpoint" yang direvisi-1 sengaja dihindari (itu soal
+"   RESB+MSEG dot_stages/cp_qty) — AFPO-PSMNG/WEMNG per order adalah data
+"   MENTAH order itu sendiri, pola yg SAMA dipakai "order utama" di
+"   monitoring_bom.htm. Progres = WEMNG/PSMNG*100, warnanya PINJAM fungsi
+"   pemetaan warna zcl_cs_util (prog_bar_class/prog_txt_class/css_pct) —
+"   ini murni utilitas persen->CSS, bukan logika checkpoint.
+"
+"   Lokasi yang DIIZINKAN tampil (SATU-SATUNYA scope; filter di WHERE AFPO):
+"     Tahap PEMBAHANAN : Plant 1000 -> SLoc 1D00
+"     Tahap PRODUKSI   : Plant 2000 -> SLoc 2KCS, 2261, 2262, 22E2, 22E3, 229K
+"
+"   ⚠️ ASUMSI FIELD: AFPO-LGORT dipakai sbg "Stor. Loc." (selaras kolom yg
+"   sama di COOIS). Field ini belum pernah dipakai di file lain pada app ini
+"   sebelumnya (ty_afpo_pre di monitoring_bom.htm cuma pakai PWERK) — kalau
+"   ternyata nama field-nya beda saat aktivasi, laporkan pesan error
+"   field-nya, akan saya perbaiki.
+"   ⚠️ Kode SLoc "22E3" diketik apa adanya sesuai instruksi user — TIDAK ADA
+"   di daftar konstanta ZCL_CS_UTIL manapun. Mohon dikonfirmasi bila salah ketik.
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_werks_1000 TYPE afpo-pwerk VALUE '1000',
+           lc_werks_2000 TYPE afpo-pwerk VALUE '2000',
+           lc_lgort_1d00 TYPE afpo-lgort VALUE '1D00'.
 
-TYPES: BEGIN OF ty_cust_name,
-         kunnr TYPE kna1-kunnr,
-         name1 TYPE kna1-name1,
-       END OF ty_cust_name.
-
-TYPES: BEGIN OF ty_so_stat,
-         vbeln      TYPE vbap-vbeln,
-         total      TYPE i,
-         pembahanan TYPE i,
-         produksi   TYPE i,
-         readyassy  TYPE i,
-         selesai    TYPE i,
-       END OF ty_so_stat.
-
-" === D21 (Opsi B) — order UTAMA, penentu genuinely-selesai (D23). ===
-TYPES: BEGIN OF ty_main_ord,
+" Satu baris = SATU ORDER (gaya COOIS) — Target/Del/Sloc milik order itu
+" sendiri, TIDAK diagregasi lintas order. stlnr = BOM number MILIK order ini
+" SENDIRI (D32, lihat catatan di bawah) — PERSIS field yg ditampilkan COOIS
+" di kolom "BOM numb.".
+TYPES: BEGIN OF ty_ord,
          kdauf TYPE afpo-kdauf,
          kdpos TYPE afpo-kdpos,
+         aufnr TYPE afpo-aufnr,
+         matnr TYPE afpo-matnr,
+         maktx TYPE makt-maktx,
          psmng TYPE afpo-psmng,
          wemng TYPE afpo-wemng,
-       END OF ty_main_ord.
-TYPES ty_main_ord_tab TYPE SORTED TABLE OF ty_main_ord WITH UNIQUE KEY kdauf kdpos.
+         meins TYPE afpo-meins,
+         pwerk TYPE afpo-pwerk,
+         lgort TYPE afpo-lgort,
+         stlnr TYPE afko-stlnr,   " D33: STLNR ada di AFKO (header order), BUKAN AFPO
+       END OF ty_ord.
 
-" === D23: tahap kini 1=Pembahanan 2=Produksi 3=Ready Assy 4=Selesai. ===
-TYPES: BEGIN OF ty_item_stage,
-         kdauf   TYPE afpo-kdauf,
-         kdpos   TYPE afpo-kdpos,
-         has_pmb TYPE abap_bool,
-         t_pmb   TYPE afpo-psmng,
-         d_pmb   TYPE afpo-wemng,
-         has_prd TYPE abap_bool,
-         t_prd   TYPE afpo-psmng,
-         d_prd   TYPE afpo-wemng,
-         has_fin TYPE abap_bool,
-         t_fin   TYPE afpo-psmng,
-         d_fin   TYPE afpo-wemng,
-         stage   TYPE i,
-       END OF ty_item_stage.
-TYPES ty_item_stage_tab TYPE SORTED TABLE OF ty_item_stage WITH UNIQUE KEY kdauf kdpos.
+DATA: lt_ord   TYPE TABLE OF ty_ord,
+      ls_ord   TYPE ty_ord,
+      lt_makt  TYPE TABLE OF makt,
+      ls_makt  TYPE makt.
+FIELD-SYMBOLS <o> TYPE ty_ord.
 
-TYPES: BEGIN OF ty_afpo_dispo,
-         kdauf TYPE afpo-kdauf,
-         kdpos TYPE afpo-kdpos,
-         psmng TYPE afpo-psmng,
-         wemng TYPE afpo-wemng,
-         dispo TYPE afko-dispo,
-       END OF ty_afpo_dispo.
+DATA: lv_ui_so     TYPE string,
+      lv_ui_item   TYPE string,
+      lv_so        TYPE vbak-vbeln,
+      lv_item      TYPE vbap-posnr,
+      lv_has_input TYPE abap_bool,
+      lv_so_found  TYPE abap_bool,
+      ls_vbap_hdr  TYPE vbap,
+      lv_layout_user TYPE string.
 
-DATA: lt_main_ord    TYPE ty_main_ord_tab,
-      lt_main_raw    TYPE TABLE OF ty_main_ord,
-      ls_main_ord    TYPE ty_main_ord,
-      lv_main_ok     TYPE abap_bool,
-      lv_fin_ok      TYPE abap_bool,
-      lv_done_ok     TYPE abap_bool.
-FIELD-SYMBOLS <mo> TYPE ty_main_ord.
+" === D35: Info Order (tab baru) — header SO (VBAK) + customer (KNA1). Query
+"     RINGAN, cuma SELECT SINGLE — sesuai semangat halaman ini (data mentah
+"     langsung, tanpa mesin apa pun). ===
+DATA: ls_vbak_hdr TYPE vbak,
+      ls_kna1_hdr TYPE kna1,
+      lv_hdr_date TYPE string.
 
-DATA: lt_local_hdr   TYPE TABLE OF vbak,
-      lt_temp_vbap   TYPE TABLE OF vbap,
-      lt_cust_names  TYPE TABLE OF ty_cust_name,
-      lt_kna1_srch   TYPE TABLE OF ty_cust_name,
-      lt_so_stat     TYPE TABLE OF ty_so_stat,
-      lt_item_stage  TYPE ty_item_stage_tab,
-      ls_item_stage  TYPE ty_item_stage,
-      lt_afpo_dispo  TYPE TABLE OF ty_afpo_dispo,
-      ls_afpo_dispo  TYPE ty_afpo_dispo,
-      lr_wf_dispo    TYPE zcl_cs_util=>ty_dispo_range,
-      ls_hdr_row     TYPE vbak,
-      ls_vbap_row    TYPE vbap,
-      ls_cust_name   TYPE ty_cust_name,
-      ls_kna1_srch   TYPE ty_cust_name,
-      ls_so_stat     TYPE ty_so_stat,
-      ls_so_stat_r   TYPE ty_so_stat.
-FIELD-SYMBOLS <ist> TYPE ty_item_stage.
+" === D36 / D49-FIX: Status SO (header, GBSTK) & Status Item (Overall — GBSTA) —
+"     GBSTA/GBSTK domain STATV: A=Belum, B=Sebagian, C=Selesai Diproses.
+"     SUMBER DIPERBAIKI: dari VBAK-GBSTK / VBAP-GBSTA (lokasi field status di
+"     S/4HANA), BUKAN lagi VBUK/VBUP yang kosong di sistem ini (lihat catatan
+"     lengkap di blok CASE di bawah). Tidak perlu SELECT sendiri — field ikut
+"     numpang di dua SELECT VBAK/VBAP yang sudah ada. ===
+DATA: lv_hdr_stat_lbl TYPE string,
+      lv_itm_stat_lbl TYPE string,
+      lv_hdr_stat_tip TYPE string,   " #5: tooltip penjelas status
+      lv_itm_stat_tip TYPE string.
 
-DATA: lv_dd            TYPE string,
-      lv_item_cnt      TYPE i,
-      lv_local_cnt     TYPE i,
-      lv_start         TYPE i,
-      lv_is_srch       TYPE abap_bool,
-      lv_name_no_match TYPE abap_bool,
-      lv_cust_name_dsp TYPE kna1-name1,
-      lv_layout_user   TYPE string,
-      lv_border_cls    TYPE string,   " D23: nama class so-bl-* (bukan lagi inline color)
-      lv_bg_color      TYPE string,   " D23: inline badge bg
-      lv_fg_color      TYPE string,   " D23: inline badge text
-      lv_stat_label    TYPE string,
-      lv_stage         TYPE i.
+" Variabel render progress bar (dipakai kedua tab)
+DATA: lv_prog TYPE zcl_cs_util=>ty_pct,
+      lv_bcls TYPE string,
+      lv_pcls TYPE string,
+      lv_has_prd TYPE abap_bool.
 
-DATA: lv_ui_vbeln     TYPE string,
-      lv_ui_posnr     TYPE string,   " D24
-      lv_posnr_exact  TYPE vbap-posnr,
-      lv_posnr_pat    TYPE string,
-      lv_ui_kunnr     TYPE string,
-      lv_ui_name      TYPE string,
-      lv_ui_edf       TYPE string,
-      lv_ui_edt       TYPE string,
-      lv_erdat_from   TYPE d,
-      lv_erdat_to     TYPE d,
-      lv_search_so    TYPE vbak-vbeln,
-      lv_search_kun   TYPE vbak-kunnr,
-      lv_name_pattern TYPE string.
+" === D39: Riwayat Pergerakan (MSEG+MKPF) & Stok Saat Ini (MSKA+MARD) ===
+" Kedua tab baru ini menjawab keterbatasan tab Pembahanan/Produksi yang
+" cuma baca AFPO — begitu barang di-transfer via MvT 301/311, order-nya
+" tidak berubah, jadi pergerakan pasca-receipt tidak terlihat. MSEG catat
+" SETIAP gerakan barang; MSKA+MARD tunjukkan posisi stok fisik saat ini.
+"
+" === D40: Enhancement UI Riwayat (6 saran user) ===
+" #1: gabung pasangan OUT+IN (per mblnr+matnr+charg) jadi 1 baris ty_hist_pair
+" #2: kolom bwart_lbl untuk label deskriptif (Cross Plant/In Plant/Release QI)
+"     + bwart_class untuk warna badge di UI
+" #3-6: dilakukan sepenuhnya di sisi UI/JS (group tanggal, filter, stacked
+"       material col, hover-only detail)
+TYPES: BEGIN OF ty_hist_pair,
+         mblnr TYPE mseg-mblnr,   " Material Document (identifier pair)
+         mjahr TYPE mseg-mjahr,
+         budat TYPE mkpf-budat,
+         budat_str TYPE string,   " tanggal string utk group header UI
+         cpudt TYPE mkpf-cpudt,
+         cputm TYPE mkpf-cputm,
+         usnam TYPE mkpf-usnam,
+         bwart TYPE mseg-bwart,
+         bwart_lbl TYPE string,   " label deskriptif: Cross Plant/In Plant/QI/etc
+         bwart_cls TYPE string,   " kelas warna badge (blue/yellow/purple/gray)
+         matnr TYPE mseg-matnr,
+         maktx TYPE makt-maktx,
+         charg TYPE mseg-charg,
+         menge TYPE mseg-menge,
+         meins TYPE mseg-meins,
+         from_werks TYPE mseg-werks,
+         from_lgort TYPE mseg-lgort,
+         to_werks   TYPE mseg-werks,
+         to_lgort   TYPE mseg-lgort,
+         is_paired  TYPE abap_bool,   " true kalau OUT+IN keduanya ada
+       END OF ty_hist_pair.
 
-DATA: lr_vbeln TYPE RANGE OF vbak-vbeln,
-      ls_vbeln LIKE LINE OF lr_vbeln,
-      lr_kunnr TYPE RANGE OF vbak-kunnr,
-      ls_kunnr LIKE LINE OF lr_kunnr,
-      lt_excl_cust TYPE TABLE OF kna1-kunnr,
-      ls_excl_cust TYPE kna1-kunnr.
+TYPES: BEGIN OF ty_stok,
+         matnr TYPE matnr,
+         maktx TYPE makt-maktx,
+         werks TYPE werks_d,
+         lgort TYPE lgort_d,
+         charg TYPE charg_d,
+         labst TYPE p LENGTH 13 DECIMALS 3,   " Unrestricted
+         insme TYPE p LENGTH 13 DECIMALS 3,   " Quality Insp
+         speme TYPE p LENGTH 13 DECIMALS 3,   " Blocked
+         umlme TYPE p LENGTH 13 DECIMALS 3,   " In transit
+         meins TYPE meins,
+         source TYPE string,   " 'MSKA' (SO-stock) / 'MARD' (free)
+       END OF ty_stok.
+
+DATA: lt_hist TYPE TABLE OF ty_hist_pair,
+      ls_hist TYPE ty_hist_pair,
+      lt_hist_matkeys TYPE TABLE OF matnr,
+      lt_hist_makt    TYPE TABLE OF makt,
+      lt_stok TYPE TABLE OF ty_stok,
+      ls_stok TYPE ty_stok.
+FIELD-SYMBOLS <h> TYPE ty_hist_pair.
+
+" === D32 — AKAR MASALAH ekspand BOM tak pernah ketemu, DITEMUKAN: kolom
+"     "BOM numb." di COOIS BUKAN hasil re-lookup ke Material Master
+"     (MAST/STLAN/STLAL, gaya CS03) seperti asumsi Revisi 3/D31 sebelumnya —
+"     itu ADALAH field STLNR: BOM number yang SUDAH MELEKAT LANGSUNG di
+"     order itu sendiri (persis satu order yg sama dgn kolom Order/Material/
+"     Target Qty/Del qty yg sudah benar). Mencari ulang lewat MAST secara
+"     generik per-material BISA salah pilih STLAN/STLAL yg beda dari yg
+"     sebenarnya dipakai order itu, atau gagal total tanpa alasan jelas
+"     (persis yg dilaporkan user).
+"     D33 — KOREKSI: STLNR TERNYATA ada di AFKO (header order), BUKAN AFPO
+"     (item order) — asumsi awal D32 salah tabel (aktivasi gagal: "no
+"     component STLNR" di AFPO). Query AFPO diubah jadi JOIN ke AFKO khusus
+"     utk ambil k~stlnr, field lain (Target/Del/Sloc) TETAP dari AFPO seperti
+"     semula.
+"     STPO dicari PERSIS berdasar STLNR itu. TIDAK ADA LAGI query MAST/
+"     deteksi Plant-Alternative — lebih ringan & pasti cocok dgn COOIS.
+"     Order yang STLNR-nya kosong (order tanpa BOM sendiri, mis. item
+"     dagang/pembelian) akan menampilkan pesan jelas, BUKAN dianggap error.
+TYPES: BEGIN OF ty_bomcomp,
+         stlnr  TYPE stpo-stlnr,
+         posnr  TYPE stpo-posnr,
+         idnrk  TYPE stpo-idnrk,
+         cmaktx TYPE makt-maktx,
+         menge  TYPE stpo-menge,
+         meins  TYPE stpo-meins,
+         idnrk_disp   TYPE string,      " #1: idnrk tanpa leading zeros (display)
+         parent_pwerk TYPE afpo-pwerk,  " #7: plant order pemilik BOM (konteks status)
+         parent_aufnr TYPE afpo-aufnr,  " D47: nomor order induk, kunci ke RESB
+         status_lbl   TYPE string,      " #7: label badge status komponen
+         status_cls   TYPE string,      " #7: kelas warna badge
+         status_tip   TYPE string,      " #7: tooltip penjelas + detail
+       END OF ty_bomcomp.
+
+DATA: lt_stlnr TYPE TABLE OF stpo-stlnr,
+      lt_stpo     TYPE TABLE OF stpo,
+      ls_stpo     TYPE stpo,
+      lt_bomcomp  TYPE TABLE OF ty_bomcomp,
+      ls_bomcomp  TYPE ty_bomcomp,
+      lt_cmakt    TYPE TABLE OF makt,
+      ls_cmakt    TYPE makt,
+      lv_bidx2    TYPE i,
+      lv_has_bom  TYPE abap_bool.
+FIELD-SYMBOLS <bc> TYPE ty_bomcomp.   " D34: enrichment BOM aman dr bug sy-tabix
 
 lv_layout_user = sy-uname.
-lv_ui_vbeln    = request->get_form_field( 'so_num' ).
-lv_ui_posnr    = request->get_form_field( 'item_num' ).   " D24
-lv_ui_kunnr    = request->get_form_field( 'cust_num' ).
-lv_ui_name     = request->get_form_field( 'cust_name' ).
-lv_ui_edf      = request->get_form_field( 'date_from' ).
-lv_ui_edt      = request->get_form_field( 'date_to' ).
+lv_ui_so       = request->get_form_field( 'so_num' ).
+lv_ui_item     = request->get_form_field( 'item_num' ).
 
-IF lv_ui_edf IS NOT INITIAL AND STRLEN( lv_ui_edf ) = 10.
-  lv_erdat_from = lv_ui_edf(4) && lv_ui_edf+5(2) && lv_ui_edf+8(2).
-ELSEIF lv_ui_vbeln IS NOT INITIAL OR lv_ui_posnr IS NOT INITIAL.
-  " Pencarian by Nomor SO/Item tanpa tanggal: jangan batasi tanggal agar
-  " dokumen lama tetap ketemu.
-  lv_erdat_from = '19000101'.
-ELSE.
-  lv_erdat_from = sy-datum - 30.
-ENDIF.
+IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
+  lv_has_input = abap_true.
 
-IF lv_ui_edt IS NOT INITIAL AND STRLEN( lv_ui_edt ) = 10.
-  lv_erdat_to = lv_ui_edt(4) && lv_ui_edt+5(2) && lv_ui_edt+8(2).
-ELSE.
-  lv_erdat_to = sy-datum.
-ENDIF.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING input  = lv_ui_so
+    IMPORTING output = lv_so.
 
-lv_is_srch = abap_true.
-
-  IF lv_ui_vbeln IS NOT INITIAL.
-    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-      EXPORTING input  = lv_ui_vbeln
-      IMPORTING output = lv_search_so.
-    ls_vbeln-sign   = 'I'.
-    ls_vbeln-option = 'EQ'.
-    ls_vbeln-low    = lv_search_so.
-    APPEND ls_vbeln TO lr_vbeln.
-    ls_vbeln-option = 'CP'.
-    ls_vbeln-low    = '*' && lv_ui_vbeln && '*'.
-    APPEND ls_vbeln TO lr_vbeln.
+  CLEAR lv_item.
+  IF lv_ui_item CO '0123456789'.
+    lv_item = lv_ui_item.   " numerik -> otomatis zero-pad ke tipe NUMC(6)
   ENDIF.
 
-  IF lv_ui_kunnr IS NOT INITIAL.
-    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
-      EXPORTING input  = lv_ui_kunnr
-      IMPORTING output = lv_search_kun.
-    ls_kunnr-sign   = 'I'.
-    ls_kunnr-option = 'EQ'.
-    ls_kunnr-low    = lv_search_kun.
-    APPEND ls_kunnr TO lr_kunnr.
-    ls_kunnr-option = 'CP'.
-    ls_kunnr-low    = '*' && lv_ui_kunnr && '*'.
-    APPEND ls_kunnr TO lr_kunnr.
-  ENDIF.
+  " Validasi ringan: pastikan SO+Item ini memang ada, sekalian ambil nama
+  " item & material utk konteks tampilan (satu SELECT SINGLE, murah).
+  " D35: field ditambah (kwmeng/vrkme/netwr/waerk) — dipakai tab Info Order.
+  IF lv_item IS NOT INITIAL.
+    SELECT SINGLE vbeln posnr matnr arktx werks kwmeng vrkme netwr waerk gbsta FROM vbap
+      INTO CORRESPONDING FIELDS OF ls_vbap_hdr
+      WHERE vbeln = lv_so
+        AND posnr = lv_item.
+    IF sy-subrc = 0.
+      lv_so_found = abap_true.
+      CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+        EXPORTING input  = ls_vbap_hdr-matnr
+        IMPORTING output = ls_vbap_hdr-matnr.
+      CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+        EXPORTING input  = ls_vbap_hdr-vrkme
+        IMPORTING output = ls_vbap_hdr-vrkme.
 
-  IF lv_ui_name IS NOT INITIAL AND lv_ui_kunnr IS INITIAL.
-    TRANSLATE lv_ui_name TO UPPER CASE.
-    lv_name_pattern = '%' && lv_ui_name && '%'.
-    SELECT kunnr name1 FROM kna1
-      INTO CORRESPONDING FIELDS OF TABLE lt_kna1_srch
-      WHERE mcod1 LIKE lv_name_pattern.
-    IF lt_kna1_srch IS NOT INITIAL.
-      LOOP AT lt_kna1_srch INTO ls_kna1_srch.
-        ls_kunnr-sign   = 'I'.
-        ls_kunnr-option = 'EQ'.
-        ls_kunnr-low    = ls_kna1_srch-kunnr.
-        APPEND ls_kunnr TO lr_kunnr.
-      ENDLOOP.
-    ELSE.
-      lv_name_no_match = abap_true.
+      " D35: header SO (VBAK) + customer (KNA1) — dua SELECT SINGLE ringan,
+      " HANYA dijalankan setelah SO+Item terkonfirmasi ada.
+      SELECT SINGLE vbeln erdat auart kunnr netwr waerk bstnk gbstk FROM vbak
+        INTO CORRESPONDING FIELDS OF ls_vbak_hdr
+        WHERE vbeln = lv_so.
+      IF ls_vbak_hdr-kunnr IS NOT INITIAL.
+        SELECT SINGLE kunnr name1 ort01 land1 FROM kna1
+          INTO CORRESPONDING FIELDS OF ls_kna1_hdr
+          WHERE kunnr = ls_vbak_hdr-kunnr.
+      ENDIF.
+      lv_hdr_date = zcl_cs_util=>fmt_date( ls_vbak_hdr-erdat ).
+
+      " === D36 / D49-FIX: Status SO (header) & Status Item (Overall — VA03) ===
+      " AKAR MASALAH (dilaporkan user: badge selalu kosong/"Tidak Diketahui"
+      " padahal VA03 menampilkan status): tabel VBUK/VBUP TIDAK terisi di
+      " sistem ini — pola khas S/4HANA, di mana kedua tabel status itu
+      " DIPENSIUNKAN dan field GBSTK/GBSTA-nya DIPINDAH langsung ke VBAK
+      " (header) & VBAP (item). Query lama ke VBUK/VBUP aktif secara sintaks
+      " (tabel/compat-view masih ada) tapi mengembalikan nol baris -> CASE
+      " selalu jatuh ke WHEN OTHERS. Bukti: SELECT VBAP di atas dgn key yg
+      " SAMA (vbeln = lv_so) SUKSES, jadi lv_so sudah benar; satu-satunya
+      " sebab query status kosong adalah tabelnya memang tak berdata.
+      " FIX: baca GBSTK dari VBAK & GBSTA dari VBAP (sudah ikut di dua SELECT
+      " di atas) — tidak perlu SELECT tambahan lagi.
+      " ⚠️ Kalau sistem ternyata ECC klasik (VBAK/VBAP tak punya GBSTK/GBSTA),
+      " aktivasi akan menolak field-nya — laporkan, akan saya kembalikan ke
+      " VBUK/VBUP (yang di ECC memang berdata).
+      CASE ls_vbak_hdr-gbstk.
+        WHEN 'A'. lv_hdr_stat_lbl = 'Open'.            lv_hdr_stat_tip = 'Open (belum diproses).'.
+        WHEN 'B'. lv_hdr_stat_lbl = 'Being processed'. lv_hdr_stat_tip = 'Being processed (sebagian diproses).'.
+        WHEN 'C'. lv_hdr_stat_lbl = 'Completed'.       lv_hdr_stat_tip = 'Completed (selesai diproses).'.
+        WHEN OTHERS. lv_hdr_stat_lbl = ls_vbak_hdr-gbstk. lv_hdr_stat_tip = 'Status tidak dikenal.'.
+      ENDCASE.
+
+      CASE ls_vbap_hdr-gbsta.
+        WHEN 'A'. lv_itm_stat_lbl = 'Open'.            lv_itm_stat_tip = 'Open (belum diproses).'.
+        WHEN 'B'. lv_itm_stat_lbl = 'Being processed'. lv_itm_stat_tip = 'Being processed (sebagian diproses).'.
+        WHEN 'C'. lv_itm_stat_lbl = 'Completed'.       lv_itm_stat_tip = 'Completed (selesai diproses).'.
+        WHEN OTHERS. lv_itm_stat_lbl = ls_vbap_hdr-gbsta. lv_itm_stat_tip = 'Status tidak dikenal.'.
+      ENDCASE.
     ENDIF.
   ENDIF.
 
-  SELECT kunnr FROM kna1 INTO TABLE lt_excl_cust
-    WHERE mcod1 LIKE '%SAMPLE%'.
-  LOOP AT lt_excl_cust INTO ls_excl_cust.
-    ls_kunnr-sign   = 'E'.
-    ls_kunnr-option = 'EQ'.
-    ls_kunnr-low    = ls_excl_cust.
-    APPEND ls_kunnr TO lr_kunnr.
-  ENDLOOP.
+  IF lv_so_found = abap_true.
+    " === SATU-SATUNYA QUERY DATA — AFPO⨝AFKO per ORDER, TANPA RESB/MSEG/
+    "     mesin checkpoint manapun. Discope kdauf/kdpos (order MILIK SO+item
+    "     ini), lalu (pwerk,lgort) HANYA 7 lokasi yang diizinkan.
+    "     D33: JOIN ke AFKO ditambahkan KHUSUS utk k~stlnr (BOM number order
+    "     ini) — field ini ada di AFKO (header order), BUKAN di AFPO (item
+    "     order) seperti asumsi salah sebelumnya (D32) yang gagal aktivasi. ===
+    SELECT a~kdauf a~kdpos a~aufnr a~matnr a~psmng a~wemng a~meins a~pwerk
+           a~lgort k~stlnr
+      FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+      INTO CORRESPONDING FIELDS OF TABLE lt_ord
+      WHERE a~kdauf = lv_so
+        AND a~kdpos = lv_item
+        AND ( ( a~pwerk = lc_werks_1000 AND a~lgort = lc_lgort_1d00 )
+           OR ( a~pwerk = lc_werks_2000
+                AND a~lgort IN ( '2KCS', '2261', '2262', '22E2', '22E3', '229K' ) ) ).
 
-  IF lv_name_no_match = abap_false.
-    " 1. Header SO
-    SELECT vbeln erdat auart kunnr FROM vbak
-      INTO CORRESPONDING FIELDS OF TABLE lt_local_hdr
-      WHERE erdat BETWEEN lv_erdat_from AND lv_erdat_to
-        AND vbeln IN lr_vbeln
-        AND kunnr IN lr_kunnr
-        AND vbeln IN ( SELECT vbeln FROM vbap WHERE werks = lc_plant ).
-
-    IF lt_local_hdr IS NOT INITIAL.
-      " 2. Nama customer
-      SELECT kunnr name1 FROM kna1
-        INTO CORRESPONDING FIELDS OF TABLE lt_cust_names
-        FOR ALL ENTRIES IN lt_local_hdr
-        WHERE kunnr = lt_local_hdr-kunnr.
-      SORT lt_cust_names BY kunnr.
-
-      " 3. Item VBAP
-      SELECT vbeln posnr matnr FROM vbap
-        INTO CORRESPONDING FIELDS OF TABLE lt_temp_vbap
-        FOR ALL ENTRIES IN lt_local_hdr
-        WHERE vbeln = lt_local_hdr-vbeln
-          AND werks = lc_plant.
-      SORT lt_temp_vbap BY vbeln posnr.
-
-      " === D24: Filter Nomor Item — exact (zero-padded) + partial (CP) ===
-      IF lv_ui_posnr IS NOT INITIAL.
-        CLEAR lv_posnr_exact.
-        IF lv_ui_posnr CO '0123456789'.
-          lv_posnr_exact = lv_ui_posnr.   " otomatis zero-pad ke tipe NUMC(6)
+    " Nama material (MAKT) — satu SELECT batched.
+    IF lt_ord IS NOT INITIAL.
+      SELECT matnr maktx FROM makt
+        INTO CORRESPONDING FIELDS OF TABLE lt_makt
+        FOR ALL ENTRIES IN lt_ord
+        WHERE matnr = lt_ord-matnr
+          AND spras = sy-langu.
+      SORT lt_makt BY matnr.
+      LOOP AT lt_ord ASSIGNING <o>.
+        READ TABLE lt_makt INTO ls_makt WITH KEY matnr = <o>-matnr BINARY SEARCH.
+        IF sy-subrc = 0.
+          <o>-maktx = ls_makt-maktx.
         ENDIF.
-        lv_posnr_pat = '*' && lv_ui_posnr && '*'.
-        LOOP AT lt_temp_vbap INTO ls_vbap_row.
-          IF NOT ( ls_vbap_row-posnr = lv_posnr_exact
-                   OR ls_vbap_row-posnr CP lv_posnr_pat ).
-            DELETE lt_temp_vbap.
-          ENDIF.
-        ENDLOOP.
-        SORT lt_temp_vbap BY vbeln posnr.
-        LOOP AT lt_local_hdr INTO ls_hdr_row.
-          READ TABLE lt_temp_vbap TRANSPORTING NO FIELDS
-            WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
-          IF sy-subrc <> 0.
-            DELETE lt_local_hdr.
-          ENDIF.
-        ENDLOOP.
-      ENDIF.
+        " #1: hilangkan leading zeros nomor material (display)
+        CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+          EXPORTING input  = <o>-matnr
+          IMPORTING output = <o>-matnr.
+        " D30: MEINS tersimpan dlm format INTERNAL (mis. 'ST') — WAJIB
+        " dikonversi ke format EKSTERNAL (mis. 'PC') spy sama dgn yg tampil
+        " di COOIS/transaksi SAP lain. Tanpa ini satuan terlihat "salah".
+        CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+          EXPORTING input  = <o>-meins
+          IMPORTING output = <o>-meins.
+      ENDLOOP.
+      SORT lt_ord BY pwerk lgort matnr.
 
-      " 4. D21 (Opsi B): ORDER UTAMA per item.
-      IF lt_temp_vbap IS NOT INITIAL.
-        SELECT kdauf kdpos psmng wemng FROM afpo
-          INTO CORRESPONDING FIELDS OF TABLE lt_main_raw
-          FOR ALL ENTRIES IN lt_temp_vbap
-          WHERE kdauf = lt_temp_vbap-vbeln
-            AND kdpos = lt_temp_vbap-posnr
-            AND matnr = lt_temp_vbap-matnr.
-        LOOP AT lt_main_raw INTO ls_main_ord.
-          READ TABLE lt_main_ord ASSIGNING <mo>
-            WITH TABLE KEY kdauf = ls_main_ord-kdauf kdpos = ls_main_ord-kdpos.
+      " #6: rata-rata progres per tahap (Pembahanan=1000 / Produksi=2000) utk donut
+      DATA: lv_sum_pmb  TYPE p LENGTH 15 DECIMALS 2, lv_cnt_pmb TYPE i,
+            lv_sum_prd  TYPE p LENGTH 15 DECIMALS 2, lv_cnt_prd TYPE i,
+            lv_avg_pmb  TYPE i, lv_avg_prd TYPE i,
+            lv_prog6    TYPE p LENGTH 15 DECIMALS 2,
+            lv_off_pmb  TYPE p LENGTH 8 DECIMALS 1,
+            lv_off_prd  TYPE p LENGTH 8 DECIMALS 1.
+      LOOP AT lt_ord INTO ls_ord WHERE psmng > 0.
+        lv_prog6 = ls_ord-wemng / ls_ord-psmng * 100.
+        IF lv_prog6 > 100. lv_prog6 = 100. ENDIF.
+        IF ls_ord-pwerk = lc_werks_1000.
+          lv_sum_pmb = lv_sum_pmb + lv_prog6. lv_cnt_pmb = lv_cnt_pmb + 1.
+        ELSEIF ls_ord-pwerk = lc_werks_2000.
+          lv_sum_prd = lv_sum_prd + lv_prog6. lv_cnt_prd = lv_cnt_prd + 1.
+        ENDIF.
+      ENDLOOP.
+      IF lv_cnt_pmb > 0. lv_avg_pmb = lv_sum_pmb / lv_cnt_pmb. ENDIF.
+      IF lv_cnt_prd > 0. lv_avg_prd = lv_sum_prd / lv_cnt_prd. ENDIF.
+      " keliling ring r=52 ≈ 326.7 ; offset = sisa (100-avg) porsinya
+      lv_off_pmb = ( 100 - lv_avg_pmb ) * '3.26726'.
+      lv_off_prd = ( 100 - lv_avg_prd ) * '3.26726'.
+
+      " === D32: Komponen BOM (STPO) — LANGSUNG dari AFPO-STLNR order itu
+      "     sendiri, TANPA MAST/lookup material sama sekali (lihat catatan
+      "     D32 di atas). ===
+      LOOP AT lt_ord INTO ls_ord WHERE stlnr IS NOT INITIAL.
+        APPEND ls_ord-stlnr TO lt_stlnr.
+      ENDLOOP.
+      SORT lt_stlnr.
+      DELETE ADJACENT DUPLICATES FROM lt_stlnr.
+
+      IF lt_stlnr IS NOT INITIAL.
+        SELECT stlnr posnr idnrk menge meins FROM stpo
+          INTO CORRESPONDING FIELDS OF TABLE lt_stpo
+          FOR ALL ENTRIES IN lt_stlnr
+          WHERE stlnr = lt_stlnr-table_line.
+        SORT lt_stpo BY stlnr posnr.
+
+        LOOP AT lt_stpo INTO ls_stpo.
+          CLEAR ls_bomcomp.
+          ls_bomcomp-stlnr = ls_stpo-stlnr.
+          ls_bomcomp-posnr = ls_stpo-posnr.
+          ls_bomcomp-idnrk = ls_stpo-idnrk.
+          ls_bomcomp-menge = ls_stpo-menge.
+          ls_bomcomp-meins = ls_stpo-meins.
+          " #7 / D47: plant + AUFNR order pemilik stlnr ini = konteks status komponen
+          READ TABLE lt_ord INTO ls_ord WITH KEY stlnr = ls_stpo-stlnr.
           IF sy-subrc = 0.
-            <mo>-psmng = <mo>-psmng + ls_main_ord-psmng.
-            <mo>-wemng = <mo>-wemng + ls_main_ord-wemng.
-          ELSE.
-            INSERT ls_main_ord INTO TABLE lt_main_ord.
+            ls_bomcomp-parent_pwerk = ls_ord-pwerk.
+            ls_bomcomp-parent_aufnr = ls_ord-aufnr.
           ENDIF.
+          APPEND ls_bomcomp TO lt_bomcomp.
         ENDLOOP.
+
+        " Nama komponen (MAKT) — batched.
+        " D34: PERBAIKAN BUG — sebelumnya pakai "LOOP AT ... INTO ls_bomcomp"
+        " + "MODIFY ... INDEX sy-tabix" di akhir. MASALAHNYA: READ TABLE
+        " lt_cmakt (di tengah loop) DAN CALL FUNCTION ikut MENGUBAH sy-tabix
+        " (system field GLOBAL, bukan milik loop lt_bomcomp) — jadi saat
+        " MODIFY dieksekusi, sy-tabix SUDAH BUKAN index lt_bomcomp yang benar
+        " lagi (melainkan sisa dari operasi lain), sehingga hasil enrichment
+        " (nama komponen + satuan terkonversi) tertulis ke BARIS YANG SALAH,
+        " persis bug "Component description kosong + Unit masih ST" yang
+        " dilaporkan user. Diganti ke ASSIGNING <bc> (field-symbol) — memodifikasi
+        " tabel LANGSUNG di tempat, sama sekali tidak bergantung pada sy-tabix.
+        IF lt_bomcomp IS NOT INITIAL.
+          SELECT matnr maktx FROM makt
+            INTO CORRESPONDING FIELDS OF TABLE lt_cmakt
+            FOR ALL ENTRIES IN lt_bomcomp
+            WHERE matnr = lt_bomcomp-idnrk
+              AND spras = sy-langu.
+          SORT lt_cmakt BY matnr.
+          LOOP AT lt_bomcomp ASSIGNING <bc>.
+            READ TABLE lt_cmakt INTO ls_cmakt WITH KEY matnr = <bc>-idnrk BINARY SEARCH.
+            IF sy-subrc = 0.
+              <bc>-cmaktx = ls_cmakt-maktx.
+            ENDIF.
+            " #1: idnrk_disp = idnrk tanpa leading zeros (idnrk asli tetap utk lookup #7)
+            <bc>-idnrk_disp = <bc>-idnrk.
+            CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+              EXPORTING input  = <bc>-idnrk_disp
+              IMPORTING output = <bc>-idnrk_disp.
+            " D30: konversi MEINS internal->eksternal.
+            CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+              EXPORTING input  = <bc>-meins
+              IMPORTING output = <bc>-meins.
+          ENDLOOP.
+          SORT lt_bomcomp BY stlnr posnr.
+
+          " ===== D47: STATUS AKTUAL KOMPONEN via RESB (scoped ke AUFNR
+          "     order induk) — REVISI dari versi sebelumnya yang menebak
+          "     dari saldo stok level PLANT (tidak bisa bedakan SLoc
+          "     konsumsi vs SLoc lain) + query "order terbuka" yang TIDAK
+          "     discope ke SO+Item (bisa salah nangkap order milik SO lain
+          "     utk material yang sama, sumber "Sedang dibuat" yg salah
+          "     kaprah). RESB-BDMNG/ENMNG per AUFNR adalah sumber kebenaran
+          "     SAP-native — PERSIS mekanisme yg dipakai goods issue
+          "     produksi (MSEG bwart 261 SELALU bawa RSNUM = nomor
+          "     reservasi RESB). ===
+          DATA: BEGIN OF ls_resb_agg,
+                  aufnr    TYPE resb-aufnr,
+                  matnr    TYPE resb-matnr,
+                  bdmng    TYPE p LENGTH 15 DECIMALS 3,
+                  enmng    TYPE p LENGTH 15 DECIMALS 3,
+                  any_open TYPE abap_bool,  " D48: true kalau ADA baris RESB yg
+                                            " masih aktif (xloek space); kalau
+                                            " SEMUA baris sudah xloek='X' (order
+                                            " ditutup/TECO), any_open = false.
+                END OF ls_resb_agg.
+          DATA lt_resb_agg LIKE TABLE OF ls_resb_agg.
+          FIELD-SYMBOLS <ra> LIKE LINE OF lt_resb_agg.
+
+          DATA: BEGIN OF ls_resb_sel,
+                  aufnr TYPE resb-aufnr,
+                  matnr TYPE resb-matnr,
+                  bdmng TYPE resb-bdmng,
+                  enmng TYPE resb-enmng,
+                  xloek TYPE resb-xloek,
+                END OF ls_resb_sel.
+          DATA lt_resb_sel LIKE TABLE OF ls_resb_sel.
+          DATA lt_aufnr_range TYPE TABLE OF aufnr.
+
+          LOOP AT lt_bomcomp INTO ls_bomcomp WHERE parent_aufnr IS NOT INITIAL.
+            APPEND ls_bomcomp-parent_aufnr TO lt_aufnr_range.
+          ENDLOOP.
+          SORT lt_aufnr_range. DELETE ADJACENT DUPLICATES FROM lt_aufnr_range.
+
+          IF lt_aufnr_range IS NOT INITIAL.
+            " D48-FIX: TIDAK memfilter xloek di WHERE lagi. Filter xloek=space
+            " sebelumnya (D47) JUSTRU MEMBUANG baris RESB paling penting: order
+            " yang sudah TECO/selesai 100% biasanya xloek='X' pada baris
+            " reservasinya (penutupan administratif), BUKAN berarti barangnya
+            " belum dipakai. Akibatnya sistem "buta" pada order yang sudah
+            " tuntas & jatuh ke fallback stok yg juga sudah 0 -> "Tidak Ada
+            " Data" yg salah kaprah (dilaporkan user, Image terbaru).
+            SELECT aufnr matnr bdmng enmng xloek FROM resb
+              INTO CORRESPONDING FIELDS OF TABLE lt_resb_sel
+              FOR ALL ENTRIES IN lt_aufnr_range
+              WHERE aufnr = lt_aufnr_range-table_line.
+            " Agregasi (SUM) per (aufnr,matnr) — satu komponen bisa py >1 baris
+            " RESB. any_open jadi true kalau MINIMAL SATU baris masih aktif.
+            LOOP AT lt_resb_sel INTO ls_resb_sel.
+              READ TABLE lt_resb_agg ASSIGNING <ra>
+                WITH KEY aufnr = ls_resb_sel-aufnr matnr = ls_resb_sel-matnr.
+              IF sy-subrc <> 0.
+                APPEND INITIAL LINE TO lt_resb_agg ASSIGNING <ra>.
+                <ra>-aufnr = ls_resb_sel-aufnr.
+                <ra>-matnr = ls_resb_sel-matnr.
+              ENDIF.
+              <ra>-bdmng = <ra>-bdmng + ls_resb_sel-bdmng.
+              <ra>-enmng = <ra>-enmng + ls_resb_sel-enmng.
+              IF ls_resb_sel-xloek <> 'X'.
+                <ra>-any_open = abap_true.
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+
+          " Fallback stok (dipakai HANYA kalau RESB belum ada penarikan sama
+          " sekali, atau kalau RESB tidak ditemukan) — query "order terbuka"
+          " sekarang DISCOPE ke SO+Item ini (perbaikan bug lama yg nangkap
+          " order milik SO lain untuk material yang sama).
+          DATA: BEGIN OF ls_cstat,
+                  matnr   TYPE mard-matnr,
+                  stk1000 TYPE p LENGTH 15 DECIMALS 3,
+                  stk2000 TYPE p LENGTH 15 DECIMALS 3,
+                  has_ord TYPE abap_bool,
+                END OF ls_cstat.
+          DATA lt_cstat LIKE TABLE OF ls_cstat.
+          FIELD-SYMBOLS <cs> LIKE LINE OF lt_cstat.
+          DATA lt_idnrk TYPE TABLE OF stpo-idnrk.
+          LOOP AT lt_bomcomp INTO ls_bomcomp.
+            APPEND ls_bomcomp-idnrk TO lt_idnrk.
+          ENDLOOP.
+          SORT lt_idnrk. DELETE ADJACENT DUPLICATES FROM lt_idnrk.
+          IF lt_idnrk IS NOT INITIAL.
+            DATA: BEGIN OF ls_ck_mska, matnr TYPE mska-matnr, werks TYPE mska-werks, kalab TYPE mska-kalab, END OF ls_ck_mska,
+                  lt_ck_mska LIKE TABLE OF ls_ck_mska,
+                  BEGIN OF ls_ck_mard, matnr TYPE mard-matnr, werks TYPE mard-werks, labst TYPE mard-labst, END OF ls_ck_mard,
+                  lt_ck_mard LIKE TABLE OF ls_ck_mard,
+                  BEGIN OF ls_ck_afpo, matnr TYPE afpo-matnr, END OF ls_ck_afpo,
+                  lt_ck_afpo LIKE TABLE OF ls_ck_afpo.
+            " stok SO-order (MSKA, milik SO ini) + stok bebas (MARD)
+            SELECT matnr werks kalab FROM mska INTO TABLE lt_ck_mska
+              FOR ALL ENTRIES IN lt_idnrk
+              WHERE matnr = lt_idnrk-table_line AND vbeln = lv_so AND sobkz = 'E'.
+            SELECT matnr werks labst FROM mard INTO TABLE lt_ck_mard
+              FOR ALL ENTRIES IN lt_idnrk
+              WHERE matnr = lt_idnrk-table_line.
+            " D47-FIX: discope ke SO+Item ini (kdauf/kdpos) — dulu query ini
+            " GLOBAL tanpa scope, bisa salah nangkap order milik SO lain.
+            SELECT a~matnr FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+              INTO TABLE lt_ck_afpo
+              FOR ALL ENTRIES IN lt_idnrk
+              WHERE a~matnr = lt_idnrk-table_line
+                AND a~kdauf = lv_so AND a~kdpos = lv_item
+                AND a~wemng < a~psmng.
+            " agregasi per material
+            LOOP AT lt_ck_mska INTO ls_ck_mska.
+              READ TABLE lt_cstat ASSIGNING <cs> WITH KEY matnr = ls_ck_mska-matnr.
+              IF sy-subrc <> 0. APPEND INITIAL LINE TO lt_cstat ASSIGNING <cs>. <cs>-matnr = ls_ck_mska-matnr. ENDIF.
+              IF ls_ck_mska-werks = lc_werks_1000. <cs>-stk1000 = <cs>-stk1000 + ls_ck_mska-kalab.
+              ELSEIF ls_ck_mska-werks = lc_werks_2000. <cs>-stk2000 = <cs>-stk2000 + ls_ck_mska-kalab. ENDIF.
+            ENDLOOP.
+            LOOP AT lt_ck_mard INTO ls_ck_mard.
+              READ TABLE lt_cstat ASSIGNING <cs> WITH KEY matnr = ls_ck_mard-matnr.
+              IF sy-subrc <> 0. APPEND INITIAL LINE TO lt_cstat ASSIGNING <cs>. <cs>-matnr = ls_ck_mard-matnr. ENDIF.
+              IF ls_ck_mard-werks = lc_werks_1000. <cs>-stk1000 = <cs>-stk1000 + ls_ck_mard-labst.
+              ELSEIF ls_ck_mard-werks = lc_werks_2000. <cs>-stk2000 = <cs>-stk2000 + ls_ck_mard-labst. ENDIF.
+            ENDLOOP.
+            LOOP AT lt_ck_afpo INTO ls_ck_afpo.
+              READ TABLE lt_cstat ASSIGNING <cs> WITH KEY matnr = ls_ck_afpo-matnr.
+              IF sy-subrc <> 0. APPEND INITIAL LINE TO lt_cstat ASSIGNING <cs>. <cs>-matnr = ls_ck_afpo-matnr. ENDIF.
+              <cs>-has_ord = abap_true.
+            ENDLOOP.
+          ENDIF.
+
+          " ===== Derive badge per komponen — RESB dulu (sumber kebenaran),
+          "     stok jadi fallback HANYA kalau belum ada penarikan sama sekali =====
+          DATA: lv_here  TYPE p LENGTH 15 DECIMALS 3,
+                lv_other TYPE p LENGTH 15 DECIMALS 3,
+                lv_sisa  TYPE p LENGTH 15 DECIMALS 3.
+          LOOP AT lt_bomcomp ASSIGNING <bc>.
+            CLEAR: ls_resb_agg, ls_cstat.
+            READ TABLE lt_resb_agg INTO ls_resb_agg
+              WITH KEY aufnr = <bc>-parent_aufnr matnr = <bc>-idnrk.
+
+            IF sy-subrc = 0 AND ls_resb_agg-bdmng > 0.
+              " ---- RESB ditemukan: SUMBER KEBENARAN ----
+              IF ls_resb_agg-enmng >= ls_resb_agg-bdmng.
+                " Sudah ditarik penuh — berlaku SAMA baik reservasi masih aktif
+                " maupun sudah ditutup (xloek='X', wajar utk order yg sudah
+                " TECO/selesai 100% — penutupan administratif, BUKAN indikasi
+                " belum dipakai). Ini kasus paling umum utk order 100% selesai.
+                <bc>-status_lbl = 'Sudah Dipakai Penuh'. <bc>-status_cls = 'cst-good'.
+                <bc>-status_tip = |Seluruh kebutuhan { ls_resb_agg-bdmng } { <bc>-meins } untuk order ini sudah diambil (goods issue) dari stok.|.
+              ELSEIF ls_resb_agg-enmng > 0.
+                lv_sisa = ls_resb_agg-bdmng - ls_resb_agg-enmng.
+                IF ls_resb_agg-any_open = abap_true.
+                  <bc>-status_lbl = 'Sebagian Terpakai'. <bc>-status_cls = 'cst-blue'.
+                  <bc>-status_tip = |Sudah diambil { ls_resb_agg-enmng } dari { ls_resb_agg-bdmng } { <bc>-meins } yang dibutuhkan. Sisa { lv_sisa } { <bc>-meins }.|.
+                ELSE.
+                  " D48: reservasi SUDAH DITUTUP (xloek='X') tapi penarikan
+                  " belum penuh — mis. sisa kebutuhan dibatalkan manual saat
+                  " order ditutup. Bukan indikasi kekurangan stok yg masih
+                  " perlu ditindaklanjuti, jadi TETAP badge hijau (selesai),
+                  " dengan catatan sisa yg tidak akan ditarik lagi.
+                  <bc>-status_lbl = 'Sudah Dipakai (Reservasi Ditutup)'. <bc>-status_cls = 'cst-good'.
+                  <bc>-status_tip = |Diambil { ls_resb_agg-enmng } dari { ls_resb_agg-bdmng } { <bc>-meins }. Reservasi sudah ditutup bersama order — sisa { lv_sisa } { <bc>-meins } tidak akan ditarik lagi.|.
+                ENDIF.
+              ELSE.
+                IF ls_resb_agg-any_open = abap_false.
+                  " D48: reservasi DITUTUP tanpa pernah ditarik sama sekali —
+                  " requirement komponen ini dibatalkan/tidak jadi dipakai.
+                  " JANGAN ditampilkan sbg "Belum Tersedia" (merah) — itu akan
+                  " menyiratkan seolah ada masalah stok, padahal kebutuhannya
+                  " sendiri sudah tidak berlaku.
+                  <bc>-status_lbl = 'Reservasi Dibatalkan'. <bc>-status_cls = 'cst-gray'.
+                  <bc>-status_tip = |Reservasi komponen ini ditutup tanpa pernah diambil — kebutuhan { ls_resb_agg-bdmng } { <bc>-meins } dibatalkan/tidak jadi dipakai utk order ini.|.
+                ELSE.
+                  READ TABLE lt_cstat INTO ls_cstat WITH KEY matnr = <bc>-idnrk.
+                  IF <bc>-parent_pwerk = lc_werks_2000.
+                    lv_here = ls_cstat-stk2000. lv_other = ls_cstat-stk1000.
+                  ELSE.
+                    lv_here = ls_cstat-stk1000. lv_other = ls_cstat-stk2000.
+                  ENDIF.
+                  IF lv_here > 0.
+                    <bc>-status_lbl = 'Siap Dipakai'. <bc>-status_cls = 'cst-warn'.
+                    <bc>-status_tip = |Belum ada yang diambil, tapi stok { lv_here } { <bc>-meins } sudah tersedia di Plant { <bc>-parent_pwerk }. Kebutuhan order: { ls_resb_agg-bdmng } { <bc>-meins }.|.
+                  ELSEIF lv_other > 0.
+                    <bc>-status_lbl = 'Masih di Plant Lain'. <bc>-status_cls = 'cst-warn'.
+                    <bc>-status_tip = |Stok { lv_other } { <bc>-meins } masih di plant lain, belum sampai di Plant { <bc>-parent_pwerk }.|.
+                  ELSEIF ls_cstat-has_ord = abap_true.
+                    <bc>-status_lbl = 'Sedang Dibuat'. <bc>-status_cls = 'cst-blue'.
+                    <bc>-status_tip = 'Belum ada stok, tapi ada order produksi komponen ini yang masih berjalan untuk SO+Item yang sama.'.
+                  ELSE.
+                    <bc>-status_lbl = 'Belum Tersedia'. <bc>-status_cls = 'cst-crit'.
+                    <bc>-status_tip = |Tidak ada stok & belum ada yang diambil. Kebutuhan order: { ls_resb_agg-bdmng } { <bc>-meins }.|.
+                  ENDIF.
+                ENDIF.
+              ENDIF.
+            ELSE.
+              " ---- Tidak ada baris RESB (jarang; mis. komponen non-reservasi
+              "     /bulk) -> fallback murni ke stok, ditandai netral supaya
+              "     tidak disalahartikan sbg status pasti berbasis RESB. ----
+              READ TABLE lt_cstat INTO ls_cstat WITH KEY matnr = <bc>-idnrk.
+              IF <bc>-parent_pwerk = lc_werks_2000.
+                lv_here = ls_cstat-stk2000. lv_other = ls_cstat-stk1000.
+              ELSE.
+                lv_here = ls_cstat-stk1000. lv_other = ls_cstat-stk2000.
+              ENDIF.
+              IF lv_here > 0.
+                <bc>-status_lbl = 'Stok Tersedia'. <bc>-status_cls = 'cst-good'.
+                <bc>-status_tip = |Tidak ada data reservasi (RESB) utk komponen ini, tapi stok { lv_here } { <bc>-meins } tersedia di Plant { <bc>-parent_pwerk }.|.
+              ELSEIF lv_other > 0.
+                <bc>-status_lbl = 'Masih di Plant Lain'. <bc>-status_cls = 'cst-warn'.
+                <bc>-status_tip = |Tidak ada data reservasi (RESB). Stok { lv_other } { <bc>-meins } terdeteksi di plant lain.|.
+              ELSE.
+                <bc>-status_lbl = 'Tidak Ada Data'. <bc>-status_cls = 'cst-crit'.
+                <bc>-status_tip = 'Tidak ada data reservasi (RESB) maupun stok utk komponen ini.'.
+              ENDIF.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
       ENDIF.
 
-      " 5. TAHAP per item — AFPO⨝AFKO, filter k~dispo IN whitelist.
-      IF lt_temp_vbap IS NOT INITIAL.
-        lr_wf_dispo = zcl_cs_util=>wf_dispo_range( ).
-        SELECT a~kdauf a~kdpos a~psmng a~wemng k~dispo
-          FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
-          INTO TABLE lt_afpo_dispo
-          FOR ALL ENTRIES IN lt_temp_vbap
-          WHERE a~kdauf = lt_temp_vbap-vbeln
-            AND a~kdpos = lt_temp_vbap-posnr
-            AND k~dispo IN lr_wf_dispo.
+      " === D39/D40: RIWAYAT PERGERAKAN (MSEG + MKPF) ===
+      " D40 saran#1: gabung pasangan OUT+IN (per mblnr+matnr+charg) jadi 1
+      " baris. Satu material document biasanya punya 2 baris:
+      "   SHKZG='H' (kredit/OUT) dari lokasi asal
+      "   SHKZG='S' (debit/IN)   ke lokasi tujuan
+      " Kita gabung jadi 1 baris ty_hist_pair dgn from_werks/lgort + to_werks/lgort.
+      " Kalau cuma ada satu sisi (misal GR/GI biasa), tetap tampilkan sbg
+      " unpaired (is_paired=false) — supaya tidak ada data yg hilang.
+      " D40 saran#2: mapping bwart -> label deskriptif + kelas warna badge.
+      DATA: lt_mseg TYPE TABLE OF mseg,
+            ls_mseg TYPE mseg,
+            lt_mkpf TYPE TABLE OF mkpf,
+            ls_mkpf TYPE mkpf,
+            lt_hist_mat_range TYPE TABLE OF matnr.
+      SELECT mblnr mjahr zeile bwart shkzg matnr werks lgort charg
+             menge meins aufnr sobkz kdauf kdpos
+        FROM mseg
+        INTO CORRESPONDING FIELDS OF TABLE lt_mseg
+        WHERE kdauf = lv_so
+          AND kdpos = lv_item
+          AND ( ( werks = '1000' AND lgort = '1D00' )
+             OR ( werks = '2000'
+                  AND lgort IN ( '2KCS', '2261', '2262', '22E2', '22E3', '229K' ) ) ).
 
-        LOOP AT lt_afpo_dispo INTO ls_afpo_dispo.
-          CASE ls_afpo_dispo-dispo.
-            WHEN 'WM1' OR 'WM2' OR 'PN1' OR 'PN2'. lv_stage = 1.
-            WHEN 'GA1' OR 'GA2'.                   lv_stage = 2.
-            WHEN 'EB2' OR 'CH1'.                   lv_stage = 3.  " D29
-            WHEN OTHERS.                           CONTINUE.
-          ENDCASE.
-          READ TABLE lt_item_stage ASSIGNING <ist>
-            WITH TABLE KEY kdauf = ls_afpo_dispo-kdauf kdpos = ls_afpo_dispo-kdpos.
-          IF sy-subrc <> 0.
-            CLEAR ls_item_stage.
-            ls_item_stage-kdauf = ls_afpo_dispo-kdauf.
-            ls_item_stage-kdpos = ls_afpo_dispo-kdpos.
-            INSERT ls_item_stage INTO TABLE lt_item_stage.
-            READ TABLE lt_item_stage ASSIGNING <ist>
-              WITH TABLE KEY kdauf = ls_afpo_dispo-kdauf kdpos = ls_afpo_dispo-kdpos.
-          ENDIF.
-          CASE lv_stage.
-            WHEN 1. <ist>-has_pmb = abap_true.
-                    <ist>-t_pmb   = <ist>-t_pmb + ls_afpo_dispo-psmng.
-                    <ist>-d_pmb   = <ist>-d_pmb + ls_afpo_dispo-wemng.
-            WHEN 2. <ist>-has_prd = abap_true.
-                    <ist>-t_prd   = <ist>-t_prd + ls_afpo_dispo-psmng.
-                    <ist>-d_prd   = <ist>-d_prd + ls_afpo_dispo-wemng.
-            WHEN 3. <ist>-has_fin = abap_true.
-                    <ist>-t_fin   = <ist>-t_fin + ls_afpo_dispo-psmng.
-                    <ist>-d_fin   = <ist>-d_fin + ls_afpo_dispo-wemng.
-          ENDCASE.
-        ENDLOOP.
+      IF lt_mseg IS NOT INITIAL.
+        SELECT mblnr mjahr budat cpudt cputm usnam FROM mkpf
+          INTO CORRESPONDING FIELDS OF TABLE lt_mkpf
+          FOR ALL ENTRIES IN lt_mseg
+          WHERE mblnr = lt_mseg-mblnr
+            AND mjahr = lt_mseg-mjahr.
+        SORT lt_mkpf BY mblnr mjahr.
 
-        " --- D23: Finalisasi 4 TAHAP ---
-        LOOP AT lt_item_stage ASSIGNING <ist>.
-          lv_main_ok = abap_false.
-          READ TABLE lt_main_ord INTO ls_main_ord
-            WITH TABLE KEY kdauf = <ist>-kdauf kdpos = <ist>-kdpos.
-          IF sy-subrc = 0 AND ls_main_ord-psmng > 0
-             AND ls_main_ord-wemng >= ls_main_ord-psmng.
-            lv_main_ok = abap_true.
-          ENDIF.
-          lv_fin_ok  = boolc( <ist>-has_fin = abap_true AND <ist>-d_fin >= <ist>-t_fin ).
-          lv_done_ok = boolc( lv_main_ok = abap_true OR lv_fin_ok = abap_true ).
+        " D40 #1: sort by (mblnr, matnr, charg, shkzg) — dgn urutan itu,
+        " tiap pair OUT+IN pasti berdampingan (H sebelum S alfabet).
+        SORT lt_mseg BY mblnr mjahr matnr charg shkzg.
 
-          IF <ist>-has_pmb = abap_true AND <ist>-d_pmb < <ist>-t_pmb.
-            <ist>-stage = 1.
-          ELSEIF <ist>-has_prd = abap_true AND <ist>-d_prd < <ist>-t_prd.
-            <ist>-stage = 2.
-          ELSEIF lv_done_ok = abap_true.
-            <ist>-stage = 4.
-          ELSEIF <ist>-has_fin = abap_true.
-            <ist>-stage = 3.
-          ELSEIF <ist>-has_prd = abap_true.
-            <ist>-stage = 2.
-          ELSEIF <ist>-has_pmb = abap_true.
-            <ist>-stage = 1.
+        DATA: lv_hist_key  TYPE string,
+              lv_hist_key2 TYPE string,
+              lv_cur_out   TYPE abap_bool,
+              lv_cur_in    TYPE abap_bool,
+              ls_cur_out   TYPE mseg,
+              ls_cur_in    TYPE mseg,
+              lv_idx       TYPE i,
+              lv_next_idx  TYPE i,
+              lv_mseg_cnt  TYPE i.
+
+        DESCRIBE TABLE lt_mseg LINES lv_mseg_cnt.
+        lv_idx = 1.
+        WHILE lv_idx <= lv_mseg_cnt.
+          READ TABLE lt_mseg INTO ls_mseg INDEX lv_idx.
+          IF sy-subrc <> 0. EXIT. ENDIF.
+          CLEAR: lv_cur_out, lv_cur_in, ls_cur_out, ls_cur_in.
+          CONCATENATE ls_mseg-mblnr ls_mseg-mjahr ls_mseg-matnr ls_mseg-charg INTO lv_hist_key.
+          IF ls_mseg-shkzg = 'H'.
+            ls_cur_out = ls_mseg. lv_cur_out = abap_true.
           ELSE.
-            <ist>-stage = 2.
+            ls_cur_in  = ls_mseg. lv_cur_in  = abap_true.
           ENDIF.
+
+          " Lihat baris berikutnya — kalau key sama, itu pasangannya.
+          lv_next_idx = lv_idx + 1.
+          IF lv_next_idx <= lv_mseg_cnt.
+            DATA: ls_next TYPE mseg.
+            READ TABLE lt_mseg INTO ls_next INDEX lv_next_idx.
+            IF sy-subrc = 0.
+              CONCATENATE ls_next-mblnr ls_next-mjahr ls_next-matnr ls_next-charg INTO lv_hist_key2.
+              IF lv_hist_key = lv_hist_key2.
+                IF ls_next-shkzg = 'H'.
+                  ls_cur_out = ls_next. lv_cur_out = abap_true.
+                ELSE.
+                  ls_cur_in  = ls_next. lv_cur_in  = abap_true.
+                ENDIF.
+                lv_idx = lv_idx + 1.   " skip pasangannya di iterasi berikutnya
+              ENDIF.
+            ENDIF.
+          ENDIF.
+
+          " Build ty_hist_pair
+          CLEAR ls_hist.
+          IF lv_cur_out = abap_true.
+            ls_hist-mblnr = ls_cur_out-mblnr. ls_hist-mjahr = ls_cur_out-mjahr.
+            ls_hist-bwart = ls_cur_out-bwart.
+            ls_hist-matnr = ls_cur_out-matnr. ls_hist-charg = ls_cur_out-charg.
+            ls_hist-menge = ls_cur_out-menge. ls_hist-meins = ls_cur_out-meins.
+            ls_hist-from_werks = ls_cur_out-werks.
+            ls_hist-from_lgort = ls_cur_out-lgort.
+          ENDIF.
+          IF lv_cur_in = abap_true.
+            IF lv_cur_out = abap_false.
+              ls_hist-mblnr = ls_cur_in-mblnr. ls_hist-mjahr = ls_cur_in-mjahr.
+              ls_hist-bwart = ls_cur_in-bwart.
+              ls_hist-matnr = ls_cur_in-matnr. ls_hist-charg = ls_cur_in-charg.
+              ls_hist-menge = ls_cur_in-menge. ls_hist-meins = ls_cur_in-meins.
+            ENDIF.
+            ls_hist-to_werks = ls_cur_in-werks.
+            ls_hist-to_lgort = ls_cur_in-lgort.
+          ENDIF.
+          IF lv_cur_out = abap_true AND lv_cur_in = abap_true.
+            ls_hist-is_paired = abap_true.
+          ENDIF.
+          APPEND ls_hist TO lt_hist.
+          APPEND ls_hist-matnr TO lt_hist_mat_range.
+          lv_idx = lv_idx + 1.
+        ENDWHILE.
+
+        " Enrich MKPF (tanggal/user) + label bwart + convert UoM
+        LOOP AT lt_hist ASSIGNING <h>.
+          READ TABLE lt_mkpf INTO ls_mkpf
+            WITH KEY mblnr = <h>-mblnr mjahr = <h>-mjahr BINARY SEARCH.
+          IF sy-subrc = 0.
+            <h>-budat = ls_mkpf-budat.
+            <h>-cpudt = ls_mkpf-cpudt.
+            <h>-cputm = ls_mkpf-cputm.
+            <h>-usnam = ls_mkpf-usnam.
+            <h>-budat_str = zcl_cs_util=>fmt_date( ls_mkpf-budat ).
+          ENDIF.
+
+          " D40 #2: label + kelas warna badge
+          CASE <h>-bwart.
+            WHEN '301'. <h>-bwart_lbl = 'Cross Plant'.     <h>-bwart_cls = 'mv-blue'.
+            WHEN '302'. <h>-bwart_lbl = 'Cross Plant Rev'. <h>-bwart_cls = 'mv-blue'.
+            WHEN '311'. <h>-bwart_lbl = 'In Plant'.        <h>-bwart_cls = 'mv-yellow'.
+            WHEN '312'. <h>-bwart_lbl = 'In Plant Rev'.    <h>-bwart_cls = 'mv-yellow'.
+            WHEN '321'. <h>-bwart_lbl = 'Release QI'.      <h>-bwart_cls = 'mv-purple'.
+            WHEN '322'. <h>-bwart_lbl = 'QI Reverse'.      <h>-bwart_cls = 'mv-purple'.
+            WHEN '411'. <h>-bwart_lbl = 'To Free Stock'.   <h>-bwart_cls = 'mv-green'.
+            WHEN '412'. <h>-bwart_lbl = 'Free Rev'.        <h>-bwart_cls = 'mv-green'.
+            WHEN '413'. <h>-bwart_lbl = 'To SO Stock'.     <h>-bwart_cls = 'mv-green'.
+            WHEN '414'. <h>-bwart_lbl = 'SO Stock Rev'.    <h>-bwart_cls = 'mv-green'.
+            WHEN '101'. <h>-bwart_lbl = 'Goods Receipt'.   <h>-bwart_cls = 'mv-green'.
+            WHEN '261'. <h>-bwart_lbl = 'GI to Order'.     <h>-bwart_cls = 'mv-red'.
+            WHEN '601'. <h>-bwart_lbl = 'Delivery'.        <h>-bwart_cls = 'mv-red'.
+            WHEN OTHERS. <h>-bwart_lbl = <h>-bwart.        <h>-bwart_cls = 'mv-gray'.
+          ENDCASE.
+
+          CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+            EXPORTING input  = <h>-meins
+            IMPORTING output = <h>-meins.
         ENDLOOP.
 
-        " D22: FOKUS MRP PRODUKSI & FINISH.
-        DELETE lt_item_stage WHERE has_prd = abap_false AND has_fin = abap_false.
+        " Enrich MAKT (nama material)
+        SORT lt_hist_mat_range.
+        DELETE ADJACENT DUPLICATES FROM lt_hist_mat_range.
+        IF lt_hist_mat_range IS NOT INITIAL.
+          SELECT matnr maktx FROM makt
+            INTO CORRESPONDING FIELDS OF TABLE lt_hist_makt
+            FOR ALL ENTRIES IN lt_hist_mat_range
+            WHERE matnr = lt_hist_mat_range-table_line
+              AND spras = sy-langu.
+          SORT lt_hist_makt BY matnr.
+        ENDIF.
+        DATA: ls_makt_h TYPE makt.
+        LOOP AT lt_hist ASSIGNING <h>.
+          READ TABLE lt_hist_makt INTO ls_makt_h
+            WITH KEY matnr = <h>-matnr BINARY SEARCH.
+          IF sy-subrc = 0. <h>-maktx = ls_makt_h-maktx. ENDIF.
+          CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+            EXPORTING input  = <h>-matnr
+            IMPORTING output = <h>-matnr.
+        ENDLOOP.
+
+        " Urut kronologis descending (terbaru dulu).
+        SORT lt_hist BY cpudt DESCENDING cputm DESCENDING mblnr DESCENDING.
       ENDIF.
 
-      " 6. Ringkasan status per SO.
-      LOOP AT lt_temp_vbap INTO ls_vbap_row.
-        CLEAR ls_item_stage.
-        READ TABLE lt_item_stage INTO ls_item_stage
-          WITH TABLE KEY kdauf = ls_vbap_row-vbeln kdpos = ls_vbap_row-posnr.
-        IF sy-subrc <> 0. CONTINUE. ENDIF.
-
-        CLEAR ls_so_stat.
-        ls_so_stat-vbeln = ls_vbap_row-vbeln.
-        ls_so_stat-total = 1.
-        CASE ls_item_stage-stage.
-          WHEN 1. ls_so_stat-pembahanan = 1.
-          WHEN 2. ls_so_stat-produksi   = 1.
-          WHEN 3. ls_so_stat-readyassy  = 1.
-          WHEN 4. ls_so_stat-selesai    = 1.
-        ENDCASE.
-        COLLECT ls_so_stat INTO lt_so_stat.
+      " === D39: STOK SAAT INI (MSKA + MARD) ===
+      " MSKA = sales-order stock (SOBKZ='E'), scope SO+Item ini
+      " MARD = free stock (SOBKZ kosong) — masih tampilkan utk kelengkapan,
+      "        tidak difilter SO karena MARD tidak menyimpan referensi SO.
+      "        Kita filter per material yg pernah muncul di lt_hist (jadi
+      "        cuma material yg pernah dilihat di SO+Item ini).
+      DATA: lt_msks_stok TYPE TABLE OF mska.
+      SELECT matnr werks lgort charg kalab kains kaspe
+        FROM mska
+        INTO CORRESPONDING FIELDS OF TABLE lt_msks_stok
+        WHERE vbeln = lv_so
+          AND posnr = lv_item
+          AND sobkz = 'E'
+          AND ( ( werks = '1000' AND lgort = '1D00' )
+             OR ( werks = '2000'
+                  AND lgort IN ( '2KCS', '2261', '2262', '22E2', '22E3', '229K' ) ) ).
+      DATA: ls_msks_stok TYPE mska.
+      LOOP AT lt_msks_stok INTO ls_msks_stok.
+        IF ls_msks_stok-kalab = 0 AND ls_msks_stok-kains = 0 AND ls_msks_stok-kaspe = 0. CONTINUE. ENDIF.
+        CLEAR ls_stok.
+        ls_stok-matnr = ls_msks_stok-matnr.
+        ls_stok-werks = ls_msks_stok-werks.
+        ls_stok-lgort = ls_msks_stok-lgort.
+        ls_stok-charg = ls_msks_stok-charg.
+        ls_stok-labst = ls_msks_stok-kalab.
+        ls_stok-insme = ls_msks_stok-kains.
+        ls_stok-speme = ls_msks_stok-kaspe.
+        ls_stok-source = 'MSKA'.
+        APPEND ls_stok TO lt_stok.
       ENDLOOP.
-      SORT lt_so_stat BY vbeln.
 
-      " 7. Sembunyikan SO yang tidak punya satupun item bertahap whitelist.
-      LOOP AT lt_local_hdr INTO ls_hdr_row.
-        READ TABLE lt_so_stat TRANSPORTING NO FIELDS
-          WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
-        IF sy-subrc <> 0.
-          DELETE lt_local_hdr.
+      " Enrich UoM & maktx utk lt_stok.
+      IF lt_stok IS NOT INITIAL.
+        DATA: lt_stok_mat_range TYPE TABLE OF matnr.
+        LOOP AT lt_stok INTO ls_stok.
+          APPEND ls_stok-matnr TO lt_stok_mat_range.
+        ENDLOOP.
+        SORT lt_stok_mat_range.
+        DELETE ADJACENT DUPLICATES FROM lt_stok_mat_range.
+
+        DATA: lt_stok_mara TYPE TABLE OF mara,
+              ls_stok_mara TYPE mara,
+              lt_stok_makt TYPE TABLE OF makt,
+              ls_stok_makt TYPE makt.
+        SELECT matnr meins FROM mara
+          INTO CORRESPONDING FIELDS OF TABLE lt_stok_mara
+          FOR ALL ENTRIES IN lt_stok_mat_range
+          WHERE matnr = lt_stok_mat_range-table_line.
+        SORT lt_stok_mara BY matnr.
+        SELECT matnr maktx FROM makt
+          INTO CORRESPONDING FIELDS OF TABLE lt_stok_makt
+          FOR ALL ENTRIES IN lt_stok_mat_range
+          WHERE matnr = lt_stok_mat_range-table_line
+            AND spras = sy-langu.
+        SORT lt_stok_makt BY matnr.
+
+        FIELD-SYMBOLS <s> TYPE ty_stok.
+        LOOP AT lt_stok ASSIGNING <s>.
+          READ TABLE lt_stok_mara INTO ls_stok_mara
+            WITH KEY matnr = <s>-matnr BINARY SEARCH.
+          IF sy-subrc = 0.
+            <s>-meins = ls_stok_mara-meins.
+            CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+              EXPORTING input  = <s>-meins
+              IMPORTING output = <s>-meins.
+          ENDIF.
+          READ TABLE lt_stok_makt INTO ls_stok_makt
+            WITH KEY matnr = <s>-matnr BINARY SEARCH.
+          IF sy-subrc = 0. <s>-maktx = ls_stok_makt-maktx. ENDIF.
+          CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+            EXPORTING input  = <s>-matnr
+            IMPORTING output = <s>-matnr.
+        ENDLOOP.
+        SORT lt_stok BY werks lgort matnr charg.
+      ENDIF.
+
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+" === D42 Fase 3: Transfer Posting form MULTI-MATERIAL (mode TP In Plant 311) ===
+" Rancangan sesuai kesepakatan D42:
+"   - Mode: TP In Plant DEFAULT (R311='X', tanpa FST/TSO) -> movement type 311
+"   - Field kepala (COMMON semua baris):
+"       Referal MatDoc, NIK, Good Recipient, From Plant, From SLoc, To SLoc
+"   - Input material: TEXTAREA (paste dari Excel), format tab-separated
+"       Kolom: Material<TAB>Batch (1 baris per material)
+"   - Preview: query MSKA per baris -> tabel editable Qty TP
+"   - Free Stock/To SO: ditampilkan tapi DISABLED (fokus mode default)
+"
+" 2 STEP:
+"   Step 1 (input): user isi field kepala + textarea + klik Preview
+"   Step 2 (preview): server render tabel editable, user boleh edit Qty TP,
+"                    klik Submit (Fase 4 belum aktif) atau Back
+TYPES: BEGIN OF ty_trs_row,
+         line_no    TYPE i,          " nomor baris dari input textarea
+         matnr_str  TYPE string,     " raw input dari textarea
+         matnr      TYPE mska-matnr, " zero-padded (utk query)
+         batch      TYPE mska-charg,
+         maktx      TYPE makt-maktx,
+         qty_stok   TYPE p LENGTH 13 DECIMALS 3, " KALAB dari MSKA
+         qty_tp     TYPE p LENGTH 13 DECIMALS 3, " qty transfer, default=stok
+         meins      TYPE mara-meins,
+         so_num     TYPE vbak-vbeln, " SO dari MSKA
+         so_item    TYPE vbap-posnr, " Item dari MSKA
+         is_valid   TYPE abap_bool,  " true kalau MSKA ditemukan & qty > 0
+         err_msg    TYPE string,     " pesan error kalau tidak valid
+         matnr_disp TYPE string,     " #1: matnr tanpa leading zeros (display; matnr tetap ter-pad utk BAPI)
+       END OF ty_trs_row.
+
+DATA: lt_trs_rows TYPE TABLE OF ty_trs_row,
+      ls_trs_row  TYPE ty_trs_row.
+
+DATA: lv_trs_step      TYPE string,
+      lv_trs_matlist   TYPE string,   " textarea raw content
+      lv_trs_referal   TYPE string,   " Referal MatDoc (common)
+      lv_trs_pernr     TYPE string,   " NIK (common)
+      lv_trs_kpd       TYPE string,   " Good Recipient (common)
+      lv_trs_werks_f   TYPE string,   " From Plant (common)
+      lv_trs_lgort_f   TYPE string,   " From SLoc (common)
+      lv_trs_lgort_t   TYPE string,   " To SLoc (common; Plant sama = In Plant)
+      lv_trs_err       TYPE string,   " error message global
+      lv_trs_preview   TYPE abap_bool, " show preview block
+      lv_trs_valid_cnt TYPE i,        " berapa baris valid siap dipost
+      lv_trs_total_cnt TYPE i.        " total baris dari textarea
+
+lv_trs_step      = request->get_form_field( 'trs_step' ).
+lv_trs_matlist   = request->get_form_field( 'trs_matlist' ).
+lv_trs_referal   = request->get_form_field( 'trs_referal' ).
+lv_trs_pernr     = request->get_form_field( 'trs_pernr' ).
+lv_trs_kpd       = request->get_form_field( 'trs_kpd' ).
+lv_trs_werks_f   = request->get_form_field( 'trs_werks_f' ).
+lv_trs_lgort_f   = request->get_form_field( 'trs_lgort_f' ).
+lv_trs_lgort_t   = request->get_form_field( 'trs_lgort_t' ).
+
+TRANSLATE lv_trs_werks_f TO UPPER CASE.
+TRANSLATE lv_trs_lgort_f TO UPPER CASE.
+TRANSLATE lv_trs_lgort_t TO UPPER CASE.
+
+IF lv_trs_step = 'preview'.
+  " === Validasi field kepala wajib ===
+  IF lv_trs_werks_f IS INITIAL OR lv_trs_lgort_f IS INITIAL OR
+     lv_trs_lgort_t IS INITIAL OR lv_trs_matlist IS INITIAL.
+    lv_trs_err = 'Field kepala (From Plant, From SLoc, To SLoc) & daftar material wajib diisi.'.
+  ELSE.
+
+    " === Parse textarea: tiap baris = "Material<TAB>Batch" ===
+    " Support pembatas TAB (paste Excel) atau spasi (fallback ketikan manual)
+    DATA: lt_lines TYPE TABLE OF string,
+          lv_line  TYPE string,
+          lv_matnr_raw TYPE string,
+          lv_batch_raw TYPE string,
+          lv_lineno    TYPE i,
+          lv_tab       TYPE c LENGTH 1.
+    lv_tab = cl_abap_char_utilities=>horizontal_tab.
+    SPLIT lv_trs_matlist AT cl_abap_char_utilities=>cr_lf INTO TABLE lt_lines.
+    IF lt_lines IS INITIAL.
+      SPLIT lv_trs_matlist AT cl_abap_char_utilities=>newline INTO TABLE lt_lines.
+    ENDIF.
+
+    lv_lineno = 0.
+    LOOP AT lt_lines INTO lv_line.
+      lv_lineno = lv_lineno + 1.
+      " strip trailing \r kalau ada
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN lv_line WITH ''.
+      CONDENSE lv_line.
+      IF lv_line IS INITIAL. CONTINUE. ENDIF.
+
+      " split by TAB atau spasi
+      CLEAR: lv_matnr_raw, lv_batch_raw.
+      IF lv_line CS lv_tab.
+        SPLIT lv_line AT lv_tab INTO lv_matnr_raw lv_batch_raw.
+      ELSE.
+        SPLIT lv_line AT space INTO lv_matnr_raw lv_batch_raw.
+      ENDIF.
+      CONDENSE lv_matnr_raw. CONDENSE lv_batch_raw.
+
+      CLEAR ls_trs_row.
+      ls_trs_row-line_no = lv_lineno.
+      ls_trs_row-matnr_str = lv_matnr_raw.
+      ls_trs_row-batch = lv_batch_raw.
+      APPEND ls_trs_row TO lt_trs_rows.
+    ENDLOOP.
+
+    lv_trs_total_cnt = lines( lt_trs_rows ).
+    IF lv_trs_total_cnt = 0.
+      lv_trs_err = 'Daftar material kosong. Format: Material<TAB>Batch, satu baris per material.'.
+    ELSE.
+      " === Query MSKA per baris (validasi + ambil qty stok, SO, Item) ===
+      " Filter WERKS=from plant, LGORT=from sloc, SOBKZ='E', KALAB>0
+      " Kalau batch diisi -> filter juga; kalau kosong -> ambil batch pertama
+      FIELD-SYMBOLS <r> TYPE ty_trs_row.
+      DATA: ls_mska_line TYPE mska.
+      LOOP AT lt_trs_rows ASSIGNING <r>.
+        " pad material ke 18 digit
+        CALL FUNCTION 'CONVERSION_EXIT_MATN1_INPUT'
+          EXPORTING input  = <r>-matnr_str
+          IMPORTING output = <r>-matnr.
+        " #1: versi display tanpa leading zeros (matnr asli tetap ter-pad utk BAPI)
+        <r>-matnr_disp = <r>-matnr.
+        CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+          EXPORTING input  = <r>-matnr_disp
+          IMPORTING output = <r>-matnr_disp.
+
+        CLEAR ls_mska_line.
+        IF <r>-batch IS NOT INITIAL.
+          SELECT SINGLE matnr werks lgort charg vbeln posnr kalab
+            FROM mska
+            INTO CORRESPONDING FIELDS OF ls_mska_line
+            WHERE matnr = <r>-matnr
+              AND werks = lv_trs_werks_f
+              AND lgort = lv_trs_lgort_f
+              AND charg = <r>-batch
+              AND sobkz = 'E'
+              AND kalab > 0.
+        ELSE.
+          SELECT SINGLE matnr werks lgort charg vbeln posnr kalab
+            FROM mska
+            INTO CORRESPONDING FIELDS OF ls_mska_line
+            WHERE matnr = <r>-matnr
+              AND werks = lv_trs_werks_f
+              AND lgort = lv_trs_lgort_f
+              AND sobkz = 'E'
+              AND kalab > 0.
+        ENDIF.
+
+        IF sy-subrc = 0.
+          <r>-batch    = ls_mska_line-charg.
+          <r>-qty_stok = ls_mska_line-kalab.
+          <r>-qty_tp   = ls_mska_line-kalab.   " default = seluruh stok
+          <r>-so_num   = ls_mska_line-vbeln.
+          <r>-so_item  = ls_mska_line-posnr.
+          <r>-is_valid = abap_true.
+          lv_trs_valid_cnt = lv_trs_valid_cnt + 1.
+
+          " Ambil UoM & nama material
+          DATA: ls_mara_r TYPE mara, ls_makt_r TYPE makt.
+          SELECT SINGLE matnr meins FROM mara
+            INTO CORRESPONDING FIELDS OF ls_mara_r
+            WHERE matnr = <r>-matnr.
+          <r>-meins = ls_mara_r-meins.
+          CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+            EXPORTING input  = <r>-meins
+            IMPORTING output = <r>-meins.
+
+          SELECT SINGLE matnr maktx FROM makt
+            INTO CORRESPONDING FIELDS OF ls_makt_r
+            WHERE matnr = <r>-matnr
+              AND spras = sy-langu.
+          <r>-maktx = ls_makt_r-maktx.
+        ELSE.
+          <r>-is_valid = abap_false.
+          IF <r>-batch IS NOT INITIAL.
+            <r>-err_msg = 'Stok tidak ditemukan (Material+Batch+SLoc)'.
+          ELSE.
+            <r>-err_msg = 'Stok tidak ditemukan (Material+SLoc)'.
+          ENDIF.
         ENDIF.
       ENDLOOP.
+
+      lv_trs_preview = abap_true.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+" === D43 Fase 4: EKSEKUSI POSTING (BAPI_GOODSMVT_CREATE, movement 311) ===
+" Logic direplikasi dari YPPI013 (SAVE3, mode r311) sebatas yang bisa
+" diverifikasi dari kode: VAL_SALES_ORD/VAL_S_ORD_ITEM, konversi UoM ke
+" internal, gm_code '04', dua kali cek error (create+commit).
+" TIDAK termasuk: WM/TO (CREATE_TO_TP), fallback MCHB, cetak smartform,
+" BDC ZRMV_TIMEOUT (report itu kosong, tidak melakukan apa pun).
+" ⚠️ KOREKSI (dikonfirmasi via SE11 di sistem user): struktur
+"    BAPI2017_GM_ITEM_CREATE TIDAK punya field MATERIAL_LONG — field yg
+"    benar adalah MATERIAL (18 char). Field material_long yg dipakai di
+"    kode sebelumnya akan GAGAL AKTIVASI.
+DATA: lv_trs_result_ok   TYPE abap_bool,
+      lv_trs_result_msg  TYPE string,
+      lv_trs_matdoc      TYPE bapi2017_gm_head_ret-mat_doc,
+      lv_trs_matdoc_yr   TYPE bapi2017_gm_head_ret-doc_year.
+
+IF lv_trs_step = 'submit'.
+
+  DATA: ls_gm_head TYPE bapi2017_gm_head_01,
+        ls_gm_code TYPE bapi2017_gm_code,
+        lt_gm_item TYPE TABLE OF bapi2017_gm_item_create,
+        ls_gm_item TYPE bapi2017_gm_item_create,
+        lt_gm_ret  TYPE TABLE OF bapiret2,
+        ls_gm_ret  TYPE bapiret2,
+        lv_line_idx TYPE i,
+        lv_idx_str  TYPE string,   " CONCATENATE butuh operand character-like
+        lv_fname_sel   TYPE string,
+        lv_fname_matnr TYPE string,
+        lv_fname_batch TYPE string,
+        lv_fname_so    TYPE string,
+        lv_fname_item  TYPE string,
+        lv_fname_uom   TYPE string,
+        lv_fname_qty   TYPE string,
+        lv_val_sel     TYPE string,
+        lv_val_matnr   TYPE string,
+        lv_val_batch   TYPE string,
+        lv_val_so      TYPE string,
+        lv_val_item    TYPE string,
+        lv_val_uom     TYPE string,
+        lv_val_qty     TYPE string,
+        lv_err_txt     TYPE string,
+        lv_any_item    TYPE abap_bool.
+
+  " Header — pstng_date/doc_date hari ini, header_txt dari Referal MatDoc
+  " (keputusan eksplisit karena sumber asli di YPPI013 ambigu/bug).
+  ls_gm_head-pstng_date = sy-datum.
+  ls_gm_head-doc_date   = sy-datum.
+  ls_gm_head-header_txt = lv_trs_referal.
+  ls_gm_head-pr_uname   = sy-uname.
+
+  ls_gm_code-gm_code = '04'.
+
+  " Rekonstruksi baris dari field dinamis trs_sel_N / trs_matnr_N / dst,
+  " karena form preview mengirim field per-baris (bukan tabel internal).
+  DO 500 TIMES.
+    lv_line_idx = sy-index.
+    lv_idx_str  = lv_line_idx.
+    CONDENSE lv_idx_str.
+
+    CONCATENATE 'TRS_SEL_'   lv_idx_str  INTO lv_fname_sel.
+    lv_val_sel = request->get_form_field( lv_fname_sel ).
+    IF lv_val_sel IS INITIAL.
+      " Kalau baris ini tidak ada di form sama sekali (bukan cuma unchecked),
+      " asumsikan sudah lewat baris terakhir -> berhenti scan lebih awal
+      " hanya jika field matnr juga kosong (baris benar2 tidak ada).
+      CONCATENATE 'TRS_MATNR_' lv_idx_str  INTO lv_fname_matnr.
+      lv_val_matnr = request->get_form_field( lv_fname_matnr ).
+      IF lv_val_matnr IS INITIAL.
+        CONTINUE.
+      ELSE.
+        CONTINUE. " ada barisnya tapi tidak dicentang -> skip, bukan berhenti
+      ENDIF.
+    ENDIF.
+
+    lv_any_item = abap_true.
+
+    CONCATENATE 'TRS_MATNR_' lv_idx_str  INTO lv_fname_matnr.
+    CONCATENATE 'TRS_BATCH_' lv_idx_str  INTO lv_fname_batch.
+    CONCATENATE 'TRS_SO_'    lv_idx_str  INTO lv_fname_so.
+    CONCATENATE 'TRS_ITEM_'  lv_idx_str  INTO lv_fname_item.
+    CONCATENATE 'TRS_UOM_'   lv_idx_str  INTO lv_fname_uom.
+    CONCATENATE 'TRS_QTY_'   lv_idx_str  INTO lv_fname_qty.
+
+    lv_val_matnr = request->get_form_field( lv_fname_matnr ).
+    lv_val_batch = request->get_form_field( lv_fname_batch ).
+    lv_val_so    = request->get_form_field( lv_fname_so ).
+    lv_val_item  = request->get_form_field( lv_fname_item ).
+    lv_val_uom   = request->get_form_field( lv_fname_uom ).
+    lv_val_qty   = request->get_form_field( lv_fname_qty ).
+
+    CLEAR ls_gm_item.
+    ls_gm_item-material    = lv_val_matnr.   " D48-FIX: MATERIAL (bukan MATERIAL_LONG,
+                                              " field itu tidak ada di struktur).
+                                              " MOVE_MAT dibiarkan kosong, SAP
+                                              " auto-derive dari MATERIAL.
+    ls_gm_item-plant       = lv_trs_werks_f.
+    ls_gm_item-stge_loc    = lv_trs_lgort_f.
+    ls_gm_item-batch       = lv_val_batch.
+    ls_gm_item-move_type   = '311'.
+    ls_gm_item-move_plant  = lv_trs_werks_f.
+    ls_gm_item-move_stloc  = lv_trs_lgort_t.
+    ls_gm_item-move_batch  = lv_val_batch.
+    ls_gm_item-entry_qnt   = lv_val_qty.
+
+    " UoM: konversi eksternal->internal (CUNIT_INPUT) sebelum ke BAPI —
+    " kebalikan dari konversi tampilan (CUNIT_OUTPUT) yang dipakai di UI.
+    ls_gm_item-entry_uom = lv_val_uom.
+    CALL FUNCTION 'CONVERSION_EXIT_CUNIT_INPUT'
+      EXPORTING input          = ls_gm_item-entry_uom
+      IMPORTING output         = ls_gm_item-entry_uom
+      EXCEPTIONS unit_not_found = 1
+                 OTHERS         = 2.
+
+    " Stok SO: VAL_SALES_ORD/VAL_S_ORD_ITEM (bukan SALES_ORD/S_ORD_ITEM
+    " langsung) — temuan eksplisit dari SAVE3 di YPPI013.
+    IF lv_val_so IS NOT INITIAL.
+      ls_gm_item-spec_stock     = 'E'.
+      ls_gm_item-val_sales_ord  = lv_val_so.
+      ls_gm_item-val_s_ord_item = lv_val_item.
+    ENDIF.
+
+    APPEND ls_gm_item TO lt_gm_item.
+  ENDDO.
+
+  IF lv_any_item = abap_false OR lt_gm_item IS INITIAL.
+    lv_trs_result_ok  = abap_false.
+    lv_trs_result_msg = 'Tidak ada baris valid yang dicentang untuk diposting.'.
+  ELSE.
+
+    CALL FUNCTION 'BAPI_GOODSMVT_CREATE'
+      EXPORTING
+        goodsmvt_header   = ls_gm_head
+        goodsmvt_code     = ls_gm_code
+      IMPORTING
+        materialdocument  = lv_trs_matdoc
+        matdocumentyear   = lv_trs_matdoc_yr
+      TABLES
+        goodsmvt_item     = lt_gm_item
+        return            = lt_gm_ret.
+
+    CLEAR lv_err_txt.
+    LOOP AT lt_gm_ret INTO ls_gm_ret WHERE type = 'E'.
+      IF lv_err_txt IS NOT INITIAL.
+        CONCATENATE lv_err_txt '; ' ls_gm_ret-message INTO lv_err_txt.
+      ELSE.
+        lv_err_txt = ls_gm_ret-message.
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_err_txt IS NOT INITIAL.
+      lv_trs_result_ok  = abap_false.
+      lv_trs_result_msg = lv_err_txt.
+    ELSE.
+      REFRESH lt_gm_ret.
+      CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+        EXPORTING wait   = 'X'
+        IMPORTING return = ls_gm_ret.
+      APPEND ls_gm_ret TO lt_gm_ret.
+
+      CLEAR lv_err_txt.
+      LOOP AT lt_gm_ret INTO ls_gm_ret WHERE type = 'E'.
+        IF lv_err_txt IS NOT INITIAL.
+          CONCATENATE lv_err_txt '; ' ls_gm_ret-message INTO lv_err_txt.
+        ELSE.
+          lv_err_txt = ls_gm_ret-message.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_err_txt IS NOT INITIAL.
+        lv_trs_result_ok  = abap_false.
+        lv_trs_result_msg = lv_err_txt.
+      ELSE.
+        lv_trs_result_ok  = abap_true.
+        lv_trs_result_msg = 'Posting berhasil.'.
+      ENDIF.
     ENDIF.
   ENDIF.
 
-SORT lt_local_hdr BY erdat DESCENDING vbeln DESCENDING.
-lv_local_cnt = lines( lt_local_hdr ).
+ENDIF.
 
 DATA: lv_ts_date TYPE string,
       lv_ts_time TYPE string.
@@ -390,15 +1289,90 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Central Storage Production Dashboard - KMI 2 Surabaya</title>
+  <title>Monitoring Material - Central Storage KMI 2</title>
   <link rel="stylesheet" href="css/style.css?r=12">
+  <style>
+    /* D40 saran#2: movement type badges */
+    .mv-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+    }
+    .mv-blue   { background:#dbeafe; color:#1e40af; }
+    .mv-yellow { background:#fef3c7; color:#92400e; }
+    .mv-purple { background:#ede9fe; color:#5b21b6; }
+    .mv-green  { background:#dcfce7; color:#15803d; }
+    .mv-red    { background:#fee2e2; color:#991b1b; }
+    .mv-gray   { background:#f3f4f6; color:#4b5563; }
+    /* Hover highlight utk hist rows */
+    .hist-row:hover { background:#fafbfc; cursor:default; }
+    .hist-row[title] { cursor:help; }
+    /* #3: tooltip jargon di header kolom */
+    th[title] { text-decoration:underline dotted #9ca3af; cursor:help; }
+    /* #5: badge status SO/Item */
+    .stat-badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:0.74rem; font-weight:600; cursor:help; }
+    .stat-C { background:#dcfce7; color:#15803d; } .stat-B { background:#fef3c7; color:#92400e; } .stat-A { background:#f3f4f6; color:#4b5563; }
+    /* #7: badge status komponen BOM */
+    .cst-badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:600; cursor:help; white-space:nowrap; }
+    .cst-good { background:#dcfce7; color:#15803d; } .cst-warn { background:#fef3c7; color:#92400e; }
+    .cst-blue { background:#dbeafe; color:#1e40af; } .cst-crit { background:#fee2e2; color:#991b1b; }
+    .cst-gray { background:#f3f4f6; color:#6b7280; }
+    /* #6: donut */
+    .donut-wrap { display:flex; gap:22px; flex-wrap:wrap; margin:4px 0 14px; }
+    .donut-card { display:flex; flex-direction:column; align-items:center; background:#f9fafb; border:1px solid #eef0f2; border-radius:10px; padding:12px 20px; }
+    .donut-cap { font-size:0.74rem; color:#374151; font-weight:700; margin-top:6px; letter-spacing:.3px; }
+    .donut-sub { font-size:0.68rem; color:#9ca3af; }
+    /* #2: mode + collapsible transfer */
+    .mode-bar { display:flex; align-items:center; gap:14px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:8px 12px; margin-bottom:12px; font-size:0.82rem; flex-wrap:wrap; }
+    .pel-main { display:flex; gap:20px; align-items:flex-start; }
+    .pel-left { flex:1; min-width:0; }
+    .pel-right { width:40%; max-width:430px; flex-shrink:0; }
+    .pel-main.trs-collapsed .pel-right { display:none; }
+    .collapse-btn { margin-left:auto; font-size:0.76rem; color:#2563eb; background:#fff; border:1px solid #c7d2fe; border-radius:6px; padding:5px 10px; cursor:pointer; }
+    @media (max-width:900px){ .pel-main{ flex-direction:column; } .pel-right{ width:100%; max-width:none; } }
+    /* D46: baris header pengelompokan per SLoc (tab Produksi & Stok) */
+    .sloc-group-row td {
+      background:#eef2ff; color:#4338ca; font-weight:700;
+      font-size:0.74rem; letter-spacing:0.3px; padding:6px 12px !important;
+      border-top:1px solid #c7d2fe;
+    }
+    /* BOM expand/collapse all button */
+    .bom-collapse-btn { margin-left:auto; font-size:0.74rem; color:#1e40af; background:#eef2ff; border:1px solid #a5b4fc; border-radius:6px; padding:5px 10px; cursor:pointer; white-space:nowrap; }
+    .bom-collapse-btn:hover { background:#dbeafe; }
+    /* BOM section animation */
+    .bom-section-wrapper { max-height:0; overflow:hidden; transition:max-height .3s ease; }
+    .bom-section-wrapper.bom-open { max-height:2000px; }
+    /* Filter bar tab Pembahanan/Produksi — search material + toggle kolom (client-side) */
+    .ord-filter-bar { display:flex; gap:8px; margin:12px 0 10px 0; padding:8px 10px; background:#f9fafb; border-radius:6px; flex-wrap:wrap; align-items:center; }
+    .col-toggle-wrap { position:relative; }
+    .col-toggle-btn { font-size:0.78rem; color:#374151; background:#fff; border:1px solid #d1d5db; border-radius:5px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
+    .col-toggle-btn:hover { background:#f3f4f6; }
+    .col-menu { display:none; position:absolute; right:0; top:calc(100% + 4px); z-index:20; background:#fff; border:1px solid #d1d5db; border-radius:7px; box-shadow:0 6px 18px rgba(0,0,0,0.12); padding:6px; min-width:170px; }
+    .col-menu label { display:flex; align-items:center; gap:8px; font-size:0.8rem; color:#374151; padding:5px 8px; border-radius:5px; cursor:pointer; white-space:nowrap; }
+    .col-menu label:hover { background:#f3f4f6; }
+    .col-menu input { cursor:pointer; }
+    /* Chip Recent/Saved SO (localStorage, maks 8) */
+    .recent-so-wrap { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:-4px 0 14px 0; padding:0 2px; }
+    .recent-so-lbl { font-size:0.72rem; color:#6b7280; font-weight:600; letter-spacing:0.3px; white-space:nowrap; }
+    .recent-so-chips { display:flex; gap:6px; flex-wrap:wrap; }
+    .recent-chip { display:inline-flex; align-items:stretch; background:#eef2ff; border:1px solid #c7d2fe; border-radius:16px; overflow:hidden; }
+    .recent-chip-main { background:none; border:none; cursor:pointer; font-size:0.76rem; color:#3730a3; padding:4px 4px 4px 12px; display:inline-flex; align-items:center; gap:6px; max-width:240px; }
+    .recent-chip-main:hover { color:#1e1b4b; }
+    .recent-chip-mat { color:#6366f1; font-family:monospace; font-size:0.72rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:120px; }
+    .recent-chip-x { background:none; border:none; cursor:pointer; color:#818cf8; font-size:0.95rem; line-height:1; padding:0 9px; }
+    .recent-chip-x:hover { color:#dc2626; background:#e0e7ff; }
+  </style>
 </head>
 <body>
 
   <div class="header-bar">
     <div class="header-title">
-      <h1>Central Storage Production Dashboard</h1>
-      <p>Monitoring Progres Produksi &amp; Alur Transit Material &#8212; Plant 2000 Surabaya</p>
+      <h1>Central Storage Monitoring</h1>
+      <p>Dashboard Pergerakan Material per SO+Item &#8212; Plant 1000/2000 Surabaya</p>
     </div>
     <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_layout_user %></span>
       <div class="user-dropdown" id="user-dropdown">
@@ -410,128 +1384,1174 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   </div>
 
   <div class="navbar">
-    <a href="index.htm" class="nav-btn"><span class="nav-icon">&#128269;</span>Pelacakan</a>
-    <a href="monitoring.htm" class="nav-btn active"><span class="nav-icon">&#9741;</span>Monitoring</a>
-    <a href="riwayat.htm" class="nav-btn"><span class="nav-icon">&#128220;</span>Riwayat</a>
+    <a href="index3a.htm" class="nav-btn"><span class="nav-icon">&#128202;</span>Dashboard</a>
+    <a href="monitoring.htm" class="nav-btn active"><span class="nav-icon">&#128269;</span>Monitoring</a>
   </div>
 
-  <div class="filter-card">
-    <form method="get" action="monitoring.htm">
-      <div class="filter-form">
-        <div class="form-group" style="width:13%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_vbeln %>" placeholder="10000021 atau sebagian"></div>
-        <div class="form-group" style="width:10%;"><label>Nomor Item</label><input type="text" id="item_num" name="item_num" value="<%= lv_ui_posnr %>" placeholder="10 / 000010"></div>
-        <div class="form-group" style="width:12%;"><label>Kode Customer</label><input type="text" id="cust_num" name="cust_num" value="<%= lv_ui_kunnr %>" placeholder="Kode SAP"></div>
-        <div class="form-group" style="width:19%;"><label>Nama Customer</label><input type="text" id="cust_name" name="cust_name" value="<%= lv_ui_name %>" placeholder="Cari nama customer..."></div>
-        <div class="form-group" style="width:14%;"><label>Dari Tanggal</label><input type="date" id="date_from" name="date_from" value="<%= lv_ui_edf %>"></div>
-        <div class="form-group" style="width:14%;"><label>Sampai Tanggal</label><input type="date" id="date_to" name="date_to" value="<%= lv_ui_edt %>"></div>
-        <div class="btn-submit"><button type="submit" id="search_btn" name="search_btn" value="X">CARI DATA</button></div>
-      </div>
-    </form>
-  </div>
+  <div class="content">
 
-  <div class="dashboard-layout">
-    <div class="sidebar-panel">
-      <div class="list-container">
-        <div class="list-header">Daftar Sales Order (<%= lv_local_cnt %> Dokumen)</div>
-        <div id="so-list-viewport" data-page-size="10" style="max-height: 520px; overflow-y: auto;">
-          <% IF lv_is_srch = abap_false. %>
+    <!-- FILTER: Nomor SO + Nomor Item -->
+    <div class="filter-card">
+      <form method="get" action="monitoring.htm">
+        <div class="filter-form">
+          <div class="form-group" style="width:30%;"><label>Nomor Sales Order</label><input type="text" id="so_num" name="so_num" value="<%= lv_ui_so %>" placeholder="10000021" required></div>
+          <div class="form-group" style="width:30%;"><label>Nomor Item</label><input type="text" id="item_num" name="item_num" value="<%= lv_ui_item %>" placeholder="10 / 000010" required></div>
+          <div class="btn-submit"><button type="submit">CARI DATA</button></div>
+        </div>
+      </form>
+    </div>
+
+    <!-- Recent/Saved SO (localStorage, maks 8) — diisi client-side oleh pelRecent -->
+    <div id="recent-so-wrap" class="recent-so-wrap" style="display:none;">
+      <span class="recent-so-lbl">&#128337;&nbsp;Terakhir dibuka:</span>
+      <div id="recent-so-chips" class="recent-so-chips"></div>
+    </div>
+    <% IF lv_so_found = abap_true. %>
+    <div id="cs-current-so" data-so="<%= lv_ui_so %>" data-item="<%= lv_ui_item %>" data-mat="<%= ls_vbap_hdr-matnr %>" style="display:none;"></div>
+    <% ENDIF. %>
+
+    <!-- #2: Mode Monitoring/Transaksi + panel Transfer collapsible -->
+    <div class="mode-bar">
+      <span style="font-weight:600;color:#4338ca;">MODE:</span>
+      <label style="cursor:pointer;"><input type="radio" name="pel_mode" id="mode-mon" onclick="pelSetMode('mon')"> &#128421;&nbsp;Monitoring <span style="color:#9ca3af;">(tabel lebar penuh)</span></label>
+      <label style="cursor:pointer;"><input type="radio" name="pel_mode" id="mode-trx" onclick="pelSetMode('trx')"> &#9998;&nbsp;Transaksi <span style="color:#9ca3af;">(tampilkan form Transfer)</span></label>
+      <button type="button" class="collapse-btn" id="pel-collapse-btn" onclick="pelToggleTransfer()">Transfer Posting &#9654;</button>
+    </div>
+
+    <!-- LAYOUT 2 KOLOM (flex, collapsible) -->
+    <div class="pel-main" id="pel-main">
+      <div class="pel-left">
+
+        <% IF lv_has_input = abap_false. %>
+        <div class="list-container">
           <div class="empty-state">
             <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/>
             </svg>
-            <h3>Mulai Pencarian</h3>
-            <p>Masukkan Nomor SO, Nomor Item, kode/nama customer, atau rentang tanggal di atas, lalu klik <strong>CARI DATA</strong>.</p>
+            <h3>Mulai</h3>
+            <p>Masukkan Nomor Sales Order dan Nomor Item di atas, lalu klik <strong>CARI DATA</strong> untuk melihat daftar order per lokasi.</p>
           </div>
-          <% ENDIF. %>
-          <% IF lv_is_srch = abap_true AND lv_local_cnt = 0. %>
-          <div class="empty-state">
-            <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="36" cy="36" r="34" stroke="#d1d5db" stroke-width="2"/>
-              <circle cx="32" cy="30" r="12" stroke="#9ca3af" stroke-width="2.5"/>
-              <line x1="41" y1="40" x2="54" y2="53" stroke="#9ca3af" stroke-width="2.5" stroke-linecap="round"/>
-              <line x1="28" y1="30" x2="36" y2="30" stroke="#d1d5db" stroke-width="2" stroke-linecap="round"/>
-              <line x1="32" y1="26" x2="32" y2="34" stroke="#d1d5db" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-            <h3>
-              <% IF lv_ui_vbeln IS NOT INITIAL. %>
-                SO "<%= lv_ui_vbeln %>" tidak ditemukan
-              <% ELSEIF lv_ui_posnr IS NOT INITIAL. %>
-                Item "<%= lv_ui_posnr %>" tidak ditemukan
-              <% ELSEIF lv_ui_name IS NOT INITIAL. %>
-                Tidak ada SO untuk customer "<%= lv_ui_name %>"
-              <% ELSEIF lv_ui_kunnr IS NOT INITIAL. %>
-                Tidak ada SO untuk kode customer "<%= lv_ui_kunnr %>"
-              <% ELSE. %>
-                Tidak ada hasil untuk filter ini
-              <% ENDIF. %>
-            </h3>
-            <p>
-              <% IF lv_ui_name IS NOT INITIAL. %>
-                Nama customer tidak ditemukan di KNA1, atau tidak ada SO aktif di Plant 2000 (dengan item pada tahap Produksi/Ready Assy/Selesai) untuk rentang tanggal yang dipilih.
-              <% ELSEIF lv_ui_vbeln IS NOT INITIAL OR lv_ui_posnr IS NOT INITIAL. %>
-                Coba cek nomor SO/item atau perluas rentang tanggal pencarian.
-              <% ELSE. %>
-                Coba perluas rentang tanggal, atau hapus salah satu filter untuk memperluas hasil pencarian.
-              <% ENDIF. %>
-            </p>
-            <a href="monitoring.htm" class="btn-reset">Reset Filter</a>
-          </div>
-          <% ENDIF. %>
-
-          <% IF lv_local_cnt > 0. %>
-            <% LOOP AT lt_local_hdr INTO ls_hdr_row. %>
-            <%
-              lv_dd = zcl_cs_util=>fmt_date( ls_hdr_row-erdat ).
-              CLEAR lv_cust_name_dsp.
-              READ TABLE lt_cust_names INTO ls_cust_name
-                WITH KEY kunnr = ls_hdr_row-kunnr BINARY SEARCH.
-              IF sy-subrc = 0. lv_cust_name_dsp = ls_cust_name-name1. ENDIF.
-
-              " D23: status 4 TAHAP.
-              CLEAR ls_so_stat_r.
-              READ TABLE lt_so_stat INTO ls_so_stat_r
-                WITH KEY vbeln = ls_hdr_row-vbeln BINARY SEARCH.
-              lv_item_cnt = ls_so_stat_r-total.
-              CLEAR: lv_border_cls, lv_bg_color, lv_fg_color, lv_stat_label.
-              IF ls_so_stat_r-selesai = ls_so_stat_r-total AND ls_so_stat_r-total > 0.
-                lv_stat_label = 'Selesai'.    lv_border_cls = 'so-bl-green'.  lv_bg_color = '#dcfce7'. lv_fg_color = '#15803d'.
-              ELSEIF ls_so_stat_r-readyassy > 0 OR ls_so_stat_r-selesai > 0.
-                lv_stat_label = 'Ready Assy'. lv_border_cls = 'so-bl-blue'.   lv_bg_color = '#dbeafe'. lv_fg_color = '#1e40af'.
-              ELSEIF ls_so_stat_r-produksi > 0.
-                lv_stat_label = 'Produksi'.   lv_border_cls = 'so-bl-yellow'. lv_bg_color = '#fef3c7'. lv_fg_color = '#92400e'.
-              ELSE.
-                lv_stat_label = 'Pembahanan'. lv_border_cls = 'so-bl-orange'. lv_bg_color = '#f3f4f6'. lv_fg_color = '#6b7280'.
-              ENDIF.
-            %>
-            <div class="so-item-row <%= lv_border_cls %>" id="row-<%= ls_hdr_row-vbeln %>" data-type="so-card" onclick="viewDetails('<%= ls_hdr_row-vbeln %>')">
-              <div class="so-meta">
-                <span class="so-id">SO #<%= ls_hdr_row-vbeln %></span>
-                <span class="so-badge"><span class="badge"><%= lv_item_cnt %> Item</span></span>
-              </div>
-              <div class="so-cust-name"><%= lv_cust_name_dsp %></div>
-              <span class="so-status-label" style="background:<%= lv_bg_color %>; color:<%= lv_fg_color %>;"><%= lv_stat_label %></span>
-              <div class="so-date">Tgl: <%= lv_dd %> | Tipe: <%= ls_hdr_row-auart %></div>
-            </div>
-            <% ENDLOOP. %>
-          <% ENDIF. %>
         </div>
-        <div class="pagination-ctrl">
-          <button type="button" id="btn-prev" onclick="changePage(-1)">&laquo; Prev</button>
-          <span id="page-indicator">1 / 1</span>
-          <button type="button" id="btn-next" onclick="changePage(1)">Next &raquo;</button>
+        <% ELSEIF lv_so_found = abap_false. %>
+        <div class="list-container">
+          <div class="empty-state">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <h3>SO / Item Tidak Ditemukan</h3>
+            <p>Sales Order "<%= lv_ui_so %>" item "<%= lv_ui_item %>" tidak ditemukan di VBAP. Periksa kembali nomor SO dan nomor item.</p>
+            <a href="monitoring.htm" class="btn-reset">Reset</a>
+          </div>
+        </div>
+        <% ELSE. %>
+
+        <div class="bom-title" style="margin-bottom:2px;">SO #<%= ls_vbap_hdr-vbeln %> &#8212; Item <%= ls_vbap_hdr-posnr %></div>
+        <p style="font-size:0.8rem;color:#6b7280;margin:0 0 16px 0;"><%= ls_vbap_hdr-matnr %> &mdash; <%= ls_vbap_hdr-arktx %></p>
+
+        <nav class="tab-nav" id="pel-tabs">
+          <button class="tab-btn active" onclick="pelTab('tab-info', this)">&#9635;&nbsp;Info Order</button>
+          <button class="tab-btn" onclick="pelTab('tab-pmb', this)">&#129521;&nbsp;Pembahanan</button>
+          <button class="tab-btn" onclick="pelTab('tab-prod', this)">&#9881;&nbsp;Produksi</button>
+          <button class="tab-btn" onclick="pelTab('tab-stok', this)">&#128230;&nbsp;Stok Saat Ini</button>
+          <button class="tab-btn" onclick="pelTab('tab-hist', this)">&#128260;&nbsp;Riwayat Pergerakan</button>
+          <button class="tab-btn bom-collapse-btn" id="bom-collapse-btn" onclick="pelToggleAllBom()">&#9776;&nbsp;Expand BOM</button>
+        </nav>
+
+        <!-- ===== TAB PEMBAHANAN — Plant 1000 / SLoc 1D00 ===== -->
+        <div class="tab-pane" id="tab-pmb">
+          <p style="font-size:0.76rem;color:#9ca3af;margin:12px 0 10px 0;">Order dengan lokasi penerimaan Plant 1000 / SLoc 1D00, untuk SO+Item ini.</p>
+          <div class="ord-filter-bar">
+            <div style="font-size:0.72rem; color:#6b7280; letter-spacing:0.3px; font-weight:600;">FILTER:</div>
+            <input type="text" id="pmb-search-mat" placeholder="&#128269; Cari kode/nama material..." oninput="pelOrdFilter('pmb')" style="flex:1; min-width:180px; padding:6px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:0.82rem;">
+            <div class="col-toggle-wrap">
+              <button type="button" class="col-toggle-btn" onclick="pelToggleColMenu('pmb', event)">&#9881;&nbsp;Kolom</button>
+              <div class="col-menu" id="pmb-col-menu">
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',0,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',1,this.checked)"> Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',2,this.checked)"> Target QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',3,this.checked)"> Del QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',4,this.checked)"> Progres</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('pmb',5,this.checked)"> Sloc</label>
+              </div>
+            </div>
+            <span id="pmb-count-info" style="font-size:0.72rem; color:#9ca3af;"></span>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:16%;">No Material</th>
+                  <th style="width:32%;">Material</th>
+                  <th style="width:12%;text-align:right;" title="Jumlah yang direncanakan diproduksi pada order ini.">Target QTY</th>
+                  <th style="width:12%;text-align:right;" title="Jumlah yang sudah selesai/diterima dari order ini.">Del QTY</th>
+                  <th style="width:20%;text-align:center;" title="Persentase Del QTY terhadap Target QTY.">Progres</th>
+                  <th style="width:8%;" title="Storage Location — lokasi penyimpanan di dalam plant.">Sloc</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% DATA: lv_has_row TYPE abap_bool,
+                          lv_rowid   TYPE string.
+                   CLEAR lv_has_row.
+                   LOOP AT lt_ord INTO ls_ord WHERE pwerk = lc_werks_1000.
+                     lv_has_row = abap_true.
+                     lv_rowid = sy-tabix.
+                     IF ls_ord-psmng > 0.
+                       lv_has_prd = abap_true.
+                       lv_prog = ( ls_ord-wemng / ls_ord-psmng ) * 100.
+                       IF lv_prog > 100. lv_prog = 100. ENDIF.
+                       lv_bcls = zcl_cs_util=>prog_bar_class( lv_prog ).
+                       lv_pcls = zcl_cs_util=>prog_txt_class( lv_prog ).
+                     ELSE.
+                       lv_has_prd = abap_false. lv_prog = 0.
+                     ENDIF. %>
+                <tr class="clickable-item-row" data-ord-mat="<%= ls_ord-matnr %> <%= ls_ord-maktx %>" onclick="pelToggleBom('<%= lv_rowid %>')">
+                  <td><code class="mat-code"><%= ls_ord-matnr %></code></td>
+                  <td><%= ls_ord-maktx %> <span style="font-size:0.72rem;color:#9ca3af;">(Klik BOM)</span></td>
+                  <td style="text-align:right;"><span class="num-fmt"><%= ls_ord-psmng %></span> <%= ls_ord-meins %></td>
+                  <td style="text-align:right;"><span class="num-fmt"><%= ls_ord-wemng %></span> <%= ls_ord-meins %></td>
+                  <td>
+                    <% IF lv_has_prd = abap_true. %>
+                    <div class="prog-container">
+                      <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= zcl_cs_util=>css_pct( lv_prog ) %>%;"></div></div></div>
+                      <span class="prog-pct <%= lv_pcls %>"><%= lv_prog %>%</span>
+                    </div>
+                    <% ELSE. %><span style="font-style:italic;color:#9ca3af;font-size:0.8rem;">No Target</span>
+                    <% ENDIF. %>
+                  </td>
+                  <td><%= ls_ord-lgort %></td>
+                </tr>
+                <tr id="bomrow-<%= lv_rowid %>" style="display:none;background:#fafafa;">
+                  <td colspan="6" style="padding:0 16px 4px 16px;">
+                    <div class="bom-section-wrapper" id="bomwrap-<%= lv_rowid %>">
+                      <% IF ls_ord-stlnr IS INITIAL. %>
+                      <div class="bom-title">Komponen BOM</div>
+                      <p style="text-align:center;color:#9ca3af;padding:16px;font-size:0.85rem;">Order ini tidak punya nomor BOM sendiri (AFPO-STLNR kosong) — kemungkinan item pembelian/dagang tanpa struktur BOM.</p>
+                      <% ELSE. %>
+                      <div class="bom-title">Komponen BOM — <%= ls_ord-matnr %> (BOM <%= ls_ord-stlnr %>)</div>
+                      <table class="bom-table">
+                        <thead>
+                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;"
+title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
+                        </thead>
+                        <tbody>
+                          <%
+                            CLEAR lv_has_bom.
+                            READ TABLE lt_bomcomp TRANSPORTING NO FIELDS
+                              WITH KEY stlnr = ls_ord-stlnr BINARY SEARCH.
+                            IF sy-subrc = 0.
+                              lv_bidx2 = sy-tabix.
+                              LOOP AT lt_bomcomp INTO ls_bomcomp FROM lv_bidx2.
+                                IF ls_bomcomp-stlnr <> ls_ord-stlnr. EXIT. ENDIF.
+                                lv_has_bom = abap_true. %>
+                          <tr>
+                            <td><%= ls_bomcomp-posnr %></td>
+                            <td><code class="mat-code"><%= ls_bomcomp-idnrk_disp %></code></td>
+                            <td><%= ls_bomcomp-cmaktx %></td>
+                            <td style="text-align:right;"><span class="num-fmt"><%= ls_bomcomp-menge %></span></td>
+                            <td><%= ls_bomcomp-meins %></td>
+                            <td><span class="cst-badge <%= ls_bomcomp-status_cls %>" title="<%= ls_bomcomp-status_tip %>"><%= ls_bomcomp-status_lbl %></span></td>
+                          </tr>
+                          <% ENDLOOP.
+                             ENDIF.
+                             IF lv_has_bom = abap_false. %>
+                          <tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:12px;">BOM <%= ls_ord-stlnr %> tidak punya baris komponen di STPO.</td></tr>
+                          <% ENDIF. %>
+                        </tbody>
+                      </table>
+                      <% ENDIF. %>
+                    </div>
+                  </td>
+                </tr>
+                <% ENDLOOP.
+                   IF lv_has_row = abap_false. %>
+                <tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:24px;">Tidak ada order tercatat di Plant 1000 / SLoc 1D00 untuk SO+Item ini.</td></tr>
+                <% ENDIF. %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ===== TAB PRODUKSI — Plant 2000 / 2KCS,2261,2262,22E2,22E3,229K ===== -->
+        <div class="tab-pane" id="tab-prod">
+          <p style="font-size:0.76rem;color:#9ca3af;margin:12px 0 10px 0;">Order dengan lokasi penerimaan Plant 2000 (2KCS/2261/2262/22E2/22E3/229K), untuk SO+Item ini. <span title="Kode SLoc ini diketik sesuai permintaan; belum ada nama resmi terdaftar
+di aplikasi.">22E3 belum punya label resmi.</span></p>
+          <div class="ord-filter-bar">
+            <div style="font-size:0.72rem; color:#6b7280; letter-spacing:0.3px; font-weight:600;">FILTER:</div>
+            <input type="text" id="prod-search-mat" placeholder="&#128269; Cari kode/nama material..." oninput="pelOrdFilter('prod')" style="flex:1; min-width:180px; padding:6px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:0.82rem;">
+            <div class="col-toggle-wrap">
+              <button type="button" class="col-toggle-btn" onclick="pelToggleColMenu('prod', event)">&#9881;&nbsp;Kolom</button>
+              <div class="col-menu" id="prod-col-menu">
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',0,this.checked)"> No Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',1,this.checked)"> Material</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',2,this.checked)"> Target QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',3,this.checked)"> Del QTY</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',4,this.checked)"> Progres</label>
+                <label><input type="checkbox" checked onchange="pelOrdCol('prod',5,this.checked)"> Sloc</label>
+              </div>
+            </div>
+            <span id="prod-count-info" style="font-size:0.72rem; color:#9ca3af;"></span>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width:16%;">No Material</th>
+                  <th style="width:32%;">Material</th>
+                  <th style="width:12%;text-align:right;" title="Jumlah yang direncanakan diproduksi pada order ini.">Target QTY</th>
+                  <th style="width:12%;text-align:right;" title="Jumlah yang sudah selesai/diterima dari order ini.">Del QTY</th>
+                  <th style="width:20%;text-align:center;" title="Persentase Del QTY terhadap Target QTY.">Progres</th>
+                  <th style="width:8%;" title="Storage Location — lokasi penyimpanan di dalam plant.">Sloc</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% DATA lv_has_row2 TYPE abap_bool.
+                   DATA lv_last_lgort2 TYPE lgort_d.
+                   CLEAR: lv_has_row2, lv_last_lgort2.
+                   LOOP AT lt_ord INTO ls_ord WHERE pwerk = lc_werks_2000.
+                     lv_has_row2 = abap_true.
+                     lv_rowid = sy-tabix.
+                     IF ls_ord-psmng > 0.
+                       lv_has_prd = abap_true.
+                       lv_prog = ( ls_ord-wemng / ls_ord-psmng ) * 100.
+                       IF lv_prog > 100. lv_prog = 100. ENDIF.
+                       lv_bcls = zcl_cs_util=>prog_bar_class( lv_prog ).
+                       lv_pcls = zcl_cs_util=>prog_txt_class( lv_prog ).
+                     ELSE.
+                       lv_has_prd = abap_false. lv_prog = 0.
+                     ENDIF.
+                     " D46: kelompokkan per SLoc — sisipkan header saat lgort berubah
+                     " (lt_ord sudah SORT BY pwerk lgort matnr, jadi grup kontigu)
+                     IF ls_ord-lgort <> lv_last_lgort2.
+                       lv_last_lgort2 = ls_ord-lgort. %>
+                <tr class="sloc-group-row"><td colspan="6">&#128205;&nbsp;SLoc <%= ls_ord-lgort %></td></tr>
+                <%   ENDIF. %>
+                <tr class="clickable-item-row" data-ord-mat="<%= ls_ord-matnr %> <%= ls_ord-maktx %>" onclick="pelToggleBom('<%= lv_rowid %>')">
+                  <td><code class="mat-code"><%= ls_ord-matnr %></code></td>
+                  <td><%= ls_ord-maktx %> <span style="font-size:0.72rem;color:#9ca3af;">(Klik BOM)</span></td>
+                  <td style="text-align:right;"><span class="num-fmt"><%= ls_ord-psmng %></span> <%= ls_ord-meins %></td>
+                  <td style="text-align:right;"><span class="num-fmt"><%= ls_ord-wemng %></span> <%= ls_ord-meins %></td>
+                  <td>
+                    <% IF lv_has_prd = abap_true. %>
+                    <div class="prog-container">
+                      <div class="prog-wrap"><div class="prog-bg"><div class="prog-fill <%= lv_bcls %>" style="width:<%= zcl_cs_util=>css_pct( lv_prog ) %>%;"></div></div></div>
+                      <span class="prog-pct <%= lv_pcls %>"><%= lv_prog %>%</span>
+                    </div>
+                    <% ELSE. %><span style="font-style:italic;color:#9ca3af;font-size:0.8rem;">No Target</span>
+                    <% ENDIF. %>
+                  </td>
+                  <td><%= ls_ord-lgort %></td>
+                </tr>
+                <tr id="bomrow-<%= lv_rowid %>" style="display:none;background:#fafafa;">
+                  <td colspan="6" style="padding:0 16px 4px 16px;">
+                    <div class="bom-section-wrapper" id="bomwrap-<%= lv_rowid %>">
+                      <% IF ls_ord-stlnr IS INITIAL. %>
+                      <div class="bom-title">Komponen BOM</div>
+                      <p style="text-align:center;color:#9ca3af;padding:16px;font-size:0.85rem;">Order ini tidak punya nomor BOM sendiri (AFPO-STLNR kosong) — kemungkinan item pembelian/dagang tanpa struktur BOM.</p>
+                      <% ELSE. %>
+                      <div class="bom-title">Komponen BOM — <%= ls_ord-matnr %> (BOM <%= ls_ord-stlnr %>)</div>
+                      <table class="bom-table">
+                        <thead>
+                          <tr><th style="width:8%;">Item</th><th style="width:16%;">Component</th><th style="width:30%;">Component description</th><th style="width:12%;text-align:right;">Quantity</th><th style="width:8%;">Unit</th><th style="width:26%;"
+title="Status aktual komponen relatif ke lokasi rakit (plant tab ini), berdasar RESB (BDMNG/ENMNG) order induk.">Status</th></tr>
+                        </thead>
+                        <tbody>
+                          <%
+                            CLEAR lv_has_bom.
+                            READ TABLE lt_bomcomp TRANSPORTING NO FIELDS
+                              WITH KEY stlnr = ls_ord-stlnr BINARY SEARCH.
+                            IF sy-subrc = 0.
+                              lv_bidx2 = sy-tabix.
+                              LOOP AT lt_bomcomp INTO ls_bomcomp FROM lv_bidx2.
+                                IF ls_bomcomp-stlnr <> ls_ord-stlnr. EXIT. ENDIF.
+                                lv_has_bom = abap_true. %>
+                          <tr>
+                            <td><%= ls_bomcomp-posnr %></td>
+                            <td><code class="mat-code"><%= ls_bomcomp-idnrk_disp %></code></td>
+                            <td><%= ls_bomcomp-cmaktx %></td>
+                            <td style="text-align:right;"><span class="num-fmt"><%= ls_bomcomp-menge %></span></td>
+                            <td><%= ls_bomcomp-meins %></td>
+                            <td><span class="cst-badge <%= ls_bomcomp-status_cls %>" title="<%= ls_bomcomp-status_tip %>"><%= ls_bomcomp-status_lbl %></span></td>
+                          </tr>
+                          <% ENDLOOP.
+                             ENDIF.
+                             IF lv_has_bom = abap_false. %>
+                          <tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:12px;">BOM <%= ls_ord-stlnr %> tidak punya baris komponen di STPO.</td></tr>
+                          <% ENDIF. %>
+                        </tbody>
+                      </table>
+                      <% ENDIF. %>
+                    </div>
+                  </td>
+                </tr>
+                <% ENDLOOP.
+                   IF lv_has_row2 = abap_false. %>
+                <tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:24px;">Tidak ada order tercatat di Plant 2000 (2KCS/2261/2262/22E2/22E3/229K) untuk SO+Item ini.</td></tr>
+                <% ENDIF. %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ===== TAB RIWAYAT PERGERAKAN (MSEG) — D40: pair OUT+IN, filter, group tanggal, badge ===== -->
+        <div class="tab-pane" id="tab-hist">
+          <p style="font-size:0.76rem;color:#9ca3af;margin:12px 0 8px 0;">Riwayat pergerakan barang (dari MSEG) untuk SO+Item ini, dalam lingkup 7 lokasi yg dikonfigurasi. Pasangan OUT+IN sudah digabung jadi 1 baris "Dari&nbsp;&rarr;&nbsp;Ke". Urut
+terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
+
+          <!-- D40 saran#4: filter bar (client-side JS, tanpa reload) -->
+          <div style="display:flex; gap:8px; margin-bottom:10px; padding:8px 10px; background:#f9fafb; border-radius:6px; flex-wrap:wrap; align-items:center;">
+            <div style="font-size:0.72rem; color:#6b7280; letter-spacing:0.3px; font-weight:600;">FILTER:</div>
+            <input type="text" id="hist-search-mat" placeholder="Cari kode/nama material..." oninput="pelHistFilter()" style="flex:1; min-width:180px; padding:6px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:0.82rem;">
+            <select id="hist-filter-mvt" onchange="pelHistFilter()" style="padding:6px 10px; border:1px solid #d1d5db; border-radius:5px; font-size:0.82rem; background:#fff;">
+              <option value="">Semua MvT</option>
+              <option value="301">301 Cross Plant</option>
+              <option value="311">311 In Plant</option>
+              <option value="321">321 Release QI</option>
+              <option value="411">411 To Free Stock</option>
+              <option value="413">413 To SO Stock</option>
+            </select>
+            <span id="hist-count-info" style="font-size:0.72rem; color:#9ca3af;"></span>
+          </div>
+
+          <div id="hist-container" style="overflow-x:auto;">
+            <% DATA: lv_hist_any TYPE abap_bool, lv_last_date TYPE string.
+               CLEAR: lv_hist_any, lv_last_date.
+               LOOP AT lt_hist INTO ls_hist.
+                 lv_hist_any = abap_true.
+
+                 " D40 saran#3: tampilkan header tanggal saat tanggal berubah
+                 IF ls_hist-budat_str <> lv_last_date.
+                   IF lv_last_date IS NOT INITIAL. %>
+                </tbody>
+              </table>
+            </div>
+            <% ENDIF.
+                   lv_last_date = ls_hist-budat_str. %>
+            <div class="hist-date-group" data-hist-date="<%= ls_hist-budat_str %>">
+              <div style="font-size:0.76rem; color:#4338ca; font-weight:700; margin:14px 0 4px 0; padding:6px 10px; background:#eef2ff; border-radius:5px; letter-spacing:0.3px;">
+                <%= ls_hist-budat_str %>
+              </div>
+              <table class="data-table" style="margin-bottom:0;">
+                <thead>
+                  <tr>
+                    <th style="width:16%;">Jenis Gerakan</th>
+                    <th style="width:30%;">Material</th>
+                    <th style="width:22%;">Lokasi</th>
+                    <th style="width:16%;">Batch</th>
+                    <th style="width:16%; text-align:right;">Qty</th>
+                  </tr>
+                </thead>
+                <tbody>
+            <% ENDIF. %>
+                  <tr class="hist-row"
+                      data-hist-mvt="<%= ls_hist-bwart %>"
+                      data-hist-mat="<%= ls_hist-matnr %> <%= ls_hist-maktx %>"
+                      title="MvT <%= ls_hist-bwart %> &bull; User: <%= ls_hist-usnam %> &bull; Doc: <%= ls_hist-mblnr %>/<%= ls_hist-mjahr %>">
+                    <td>
+                      <span class="mv-badge <%= ls_hist-bwart_cls %>"><%= ls_hist-bwart %> &middot; <%= ls_hist-bwart_lbl %></span>
+                    </td>
+                    <td>
+                      <div style="font-family:monospace; font-size:0.78rem;"><%= ls_hist-matnr %></div>
+                      <div style="font-size:0.72rem; color:#6b7280; margin-top:1px;"><%= ls_hist-maktx %></div>
+                    </td>
+                    <td style="font-family:monospace; font-size:0.78rem;">
+                      <% IF ls_hist-is_paired = abap_true. %>
+                        <span style="color:#dc2626;"><%= ls_hist-from_werks %>/<%= ls_hist-from_lgort %></span>
+                        <span style="color:#6b7280;">&nbsp;&rarr;&nbsp;</span>
+                        <span style="color:#15803d;"><%= ls_hist-to_werks %>/<%= ls_hist-to_lgort %></span>
+                      <% ELSEIF ls_hist-from_werks IS NOT INITIAL. %>
+                        <span style="color:#dc2626;">&minus; <%= ls_hist-from_werks %>/<%= ls_hist-from_lgort %></span>
+                      <% ELSE. %>
+                        <span style="color:#15803d;">+ <%= ls_hist-to_werks %>/<%= ls_hist-to_lgort %></span>
+                      <% ENDIF. %>
+                    </td>
+                    <td style="font-family:monospace; font-size:0.78rem;"><%= ls_hist-charg %></td>
+                    <td style="text-align:right;"><span class="num-fmt"><%= ls_hist-menge %></span> <%= ls_hist-meins %></td>
+                  </tr>
+            <% ENDLOOP.
+               IF lv_hist_any = abap_true. %>
+                </tbody>
+              </table>
+            </div>
+            <% ELSE. %>
+            <div style="text-align:center; color:#9ca3af; padding:24px;">Tidak ada pergerakan barang tercatat di MSEG untuk SO+Item ini pada 7 lokasi yang dikonfigurasi.</div>
+            <% ENDIF. %>
+          </div>
+        </div>
+
+        <!-- ===== TAB STOK SAAT INI (MSKA) — posisi stok sales-order saat ini ===== -->
+        <div class="tab-pane" id="tab-stok">
+          <p style="font-size:0.76rem;color:#9ca3af;margin:12px 0 10px 0;">Posisi stok saat ini (MSKA, sales-order stock) untuk SO+Item ini, dalam lingkup 7 lokasi yg dikonfigurasi. Baris dengan semua kolom stok=0 disembunyikan.</p>
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Material</th>
+                  <th>Nama</th>
+                  <th>Plant/SLoc</th>
+                  <th>Batch</th>
+                  <th style="text-align:right;" title="Stok bebas dipakai — sudah lolos QC, siap digunakan/kirim.">Unrestr.</th>
+                  <th style="text-align:right;" title="Stok dalam Inspeksi Kualitas — menunggu pemeriksaan QC.">Qual.Insp</th>
+                  <th style="text-align:right;" title="Stok diblokir — tidak boleh dipakai (mis. rusak/ditahan).">Blocked</th>
+                  <th>Unit</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% DATA: lv_stok_any TYPE abap_bool,
+                         lv_last_slk TYPE string,
+                         lv_cur_slk  TYPE string.
+                   CLEAR: lv_stok_any, lv_last_slk.
+                   LOOP AT lt_stok INTO ls_stok.
+                     lv_stok_any = abap_true.
+                     " D46: kelompokkan per SLoc (lt_stok SORT BY werks lgort ...)
+                     CONCATENATE ls_stok-werks ls_stok-lgort INTO lv_cur_slk.
+                     IF lv_cur_slk <> lv_last_slk.
+                       lv_last_slk = lv_cur_slk. %>
+                <tr class="sloc-group-row"><td colspan="8">&#128205;&nbsp;<%= ls_stok-werks %> / SLoc <%= ls_stok-lgort %></td></tr>
+                <%   ENDIF. %>
+                <tr>
+                  <td><code class="mat-code"><%= ls_stok-matnr %></code></td>
+                  <td style="font-size:0.78rem;"><%= ls_stok-maktx %></td>
+                  <td style="font-family:monospace; font-size:0.78rem;"><%= ls_stok-werks %>/<%= ls_stok-lgort %></td>
+                  <td style="font-family:monospace; font-size:0.78rem;"><%= ls_stok-charg %></td>
+                  <td style="text-align:right; <% IF ls_stok-labst > 0. %>color:#15803d; font-weight:600;<% ENDIF. %>"><span class="num-fmt"><%= ls_stok-labst %></span></td>
+                  <td style="text-align:right; <% IF ls_stok-insme > 0. %>color:#c2410c;<% ENDIF. %>"><span class="num-fmt"><%= ls_stok-insme %></span></td>
+                  <td style="text-align:right; <% IF ls_stok-speme > 0. %>color:#dc2626;<% ENDIF. %>"><span class="num-fmt"><%= ls_stok-speme %></span></td>
+                  <td><%= ls_stok-meins %></td>
+                </tr>
+                <% ENDLOOP.
+                   IF lv_stok_any = abap_false. %>
+                <tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:24px;">Tidak ada stok tersedia di MSKA untuk SO+Item ini pada 7 lokasi yang dikonfigurasi.</td></tr>
+                <% ENDIF. %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ===== TAB INFO ORDER — data lengkap SO + Item yang sedang dilihat ===== -->
+        <div class="tab-pane active" id="tab-info">
+
+          <!-- #6: donut rata-rata progres per tahap -->
+          <div class="donut-wrap">
+            <% IF lv_cnt_pmb > 0. %>
+            <div class="donut-card">
+              <svg width="104" height="104" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#ecebe6" stroke-width="12"></circle>
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#3987e5" stroke-width="12" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="<%= lv_off_pmb %>" transform="rotate(-90 60 60)"></circle>
+                <text x="60" y="60" text-anchor="middle" dominant-baseline="central" font-size="26" font-weight="700" fill="#1e3a8a"><%= lv_avg_pmb %>%</text>
+              </svg>
+              <div class="donut-cap">PEMBAHANAN</div>
+              <div class="donut-sub">rata-rata progres &middot; <%= lv_cnt_pmb %> order (Plant 1000)</div>
+            </div>
+            <% ELSE. %>
+            <div class="donut-card" style="justify-content:center; min-height:104px;"><div class="donut-cap">PEMBAHANAN</div><div class="donut-sub">Belum ada data</div></div>
+            <% ENDIF. %>
+            <% IF lv_cnt_prd > 0. %>
+            <div class="donut-card">
+              <svg width="104" height="104" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#ecebe6" stroke-width="12"></circle>
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#3987e5" stroke-width="12" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="<%= lv_off_prd %>" transform="rotate(-90 60 60)"></circle>
+                <text x="60" y="60" text-anchor="middle" dominant-baseline="central" font-size="26" font-weight="700" fill="#1e3a8a"><%= lv_avg_prd %>%</text>
+              </svg>
+              <div class="donut-cap">PRODUKSI</div>
+              <div class="donut-sub">rata-rata progres &middot; <%= lv_cnt_prd %> order (Plant 2000)</div>
+            </div>
+            <% ELSE. %>
+            <div class="donut-card" style="justify-content:center; min-height:104px;"><div class="donut-cap">PRODUKSI</div><div class="donut-sub">Belum ada data</div></div>
+            <% ENDIF. %>
+          </div>
+
+          <div class="bom-title">Info Sales Order</div>
+          <div class="info-order-grid">
+            <div class="info-field">
+              <div class="info-field-lbl">Nomor SO</div>
+              <div class="info-field-val"><%= ls_vbak_hdr-vbeln %></div>
+            </div>
+            <div class="info-field">
+              <div class="info-field-lbl">Tanggal Dibuat</div>
+              <div class="info-field-val"><%= lv_hdr_date %></div>
+            </div>
+            <div class="info-field">
+              <div class="info-field-lbl">Tipe Dokumen</div>
+              <div class="info-field-val"><%= ls_vbak_hdr-auart %></div>
+            </div>
+            <% IF ls_vbak_hdr-bstnk IS NOT INITIAL. %>
+            <div class="info-field">
+              <div class="info-field-lbl">No. PO Customer</div>
+              <div class="info-field-val"><%= ls_vbak_hdr-bstnk %></div>
+            </div>
+            <% ENDIF. %>
+            <div class="info-field">
+              <div class="info-field-lbl">Kode Customer</div>
+              <div class="info-field-val"><%= ls_vbak_hdr-kunnr %></div>
+            </div>
+            <div class="info-field info-field-full">
+              <div class="info-field-lbl">Nama Customer</div>
+              <div class="info-field-val"><%= ls_kna1_hdr-name1 %></div>
+            </div>
+            <% IF ls_kna1_hdr-ort01 IS NOT INITIAL. %>
+            <div class="info-field">
+              <div class="info-field-lbl">Kota</div>
+              <div class="info-field-val"><%= ls_kna1_hdr-ort01 %></div>
+            </div>
+            <% ENDIF. %>
+            <% IF ls_kna1_hdr-land1 IS NOT INITIAL. %>
+            <div class="info-field">
+              <div class="info-field-lbl">Negara</div>
+              <div class="info-field-val"><%= ls_kna1_hdr-land1 %></div>
+            </div>
+            <% ENDIF. %>
+            <% IF ls_vbak_hdr-netwr > 0. %>
+            <div class="info-field">
+              <div class="info-field-lbl">Nilai Total SO</div>
+              <div class="info-field-val"><span class="cur-fmt"><%= ls_vbak_hdr-netwr %></span> <%= ls_vbak_hdr-waerk %></div>
+            </div>
+            <% ENDIF. %>
+          </div>
+
+          <div class="bom-title" style="margin-top:18px;">Info Item &#8212; <%= ls_vbap_hdr-posnr %></div>
+          <div class="info-order-grid">
+            <div class="info-field">
+              <div class="info-field-lbl">Nomor Item</div>
+              <div class="info-field-val"><%= ls_vbap_hdr-posnr %></div>
+            </div>
+            <div class="info-field">
+              <div class="info-field-lbl">Plant Item</div>
+              <div class="info-field-val"><%= ls_vbap_hdr-werks %></div>
+            </div>
+            <div class="info-field">
+              <div class="info-field-lbl">Status SO (Header)</div>
+              <div class="info-field-val"><span class="stat-badge stat-<%= ls_vbak_hdr-gbstk %>" title="<%= lv_hdr_stat_tip %>"><%= lv_hdr_stat_lbl %></span></div>
+            </div>
+            <div class="info-field">
+              <div class="info-field-lbl">Qty SO</div>
+              <div class="info-field-val"><span class="num-fmt"><%= ls_vbap_hdr-kwmeng %></span> <%= ls_vbap_hdr-vrkme %></div>
+            </div>
+            <% IF ls_vbap_hdr-netwr > 0. %>
+            <div class="info-field">
+              <div class="info-field-lbl">Nilai Item</div>
+              <div class="info-field-val"><span class="cur-fmt"><%= ls_vbap_hdr-netwr %></span> <%= ls_vbak_hdr-waerk %></div>
+            </div>
+            <% ENDIF. %>
+            <div class="info-field">
+              <div class="info-field-lbl">Kode Material</div>
+              <div class="info-field-val"><%= ls_vbap_hdr-matnr %></div>
+            </div>
+            <div class="info-field info-field-full">
+              <div class="info-field-lbl">Deskripsi Material</div>
+              <div class="info-field-val"><%= ls_vbap_hdr-arktx %></div>
+            </div>
+          </div>
+        </div>
+
+        <% ENDIF. %>
+      </div>
+
+      <!-- KANAN — Form Transfer Posting MULTI-MATERIAL (D42 refactor)
+           Rancangan: field kepala (common) + textarea multi-material (paste
+           Excel). Setelah klik Preview, tampil tabel editable dgn Qty Stok
+           dari MSKA + Qty TP (default=stok, editable). Tombol Submit masih
+           disabled (Fase 4). -->
+      <div class="pel-right">
+        <div class="list-container" style="min-height:400px;">
+
+          <!-- Header -->
+          <div style="border-bottom:1px solid #e5e7eb; padding-bottom:10px; margin-bottom:14px;">
+            <div style="font-size:0.72rem; color:#9ca3af; letter-spacing:0.5px;">TRANSFER POSTING &mdash; TP IN PLANT (311)</div>
+            <div style="font-weight:700; color:#1e3a8a; margin-top:2px;">Multi-Material Batch</div>
+            <div style="font-size:0.72rem; color:#6b7280;">Field kepala umum + daftar material (paste dari Excel).</div>
+          </div>
+
+          <% IF lv_trs_err IS NOT INITIAL. %>
+          <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; padding:10px 12px; margin-bottom:14px; color:#991b1b; font-size:0.82rem;">
+            &#9888; <%= lv_trs_err %>
+          </div>
+          <% ENDIF. %>
+
+          <form method="post" action="monitoring.htm" id="trs-form">
+
+            <!-- Mode radio (Cross Plant disabled, In Plant selected) -->
+            <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:10px 12px; margin-bottom:14px;">
+              <div style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px; margin-bottom:6px;">MODE</div>
+              <label style="display:inline-flex; align-items:center; gap:6px; margin-right:14px; opacity:0.5; cursor:not-allowed;">
+                <input type="radio" name="_mode" disabled> TP Cross Plant
+              </label>
+              <label style="display:inline-flex; align-items:center; gap:6px; font-weight:600; color:#1e3a8a;">
+                <input type="radio" name="_mode" checked disabled> TP In Plant
+              </label>
+              <div style="margin-top:6px; display:flex; gap:14px;">
+                <label style="display:inline-flex; align-items:center; gap:6px; opacity:0.5; cursor:not-allowed; font-size:0.8rem;">
+                  <input type="checkbox" disabled> Free Stock
+                </label>
+                <label style="display:inline-flex; align-items:center; gap:6px; opacity:0.5; cursor:not-allowed; font-size:0.8rem;">
+                  <input type="checkbox" disabled> To SO
+                </label>
+              </div>
+              <div style="font-size:0.68rem; color:#9ca3af; margin-top:4px; font-style:italic;">Mode default (311) &mdash; stok SO tetap milik SO, cuma pindah antar SLoc dalam plant sama.</div>
+            </div>
+
+            <!-- Field kepala (common) -->
+            <div style="display:flex; gap:8px; margin-bottom:10px;">
+              <div style="flex:1;">
+                <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">FROM PLANT <span style="color:#dc2626;">*</span></label>
+                <input type="text" name="trs_werks_f" value="<%= lv_trs_werks_f %>" placeholder="1000" maxlength="4" required style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family:monospace; text-transform:uppercase;">
+              </div>
+              <div style="flex:1;">
+                <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">FROM SLOC <span style="color:#dc2626;">*</span></label>
+                <input type="text" name="trs_lgort_f" value="<%= lv_trs_lgort_f %>" placeholder="1D00" maxlength="4" required style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family:monospace; text-transform:uppercase;">
+              </div>
+              <div style="flex:1;">
+                <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">TO SLOC <span style="color:#dc2626;">*</span></label>
+                <input type="text" name="trs_lgort_t" value="<%= lv_trs_lgort_t %>" placeholder="2KCS" maxlength="4" required style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family:monospace; text-transform:uppercase;">
+              </div>
+            </div>
+
+            <div style="display:flex; gap:8px; margin-bottom:10px;">
+              <div style="flex:1;">
+                <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">NIK</label>
+                <input type="text" name="trs_pernr" value="<%= lv_trs_pernr %>" placeholder="opsional" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
+              </div>
+              <div style="flex:1;">
+                <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">GOOD RECIPIENT</label>
+                <input type="text" name="trs_kpd" value="<%= lv_trs_kpd %>" placeholder="opsional" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px;">
+              </div>
+            </div>
+
+            <div style="margin-bottom:14px;">
+              <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">REFERAL MATDOC</label>
+              <input type="text" name="trs_referal" value="<%= lv_trs_referal %>" placeholder="opsional" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family:monospace;">
+            </div>
+
+            <!-- Textarea daftar material -->
+            <div style="margin-bottom:14px;">
+              <label style="font-size:0.72rem; color:#6b7280; letter-spacing:0.4px;">DAFTAR MATERIAL <span style="color:#dc2626;">*</span></label>
+              <div style="font-size:0.68rem; color:#9ca3af; margin-bottom:4px;">Paste dari Excel (Material &lt;Tab&gt; Batch, 1 baris per material). Batch opsional &mdash; kalau kosong, sistem ambil batch pertama tersedia.</div>
+              <textarea name="trs_matlist" rows="6" required placeholder="20086291" style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family:monospace;
+font-size:0.82rem; resize:vertical;"><%= lv_trs_matlist %></textarea>
+            </div>
+
+            <input type="hidden" name="trs_step" value="preview">
+            <div style="display:flex; gap:8px;">
+              <button type="submit" style="flex:1; padding:10px; background:#2563eb; color:white; border:none; border-radius:6px; font-weight:600; cursor:pointer;">Preview Posting &rarr;</button>
+              <a href="monitoring.htm" style="padding:10px 14px; background:#f3f4f6; color:#374151; text-decoration:none; border-radius:6px; font-size:0.85rem;">Reset</a>
+            </div>
+          </form>
+
+          <!-- Blok preview/hasil posting dipindah ke MODAL di akhir halaman
+               (cari "MODAL TRANSFER POSTING"), supaya tabelnya tidak sempit
+               terjepit kolom 40% ini. -->
+
         </div>
       </div>
     </div>
 
-    <div class="main-panel" id="main-panel-container">
-      <div class="placeholder-ctx" id="placeholder-msg">
-        <h3>Belum Ada Dokumen Terpilih</h3>
-        <p>Pilih nomor Sales Order di sidebar untuk memonitor progres item dan rincian BOM.</p>
+  </div>
+
+  <!-- ===================== MODAL TRANSFER POSTING (D43) =====================
+       Sengaja diletakkan di level atas dokumen, BUKAN di dalam
+       .list-container: position:fixed masih bisa terpotong kalau ada ancestor
+       ber-transform/filter, dan di sini tabelnya juga bebas dari lebar kolom
+       40% sehingga 8 kolom muat tanpa scroll horizontal.
+
+       Kondisi tampil sengaja "preview OR submit": pada step submit
+       lv_trs_preview TIDAK pernah di-set true (lihat cabang step='preview'),
+       jadi tanpa OR ini hasil posting tidak akan pernah dirender. -->
+  <% IF lv_trs_preview = abap_true OR lv_trs_step = 'submit'. %>
+  <div id="trs-modal" onclick="trsModalClose()"
+       style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(17,24,39,0.55); z-index:1000; display:flex; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto;">
+    <div role="dialog" aria-modal="true" aria-labelledby="trs-modal-title" onclick="event.stopPropagation();"
+         style="background:#fff; border-radius:12px; width:100%; max-width:900px; box-shadow:0 20px 50px rgba(0,0,0,0.35); overflow:hidden;">
+
+      <!-- Header modal -->
+      <div style="display:flex; align-items:flex-start; gap:12px; padding:14px 18px; border-bottom:1px solid #e5e7eb; background:#fffbeb;">
+        <div style="flex:1;">
+          <div id="trs-modal-title" style="font-size:0.72rem; color:#92400e; letter-spacing:0.5px; font-weight:700;">&#9888; DATA UPLOAD TRANSFER POSTING</div>
+          <div style="font-size:0.72rem; color:#6b7280; margin-top:3px;">
+            TP In Plant (311) &bull; Plant <b><%= lv_trs_werks_f %></b> &bull; <b><%= lv_trs_lgort_f %></b> &rarr; <b><%= lv_trs_lgort_t %></b>
+          </div>
+        </div>
+        <button type="button" onclick="trsModalClose()" aria-label="Tutup"
+                style="background:none; border:none; font-size:1.5rem; line-height:1; color:#9ca3af; cursor:pointer; padding:0 2px;">&times;</button>
+      </div>
+
+      <!-- Body modal -->
+      <div style="padding:16px 18px; max-height:72vh; overflow-y:auto;">
+
+      <% IF lv_trs_step = 'submit'. %>
+        <!-- ---------- Hasil eksekusi posting ---------- -->
+        <% IF lv_trs_result_ok = abap_true. %>
+        <div style="padding:14px; background:#dcfce7; border:1px solid #86efac; border-radius:8px; color:#15803d; font-size:0.88rem;">
+          &#10003; <b>Posting berhasil.</b><br>
+          No. Material Document: <b style="font-family:monospace;"><%= lv_trs_matdoc %></b> / <%= lv_trs_matdoc_yr %>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <!-- Link (GET) bukan tombol close: halaman ini hasil POST, kalau
+               user refresh setelah menutup modal browser akan mengirim ulang
+               form -> dokumen material dobel. Navigasi ke URL bersih. -->
+          <a href="monitoring.htm" style="flex:1; text-align:center; padding:10px; background:#2563eb; color:white; text-decoration:none; border-radius:6px; font-weight:600; font-size:0.85rem;">Selesai</a>
+        </div>
+        <% ELSE. %>
+        <div style="padding:14px; background:#fef2f2; border:1px solid #fca5a5; border-radius:8px; color:#991b1b; font-size:0.88rem;">
+          &#9888; <b>Posting gagal.</b><br>
+          <%= lv_trs_result_msg %>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:14px;">
+          <a href="monitoring.htm" style="flex:1; text-align:center; padding:10px; background:#f3f4f6; color:#374151; text-decoration:none; border-radius:6px; font-size:0.85rem;">Kembali ke Form</a>
+        </div>
+        <% ENDIF. %>
+
+      <% ELSE. %>
+        <!-- ---------- Preview: tabel editable Qty TP ---------- -->
+        <div style="font-size:0.78rem; color:#6b7280; margin-bottom:12px;">
+          Total <b><%= lv_trs_total_cnt %></b> baris, <b style="color:#15803d;"><%= lv_trs_valid_cnt %></b> siap dipost.
+          <br>Kolom Qty TP dapat diedit. Baris merah tidak akan ikut diposting.
+        </div>
+
+        <form method="post" action="monitoring.htm" id="trs-preview-form" onsubmit="return trsSubmitGuard(this);" style="overflow-x:auto;">
+          <!-- Simpan field kepala utk resubmit ke Fase 4 -->
+          <input type="hidden" name="trs_step"    value="submit">
+          <input type="hidden" name="trs_werks_f" value="<%= lv_trs_werks_f %>">
+          <input type="hidden" name="trs_lgort_f" value="<%= lv_trs_lgort_f %>">
+          <input type="hidden" name="trs_lgort_t" value="<%= lv_trs_lgort_t %>">
+          <input type="hidden" name="trs_pernr"   value="<%= lv_trs_pernr %>">
+          <input type="hidden" name="trs_kpd"     value="<%= lv_trs_kpd %>">
+          <input type="hidden" name="trs_referal" value="<%= lv_trs_referal %>">
+
+          <table class="data-table" style="font-size:0.78rem;">
+            <thead>
+              <tr>
+                <th style="width:5%; text-align:center;">Pilih</th>
+                <th style="width:8%;">SO/Item</th>
+                <th style="width:22%;">Material</th>
+                <th style="width:14%;">Batch</th>
+                <th style="width:11%; text-align:right;">Qty Stok</th>
+                <th style="width:14%; text-align:right;">Qty TP</th>
+                <th style="width:8%;">Plant</th>
+                <th style="width:9%;">SLoc &rarr;</th>
+              </tr>
+            </thead>
+            <tbody>
+              <% LOOP AT lt_trs_rows INTO ls_trs_row. %>
+              <tr style="<% IF ls_trs_row-is_valid = abap_false. %>background:#fef2f2;<% ENDIF. %>">
+                <td style="text-align:center;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                  <input type="checkbox" name="trs_sel_<%= ls_trs_row-line_no %>" value="X" checked>
+                  <input type="hidden" name="trs_matnr_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-matnr %>">
+                  <input type="hidden" name="trs_batch_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-batch %>">
+                  <input type="hidden" name="trs_so_<%= ls_trs_row-line_no %>"    value="<%= ls_trs_row-so_num %>">
+                  <input type="hidden" name="trs_item_<%= ls_trs_row-line_no %>"  value="<%= ls_trs_row-so_item %>">
+                  <input type="hidden" name="trs_stok_<%= ls_trs_row-line_no %>"  value="<%= ls_trs_row-qty_stok %>">
+                  <input type="hidden" name="trs_uom_<%= ls_trs_row-line_no %>"   value="<%= ls_trs_row-meins %>">
+                  <% ELSE. %>
+                  <span title="<%= ls_trs_row-err_msg %>" style="color:#dc2626; font-size:0.9rem;">&#10005;</span>
+                  <% ENDIF. %>
+                </td>
+                <td style="font-family:monospace; font-size:0.72rem;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                    <%= ls_trs_row-so_num %>/<%= ls_trs_row-so_item %>
+                  <% ELSE. %>&mdash;<% ENDIF. %>
+                </td>
+                <td>
+                  <div style="font-family:monospace; font-size:0.72rem;"><%= ls_trs_row-matnr_disp %></div>
+                  <div style="font-size:0.68rem; color:#6b7280;"><%= ls_trs_row-maktx %></div>
+                  <% IF ls_trs_row-is_valid = abap_false. %>
+                  <div style="font-size:0.68rem; color:#dc2626; margin-top:2px;">&#9888; <%= ls_trs_row-err_msg %></div>
+                  <% ENDIF. %>
+                </td>
+                <td style="font-family:monospace; font-size:0.72rem;"><%= ls_trs_row-batch %></td>
+                <td style="text-align:right;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                    <span class="num-fmt"><%= ls_trs_row-qty_stok %></span> <%= ls_trs_row-meins %>
+                  <% ELSE. %>&mdash;<% ENDIF. %>
+                </td>
+                <td style="text-align:right;">
+                  <% IF ls_trs_row-is_valid = abap_true. %>
+                  <input type="number" name="trs_qty_<%= ls_trs_row-line_no %>" value="<%= ls_trs_row-qty_tp %>" step="0.001" min="0.001" max="<%= ls_trs_row-qty_stok %>" style="width:80px; padding:4px; border:1px solid #d1d5db; border-radius:4px;
+text-align:right; font-size:0.78rem;">
+                  <% ELSE. %>&mdash;<% ENDIF. %>
+                </td>
+                <td style="font-family:monospace; font-size:0.72rem;"><%= lv_trs_werks_f %></td>
+                <td style="font-family:monospace; font-size:0.72rem;"><%= lv_trs_lgort_f %>&rarr;<%= lv_trs_lgort_t %></td>
+              </tr>
+              <% ENDLOOP. %>
+            </tbody>
+          </table>
+
+          <div style="display:flex; gap:8px; margin-top:14px;">
+            <button type="submit" id="trs-submit-btn" style="flex:1; padding:10px; background:#2563eb; color:white; border:none; border-radius:6px; font-weight:600; cursor:pointer;">Submit Posting</button>
+            <button type="button" onclick="trsModalClose()" style="padding:10px 14px; background:#f3f4f6; color:#374151; border:none; border-radius:6px; cursor:pointer;">Batal</button>
+          </div>
+        </form>
+      <% ENDIF. %>
+
       </div>
     </div>
   </div>
+  <% ENDIF. %>
 
-  <script src="js/js.js?r=7"></script>
-  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %> &bull; Plant: <%= lc_plant %></div>
+  <script>
+    /* --- Modal Transfer Posting (D43) ---
+       Modal dirender server-side (sudah tampil saat load), jadi JS di sini
+       hanya perlu menutup, bukan membuka. */
+    function trsModalClose() {
+      var m = document.getElementById('trs-modal');
+      if (m) { m.style.display = 'none'; }
+      document.body.style.overflow = '';
+    }
+    /* Kunci scroll body selama modal terbuka */
+    if (document.getElementById('trs-modal')) {
+      document.body.style.overflow = 'hidden';
+    }
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape' || e.keyCode === 27) { trsModalClose(); }
+    });
+    /* Cegah double-post: sekali submit, form dikunci. Tidak menggantikan
+       proteksi server-side (belum ada), cuma menutup jalur klik-ganda. */
+    function trsSubmitGuard(f) {
+      if (f.getAttribute('data-sent')) { return false; }
+      f.setAttribute('data-sent', '1');
+      var b = document.getElementById('trs-submit-btn');
+      if (b) { b.disabled = true; b.innerHTML = 'Memposting&hellip;'; }
+      return true;
+    }
+
+    /* Tab lokal khusus halaman ini — sengaja TIDAK memakai switchTab() di
+       js.js (butuh wrapper .detail-content yang tak ada di halaman ini), dan
+       data sudah dirender penuh server-side (bukan lazy/AJAX) — cukup
+       show/hide sederhana, tanpa request tambahan -> tetap ringan & cepat. */
+    function pelTab(id, btn) {
+      var wrap = document.getElementById('pel-tabs').parentElement;
+      wrap.querySelectorAll('.tab-pane').forEach(function(p) { p.classList.remove('active'); p.style.display = 'none'; });
+      document.getElementById(id).classList.add('active');
+      document.getElementById(id).style.display = 'block';
+      document.getElementById('pel-tabs').querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      if (pelAllBomExpanded) {
+        var b = document.getElementById('bom-collapse-btn');
+        pelAllBomExpanded = false;
+        if (b) b.innerHTML = '&#9776;&nbsp;Expand BOM';
+      }
+    }
+
+    /* REVISI 3 — expand/collapse baris Komponen BOM saat baris diklik, meniru
+       double-click "BOM numb." di COOIS yang membuka layar BOM. Data sudah
+       dirender penuh server-side (bukan AJAX) — cukup show/hide + transisi
+       CSS (.bom-section-wrapper/.bom-open, class yang SAMA dgn monitoring_bom.htm). */
+    var pelActiveBom = null;
+    var pelAllBomExpanded = false;
+    function pelToggleBom(id) {
+      var tr = document.getElementById('bomrow-' + id);
+      var wrapper = document.getElementById('bomwrap-' + id);
+      if (!tr || !wrapper) return;
+
+      if (!wrapper.classList.contains('bom-open')) {
+        if (pelActiveBom && pelActiveBom !== id) { pelCloseBom(pelActiveBom); }
+        tr.style.display = 'table-row';
+        void wrapper.offsetHeight;
+        wrapper.classList.add('bom-open');
+        pelActiveBom = id;
+      } else {
+        pelCloseBom(id);
+      }
+      if (pelAllBomExpanded) {
+        var anyClosed = document.querySelectorAll('[id^="bomrow-"]').length >
+          document.querySelectorAll('.bom-open').length;
+        if (!anyClosed && document.querySelectorAll('[id^="bomrow-"]').length > 0) {
+          var btn = document.getElementById('bom-collapse-btn');
+          if (btn) btn.innerHTML = '&#9660;&nbsp;Collapse BOM';
+        }
+      }
+    }
+    function pelCloseBom(id) {
+      var tr = document.getElementById('bomrow-' + id);
+      var wrapper = document.getElementById('bomwrap-' + id);
+      if (!wrapper) return;
+      wrapper.classList.remove('bom-open');
+      setTimeout(function() {
+        if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
+      }, 330);
+      if (pelActiveBom === id) { pelActiveBom = null; }
+    }
+    function pelToggleAllBom() {
+      var btn = document.getElementById('bom-collapse-btn');
+      var allRows = document.querySelectorAll('[id^="bomrow-"]');
+      if (pelAllBomExpanded) {
+        allRows.forEach(function(tr) {
+          var wrapper = document.getElementById('bomwrap-' + tr.id.replace('bomrow-', ''));
+          if (wrapper && wrapper.classList.contains('bom-open')) {
+            wrapper.classList.remove('bom-open');
+            setTimeout(function() {
+              if (tr && !wrapper.classList.contains('bom-open')) { tr.style.display = 'none'; }
+            }, 330);
+          }
+        });
+        pelAllBomExpanded = false;
+        if (btn) btn.innerHTML = '&#9776;&nbsp;Expand BOM';
+      } else {
+        allRows.forEach(function(tr) {
+          var wrapper = document.getElementById('bomwrap-' + tr.id.replace('bomrow-', ''));
+          if (wrapper && !wrapper.classList.contains('bom-open')) {
+            tr.style.display = 'table-row';
+            void wrapper.offsetHeight;
+            wrapper.classList.add('bom-open');
+          }
+        });
+        pelAllBomExpanded = true;
+        if (btn) btn.innerHTML = '&#9660;&nbsp;Collapse BOM';
+      }
+    }
+
+    /* D40 saran#4: filter cepat tab Riwayat Pergerakan — client-side, tanpa
+       reload. Match by (a) search text di kode/nama material, (b) dropdown
+       MvT. Grup tanggal kosong (semua baris tersembunyi) juga ikut sembunyi. */
+    function pelHistFilter() {
+      var q = (document.getElementById('hist-search-mat') || {}).value || '';
+      q = q.trim().toLowerCase();
+      var mvt = (document.getElementById('hist-filter-mvt') || {}).value || '';
+
+      var rows = document.querySelectorAll('#hist-container .hist-row');
+      var totalVisible = 0;
+      rows.forEach(function(r) {
+        var matStr = (r.getAttribute('data-hist-mat') || '').toLowerCase();
+        var mvtStr = r.getAttribute('data-hist-mvt') || '';
+        var okMat = !q || matStr.indexOf(q) >= 0;
+        var okMvt = !mvt || mvtStr === mvt;
+        var show = okMat && okMvt;
+        r.style.display = show ? '' : 'none';
+        if (show) totalVisible++;
+      });
+
+      /* Sembunyikan grup tanggal yang semua baris di dalamnya tersembunyi */
+      var groups = document.querySelectorAll('#hist-container .hist-date-group');
+      groups.forEach(function(g) {
+        var anyVisible = false;
+        g.querySelectorAll('.hist-row').forEach(function(r) {
+          if (r.style.display !== 'none') anyVisible = true;
+        });
+        g.style.display = anyVisible ? '' : 'none';
+      });
+
+      var info = document.getElementById('hist-count-info');
+      if (info) {
+        info.textContent = (q || mvt)
+          ? (totalVisible + ' baris cocok dengan filter')
+          : '';
+      }
+    }
+
+    /* Filter tab Pembahanan/Produksi — client-side, tanpa reload. Match by
+       kode/nama material (data-ord-mat). Baris BOM (sibling <tr id="bomrow-...">)
+       ikut disembunyikan + ditutup kalau induknya tersaring keluar; header grup
+       SLoc (tab Produksi) disembunyikan kalau semua barisnya hilang. prefix =
+       'pmb' | 'prod' -> id pane 'tab-pmb'/'tab-prod'. */
+    function pelOrdFilter(prefix) {
+      var pane = document.getElementById('tab-' + prefix);
+      if (!pane) return;
+      var q = ((document.getElementById(prefix + '-search-mat') || {}).value || '').trim().toLowerCase();
+      var rows = pane.querySelectorAll('tbody tr.clickable-item-row');
+      var visible = 0;
+      rows.forEach(function(r) {
+        var mat = (r.getAttribute('data-ord-mat') || '').toLowerCase();
+        var show = !q || mat.indexOf(q) >= 0;
+        r.style.display = show ? '' : 'none';
+        var bom = r.nextElementSibling;
+        if (bom && bom.id && bom.id.indexOf('bomrow-') === 0 && !show) {
+          bom.style.display = 'none';
+          var wrap = bom.querySelector('.bom-section-wrapper');
+          if (wrap) wrap.classList.remove('bom-open');
+        }
+        if (show) visible++;
+      });
+      /* Produksi: sembunyikan header grup SLoc yang semua barisnya tersembunyi */
+      pane.querySelectorAll('tbody tr.sloc-group-row').forEach(function(g) {
+        var any = false, n = g.nextElementSibling;
+        while (n && !n.classList.contains('sloc-group-row')) {
+          if (n.classList.contains('clickable-item-row') && n.style.display !== 'none') any = true;
+          n = n.nextElementSibling;
+        }
+        g.style.display = any ? '' : 'none';
+      });
+      var info = document.getElementById(prefix + '-count-info');
+      if (info) info.textContent = q ? (visible + ' baris cocok') : '';
+    }
+
+    /* Show/hide kolom (checkbox menu "Kolom"). colIdx 0..5 = Material, No
+       Material, Target QTY, Del QTY, Progres, Sloc. Hanya menyentuh header +
+       baris order (.clickable-item-row) — baris BOM & grup SLoc pakai colspan
+       penuh, dibiarkan apa adanya. */
+    function pelOrdCol(prefix, colIdx, show) {
+      var pane = document.getElementById('tab-' + prefix);
+      if (!pane) return;
+      var table = pane.querySelector('table.data-table');
+      if (!table) return;
+      var th = table.querySelectorAll('thead th')[colIdx];
+      if (th) th.style.display = show ? '' : 'none';
+      table.querySelectorAll('tbody tr.clickable-item-row').forEach(function(r) {
+        var td = r.children[colIdx];
+        if (td) td.style.display = show ? '' : 'none';
+      });
+    }
+
+    /* Buka/tutup dropdown "Kolom"; hanya satu menu terbuka pada satu waktu. */
+    function pelToggleColMenu(prefix, ev) {
+      ev.stopPropagation();
+      var menu = document.getElementById(prefix + '-col-menu');
+      if (!menu) return;
+      var willOpen = (menu.style.display !== 'block');
+      document.querySelectorAll('.col-menu').forEach(function(m) { m.style.display = 'none'; });
+      menu.style.display = willOpen ? 'block' : 'none';
+    }
+
+    function toggleUserDropdown(e) {
+      e.stopPropagation();
+      var dd = document.getElementById('user-dropdown');
+      if (dd) dd.classList.toggle('open');
+    }
+    document.addEventListener('click', function(e) {
+      var dd = document.getElementById('user-dropdown');
+      var hu = document.querySelector('.header-user');
+      if (dd && hu && !hu.contains(e.target)) { dd.classList.remove('open'); }
+      /* tutup dropdown "Kolom" saat klik di luar wrapper-nya */
+      document.querySelectorAll('.col-menu').forEach(function(m) {
+        if (m.parentElement && !m.parentElement.contains(e.target)) { m.style.display = 'none'; }
+      });
+    });
+    function userLogout() { window.location.href = 'monitoring.htm?~logoff'; }
+
+    /* Format angka id-ID (titik ribuan) — mandiri, tidak bergantung js.js */
+    document.querySelectorAll('.num-fmt').forEach(function(el) {
+      var v = parseFloat(el.textContent.trim());
+      if (!isNaN(v)) {
+        el.textContent = v.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+      }
+    });
+
+    /* Recent/Saved SO — daftar SO+Item terakhir dibuka, disimpan di
+       localStorage (maks 8). Chip diklik -> isi ulang form Cari SO & submit;
+       tombol ✕ -> hapus satu entri. Murni client-side; entri baru ditambah
+       saat halaman ini dirender dgn SO+Item yang valid (elemen #cs-current-so). */
+    (function() {
+      var KEY = 'cs_recent_so', MAX = 8;
+      function load() { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { return []; } }
+      function save(l) { try { localStorage.setItem(KEY, JSON.stringify(l)); } catch (e) {} }
+      function esc(s) { s = (s == null ? '' : '' + s); return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+      function removeAt(i) { var l = load(); l.splice(i, 1); save(l); render(); }
+      function go(so, item) {
+        var f = document.getElementById('so_num'), g = document.getElementById('item_num');
+        if (f && g && f.form) { f.value = so; g.value = item; f.form.submit(); }
+      }
+      function add(so, item, mat) {
+        if (!so || !item) return;
+        var l = load().filter(function(e) { return !(e.so === so && e.item === item); });
+        l.unshift({ so: so, item: item, mat: mat || '' });
+        if (l.length > MAX) l = l.slice(0, MAX);
+        save(l);
+      }
+      function render() {
+        var wrap = document.getElementById('recent-so-wrap');
+        var box = document.getElementById('recent-so-chips');
+        if (!wrap || !box) return;
+        var l = load();
+        box.innerHTML = '';
+        if (!l.length) { wrap.style.display = 'none'; return; }
+        wrap.style.display = '';
+        l.forEach(function(e, idx) {
+          var chip = document.createElement('span'); chip.className = 'recent-chip';
+          var main = document.createElement('button');
+          main.type = 'button'; main.className = 'recent-chip-main';
+          main.title = 'Buka SO ' + e.so + ' item ' + e.item + (e.mat ? ' — ' + e.mat : '');
+          main.innerHTML = '<b>' + esc(e.so) + '</b>&nbsp;&middot;&nbsp;' + esc(e.item) +
+            (e.mat ? ' <span class="recent-chip-mat">' + esc(e.mat) + '</span>' : '');
+          main.addEventListener('click', function() { go(e.so, e.item); });
+          var del = document.createElement('button');
+          del.type = 'button'; del.className = 'recent-chip-x';
+          del.setAttribute('aria-label', 'Hapus'); del.innerHTML = '&times;';
+          del.addEventListener('click', function(ev) { ev.stopPropagation(); removeAt(idx); });
+          chip.appendChild(main); chip.appendChild(del); box.appendChild(chip);
+        });
+      }
+      /* tambah entri utk SO+Item yang sedang dibuka (kalau valid) lalu render */
+      var cur = document.getElementById('cs-current-so');
+      if (cur) { add(cur.getAttribute('data-so'), cur.getAttribute('data-item'), cur.getAttribute('data-mat')); }
+      render();
+    })();
+
+    /* D41 — Persist form kanan (Transfer Posting) via sessionStorage.
+       Alasan: form kiri (Cari SO) & form kanan itu DUA <form> terpisah,
+       saat user submit form kiri halaman reload -> isi form kanan HILANG.
+       Solusi: auto-save tiap ketikan ke sessionStorage; auto-restore saat
+       halaman load. sessionStorage sengaja dipilih (bukan localStorage)
+       supaya isi form otomatis hilang saat tab browser ditutup — mencegah
+       "sisa" input yg mungkin sensitif tercecer di sesi berikutnya.
+
+       Prioritas nilai (tinggi -> rendah):
+         1. Nilai yg server render dari URL (mis. setelah klik Preview) —
+            selalu menang; artinya jangan overwrite dgn sessionStorage kalau
+            server sudah kasih nilai eksplisit.
+         2. Nilai dari sessionStorage (dari draft sebelumnya).
+         3. Kosong (default).
+
+       Field yg di-persist: semua input teks/number di dalam #trs-form,
+       KECUALI hidden field trs_step (biar tombol Reset benar-benar reset). */
+    (function() {
+      var STORE_KEY = 'pelacakan3_trs_form';
+      var form = document.getElementById('trs-form');
+      if (!form) return;
+      var fields = form.querySelectorAll('input[type=text], input[type=number], textarea');
+
+      /* Restore: cuma isi field yg SAAT INI kosong. Kalau server sudah render
+         nilai (mis. user baru saja klik Preview), biarkan apa adanya. */
+      var stored = {};
+      try { stored = JSON.parse(sessionStorage.getItem(STORE_KEY) || '{}'); } catch(e) {}
+      fields.forEach(function(f) {
+        if (!f.name) return;
+        if (f.value === '' && stored[f.name]) {
+          f.value = stored[f.name];
+        }
+      });
+
+      /* Save: tiap ketikan disimpan (debounced ringan via setTimeout). */
+      var saveTimer = null;
+      function saveNow() {
+        var snapshot = {};
+        fields.forEach(function(f) {
+          if (f.name && f.value !== '') { snapshot[f.name] = f.value; }
+        });
+        try { sessionStorage.setItem(STORE_KEY, JSON.stringify(snapshot)); } catch(e) {}
+      }
+      fields.forEach(function(f) {
+        f.addEventListener('input', function() {
+          clearTimeout(saveTimer);
+          saveTimer = setTimeout(saveNow, 200);
+        });
+      });
+
+      /* Tombol Reset (link ke index.htm tanpa param) HARUS ikut clear
+         sessionStorage — kalau tidak, klik Reset akan tetap terisi kembali
+         dari draft. Cari link yg href-nya persis 'index.htm' di dalam
+         form kanan (bukan link nav utama yg beda konteks). */
+      var resetLinks = form.parentNode.querySelectorAll('a[href="monitoring.htm"]');
+      resetLinks.forEach(function(a) {
+        a.addEventListener('click', function() {
+          try { sessionStorage.removeItem(STORE_KEY); } catch(e) {}
+        });
+      });
+    })();
+    /* #2: Mode Monitoring/Transaksi + panel Transfer collapsible (state di localStorage) */
+    function pelApplyMode(m){
+      var main=document.getElementById('pel-main'); var b=document.getElementById('pel-collapse-btn');
+      var rmon=document.getElementById('mode-mon'); var rtrx=document.getElementById('mode-trx');
+      if(!main) return;
+      if(m==='trx'){ main.classList.remove('trs-collapsed'); if(b) b.innerHTML='&#9664; Sembunyikan Transfer'; if(rtrx) rtrx.checked=true; }
+      else { main.classList.add('trs-collapsed'); if(b) b.innerHTML='Transfer Posting &#9654;'; if(rmon) rmon.checked=true; }
+    }
+    function pelSetMode(m){ try{ localStorage.setItem('pel3_mode', m); }catch(e){} pelApplyMode(m); }
+    function pelToggleTransfer(){
+      var main=document.getElementById('pel-main');
+      var m=(main && main.classList.contains('trs-collapsed')) ? 'trx' : 'mon';
+      pelSetMode(m);
+    }
+    (function(){ var m='mon'; try{ m=localStorage.getItem('pel3_mode')||'mon'; }catch(e){} pelApplyMode(m); })();
+  </script>
+  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %></div>
 </body>
 </html>

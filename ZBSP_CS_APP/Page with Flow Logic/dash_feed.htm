@@ -1,0 +1,291 @@
+<%@ page language="abap" %><%
+*&---------------------------------------------------------------------*
+*& BSP Page — dash_feed.htm
+*&---------------------------------------------------------------------*
+*& Endpoint JSON (BUKAN HTML): ~30 pergerakan barang TERBARU di SLoc
+*& yang dipantau, dipanggil via fetch('dash_feed.htm') tiap 15 detik
+*& oleh dashboard (konsumen JS dibuat di halaman/task lain).
+*&
+*& Lokasi dipantau (sisi TERIMA, SHKZG='S'):
+*&   Plant 1000 / SLoc 1D00
+*&   Plant 2000 / SLoc 2KCS, 2261, 2262, 22E2, 22E3, 229K
+*& Window: budat >= sy-datum - 7 (cukup ringan), urut TERBARU dulu
+*& (budat desc, cputm desc), maks. 30 baris FINAL (setelah exclude
+*& sample customer — baris yang dibuang TIDAK ikut menghitung 30).
+*&
+*& Buyer: MSEG-KDAUF (No. SO) -> VBAK-KUNNR -> KNA1-NAME1.
+*& Sample customer KUNNR 2000000004 DIKECUALIKAN dari feed sama sekali.
+*&
+*& Pola query (FOR ALL ENTRIES batched, CONVERSION_EXIT_CUNIT_OUTPUT /
+*& CONVERSION_EXIT_MATN1_OUTPUT) MENIRU blok "RIWAYAT PERGERAKAN
+*& (MSEG + MKPF)" & CASE bwart di index3a.htm.
+*&
+*& ⚠️ AKTIVASI: response->set_header_field(...) dipakai di bawah utk
+*& set Content-Type JSON (implicit object standar BSP Page). Bila
+*& kernel/basis sistem ini MENOLAK API tsb saat aktivasi, ganti baris
+*& itu dgn alternatif berikut (SENGAJA ditinggalkan sbg komentar,
+*& bukan dihapus, supaya user tinggal pilih salah satu):
+*&   runtime->server->response->set_content_type( 'application/json; charset=utf-8' ).
+*&---------------------------------------------------------------------*
+CONSTANTS lc_sample TYPE kna1-kunnr VALUE '2000000004'.
+
+DATA lv_from TYPE mkpf-budat.
+lv_from = sy-datum - 7.
+
+TYPES: BEGIN OF ty_feed,
+         mblnr      TYPE mseg-mblnr,
+         mjahr      TYPE mseg-mjahr,
+         zeile      TYPE mseg-zeile,
+         budat      TYPE mkpf-budat,
+         cputm      TYPE mkpf-cputm,
+         bwart      TYPE mseg-bwart,
+         charg      TYPE mseg-charg,
+         matnr      TYPE mseg-matnr,
+         werks      TYPE mseg-werks,
+         lgort      TYPE mseg-lgort,
+         menge      TYPE mseg-menge,
+         meins      TYPE mseg-meins,
+         kdauf      TYPE mseg-kdauf,
+         kdpos      TYPE mseg-kdpos,
+         kunnr      TYPE kna1-kunnr,
+         name1      TYPE kna1-name1,
+         has_from   TYPE abap_bool,
+         from_str   TYPE string,
+         to_str     TYPE string,
+         maktx      TYPE makt-maktx,
+         bwart_lbl  TYPE string,
+         waktu_str  TYPE string,
+         qty_str    TYPE string,
+       END OF ty_feed.
+DATA: lt_feed TYPE TABLE OF ty_feed,
+      ls_feed TYPE ty_feed.
+FIELD-SYMBOLS <f> TYPE ty_feed.
+
+" === Sisi TERIMA (SHKZG='S') di SLoc yang dipantau, 7 hari terakhir ===
+SELECT m~mblnr m~mjahr m~zeile h~budat h~cputm m~bwart m~charg
+       m~matnr m~werks m~lgort m~menge m~meins m~kdauf m~kdpos
+  FROM mseg AS m INNER JOIN mkpf AS h ON m~mblnr = h~mblnr AND m~mjahr = h~mjahr
+  INTO CORRESPONDING FIELDS OF TABLE lt_feed
+  WHERE h~budat >= lv_from
+    AND m~kdauf  <> ''
+    AND m~shkzg  = 'S'
+    AND ( ( m~werks = '1000' AND m~lgort = '1D00' )
+       OR ( m~werks = '2000' AND m~lgort IN ( '2KCS', '2261', '2262', '22E2', '22E3', '229K' ) ) ).
+
+SORT lt_feed BY budat DESCENDING cputm DESCENDING mblnr DESCENDING zeile DESCENDING.
+
+IF lt_feed IS NOT INITIAL.
+
+  " === Resolusi buyer: KDAUF (VBELN) -> VBAK-KUNNR -> KNA1-NAME1 ===
+  TYPES: BEGIN OF ty_so, vbeln TYPE vbak-vbeln, END OF ty_so.
+  DATA: lt_so_range TYPE TABLE OF ty_so,
+        ls_so       TYPE ty_so.
+  LOOP AT lt_feed INTO ls_feed.
+    ls_so-vbeln = ls_feed-kdauf.
+    APPEND ls_so TO lt_so_range.
+  ENDLOOP.
+  SORT lt_so_range BY vbeln.
+  DELETE ADJACENT DUPLICATES FROM lt_so_range COMPARING vbeln.
+
+  TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
+  DATA: lt_vbak TYPE TABLE OF ty_vbak,
+        ls_vbak TYPE ty_vbak.
+  IF lt_so_range IS NOT INITIAL.
+    SELECT vbeln kunnr FROM vbak
+      INTO CORRESPONDING FIELDS OF TABLE lt_vbak
+      FOR ALL ENTRIES IN lt_so_range
+      WHERE vbeln = lt_so_range-vbeln.
+    SORT lt_vbak BY vbeln.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_kunnr, kunnr TYPE kna1-kunnr, END OF ty_kunnr.
+  DATA: lt_kunnr_range TYPE TABLE OF ty_kunnr,
+        ls_kunnr       TYPE ty_kunnr.
+  LOOP AT lt_vbak INTO ls_vbak.
+    ls_kunnr-kunnr = ls_vbak-kunnr.
+    APPEND ls_kunnr TO lt_kunnr_range.
+  ENDLOOP.
+  SORT lt_kunnr_range BY kunnr.
+  DELETE ADJACENT DUPLICATES FROM lt_kunnr_range COMPARING kunnr.
+
+  TYPES: BEGIN OF ty_kna1, kunnr TYPE kna1-kunnr, name1 TYPE kna1-name1, END OF ty_kna1.
+  DATA: lt_kna1 TYPE TABLE OF ty_kna1,
+        ls_kna1 TYPE ty_kna1.
+  IF lt_kunnr_range IS NOT INITIAL.
+    SELECT kunnr name1 FROM kna1
+      INTO CORRESPONDING FIELDS OF TABLE lt_kna1
+      FOR ALL ENTRIES IN lt_kunnr_range
+      WHERE kunnr = lt_kunnr_range-kunnr.
+    SORT lt_kna1 BY kunnr.
+  ENDIF.
+
+  " === Enrich MAKT (nama material) ===
+  TYPES: BEGIN OF ty_mat, matnr TYPE makt-matnr, END OF ty_mat.
+  DATA: lt_mat_range TYPE TABLE OF ty_mat,
+        ls_mat_range TYPE ty_mat.
+  LOOP AT lt_feed INTO ls_feed.
+    ls_mat_range-matnr = ls_feed-matnr.
+    APPEND ls_mat_range TO lt_mat_range.
+  ENDLOOP.
+  SORT lt_mat_range BY matnr.
+  DELETE ADJACENT DUPLICATES FROM lt_mat_range COMPARING matnr.
+
+  TYPES: BEGIN OF ty_makt, matnr TYPE makt-matnr, maktx TYPE makt-maktx, END OF ty_makt.
+  DATA: lt_makt TYPE TABLE OF ty_makt,
+        ls_makt TYPE ty_makt.
+  IF lt_mat_range IS NOT INITIAL.
+    SELECT matnr maktx FROM makt
+      INTO CORRESPONDING FIELDS OF TABLE lt_makt
+      FOR ALL ENTRIES IN lt_mat_range
+      WHERE matnr = lt_mat_range-matnr
+        AND spras = sy-langu.
+    SORT lt_makt BY matnr.
+  ENDIF.
+
+  " === Pasangan sisi KELUAR (SHKZG='H') utk kolom "from" ===
+  " Kunci: mblnr+mjahr+matnr+charg (dokumen material sama, material &
+  " batch sama, sisi kredit). Query TERPISAH TANPA filter SLoc — lokasi
+  " asal boleh saja di luar SLoc yang dipantau (mis. Plant 1200, lihat
+  " catatan Movement Model). Kalau tak ada pasangan -> from = "-".
+  TYPES: BEGIN OF ty_doc, mblnr TYPE mseg-mblnr, mjahr TYPE mseg-mjahr, END OF ty_doc.
+  DATA: lt_doc_range TYPE TABLE OF ty_doc,
+        ls_doc_range TYPE ty_doc.
+  LOOP AT lt_feed INTO ls_feed.
+    ls_doc_range-mblnr = ls_feed-mblnr.
+    ls_doc_range-mjahr = ls_feed-mjahr.
+    APPEND ls_doc_range TO lt_doc_range.
+  ENDLOOP.
+  SORT lt_doc_range BY mblnr mjahr.
+  DELETE ADJACENT DUPLICATES FROM lt_doc_range COMPARING mblnr mjahr.
+
+  TYPES: BEGIN OF ty_mseg_out,
+           mblnr TYPE mseg-mblnr,
+           mjahr TYPE mseg-mjahr,
+           matnr TYPE mseg-matnr,
+           charg TYPE mseg-charg,
+           werks TYPE mseg-werks,
+           lgort TYPE mseg-lgort,
+         END OF ty_mseg_out.
+  DATA: lt_mseg_out TYPE TABLE OF ty_mseg_out,
+        ls_mseg_out TYPE ty_mseg_out.
+  IF lt_doc_range IS NOT INITIAL.
+    SELECT mblnr mjahr matnr charg werks lgort FROM mseg
+      INTO CORRESPONDING FIELDS OF TABLE lt_mseg_out
+      FOR ALL ENTRIES IN lt_doc_range
+      WHERE mblnr = lt_doc_range-mblnr
+        AND mjahr = lt_doc_range-mjahr
+        AND shkzg = 'H'.
+    SORT lt_mseg_out BY mblnr mjahr matnr charg.
+  ENDIF.
+
+  " === Enrich tiap baris: buyer, maktx, from/to, label bwart, waktu, qty ===
+  " WRITE ... TO butuh target char-like (C/N/D/T), BUKAN string -> pakai lv_qty_c
+  " (C) sbg target WRITE, lalu pindah ke string (buang blank ekor otomatis).
+  DATA: lv_qty_c   TYPE c LENGTH 40,
+        lv_qty_num TYPE string.
+  LOOP AT lt_feed ASSIGNING <f>.
+    READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = <f>-kdauf BINARY SEARCH.
+    IF sy-subrc = 0.
+      <f>-kunnr = ls_vbak-kunnr.
+      READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = ls_vbak-kunnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        <f>-name1 = ls_kna1-name1.
+      ENDIF.
+    ENDIF.
+
+    READ TABLE lt_makt INTO ls_makt WITH KEY matnr = <f>-matnr BINARY SEARCH.
+    IF sy-subrc = 0.
+      <f>-maktx = ls_makt-maktx.
+    ENDIF.
+
+    READ TABLE lt_mseg_out INTO ls_mseg_out
+      WITH KEY mblnr = <f>-mblnr mjahr = <f>-mjahr matnr = <f>-matnr charg = <f>-charg
+      BINARY SEARCH.
+    IF sy-subrc = 0.
+      <f>-has_from = abap_true.
+      <f>-from_str = |{ ls_mseg_out-werks }/{ ls_mseg_out-lgort }|.
+    ELSE.
+      <f>-from_str = '-'.
+    ENDIF.
+    <f>-to_str = |{ <f>-werks }/{ <f>-lgort }|.
+
+    " Label gerakan (bwart) — tiru CASE index3a; lainnya = kode apa adanya.
+    CASE <f>-bwart.
+      WHEN '301'. <f>-bwart_lbl = 'Cross Plant'.
+      WHEN '302'. <f>-bwart_lbl = 'Cross Plant Rev'.
+      WHEN '311'. <f>-bwart_lbl = 'In Plant'.
+      WHEN '312'. <f>-bwart_lbl = 'In Plant Rev'.
+      WHEN '321'. <f>-bwart_lbl = 'Release QI'.
+      WHEN '322'. <f>-bwart_lbl = 'QI Reverse'.
+      WHEN '261'. <f>-bwart_lbl = 'GI to Order'.
+      WHEN '101'. <f>-bwart_lbl = 'Goods Receipt'.
+      WHEN '601'. <f>-bwart_lbl = 'Delivery'.
+      WHEN OTHERS. <f>-bwart_lbl = <f>-bwart.
+    ENDCASE.
+
+    " Jam:menit dari MKPF-CPUTM (HHMMSS).
+    <f>-waktu_str = <f>-cputm(2) && ':' && <f>-cputm+2(2).
+
+    " Qty + satuan eksternal. WRITE ... NO-GROUPING dipakai (bukan move
+    " langsung ke string) supaya TIDAK ada thousand-separator yang bisa
+    " bentrok dgn normalisasi desimal koma->titik di bawah.
+    CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT'
+      EXPORTING input  = <f>-meins
+      IMPORTING output = <f>-meins.
+    CLEAR: lv_qty_c, lv_qty_num.
+    WRITE <f>-menge TO lv_qty_c NO-GROUPING.
+    lv_qty_num = lv_qty_c.   " C -> string: blank ekor otomatis dibuang
+    CONDENSE lv_qty_num.
+    REPLACE ALL OCCURRENCES OF ',' IN lv_qty_num WITH '.'.
+    <f>-qty_str = |{ lv_qty_num } { <f>-meins }|.
+
+    " Matnr eksternal (tanpa leading zero).
+    CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+      EXPORTING input  = <f>-matnr
+      IMPORTING output = <f>-matnr.
+  ENDLOOP.
+ENDIF.
+
+response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+%>[<%
+DATA: lv_cnt       TYPE i,
+      lv_first     TYPE abap_bool VALUE abap_true,
+      lv_esc_maktx TYPE string,
+      lv_esc_buyer TYPE string.
+LOOP AT lt_feed INTO ls_feed.
+  " Kecualikan sample customer — CHECK SEBELUM increment/koma, supaya
+  " baris yang dibuang TIDAK ikut menghitung batas 30 maupun memicu
+  " koma "kosong" (trailing/duplicate comma).
+  IF ls_feed-kunnr = lc_sample.
+    CONTINUE.
+  ENDIF.
+
+  lv_cnt = lv_cnt + 1.
+  IF lv_cnt > 30.
+    EXIT.
+  ENDIF.
+
+  IF lv_first = abap_false.
+%>,<%
+  ENDIF.
+  lv_first = abap_false.
+
+  lv_esc_maktx = ls_feed-maktx.
+  REPLACE ALL OCCURRENCES OF '\' IN lv_esc_maktx WITH '\\'.
+  REPLACE ALL OCCURRENCES OF '"' IN lv_esc_maktx WITH '\"'.
+  " Kontrol char (CR/LF/TAB) -> spasi: karakter kontrol mentah di dalam
+  " string JSON = JSON invalid, dan karena klien meng-JSON.parse SATU array
+  " sekaligus, satu char rusak mematikan SELURUH feed. Jarang, tapi murah.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_esc_maktx WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_esc_maktx WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_esc_maktx WITH ` `.
+
+  lv_esc_buyer = ls_feed-name1.
+  REPLACE ALL OCCURRENCES OF '\' IN lv_esc_buyer WITH '\\'.
+  REPLACE ALL OCCURRENCES OF '"' IN lv_esc_buyer WITH '\"'.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_esc_buyer WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_esc_buyer WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_esc_buyer WITH ` `.
+%>{"waktu":"<%= ls_feed-waktu_str %>","matnr":"<%= ls_feed-matnr %>","maktx":"<%= lv_esc_maktx %>","from":"<%= ls_feed-from_str %>","to":"<%= ls_feed-to_str %>","qty":"<%= ls_feed-qty_str %>","buyer":"<%= lv_esc_buyer %>","gerakan":"<%= ls_feed-bwart_lbl %>"}<%
+ENDLOOP.
+%>]
