@@ -33,6 +33,19 @@ DATA: lv_sec_s TYPE string,
 lv_sec_s = request->get_form_field( 'sec' ).
 lv_sec   = lv_sec_s.
 
+" Rentang tanggal (dipakai utk hitung "terakhir masuk ke SLoc"); default 30 hari.
+DATA: lv_f_s  TYPE string, lv_t_s TYPE string,
+      lv_from TYPE mkpf-budat, lv_to TYPE mkpf-budat.
+lv_f_s = request->get_form_field( 'from' ).
+lv_t_s = request->get_form_field( 'to' ).
+REPLACE ALL OCCURRENCES OF '-' IN lv_f_s WITH ''.
+REPLACE ALL OCCURRENCES OF '-' IN lv_t_s WITH ''.
+IF lv_f_s IS NOT INITIAL AND lv_t_s IS NOT INITIAL.
+  lv_from = lv_f_s. lv_to = lv_t_s.
+ELSE.
+  lv_to = sy-datum. lv_from = sy-datum - 30.
+ENDIF.
+
 " --- Peta sec -> werks + daftar lgort + mode (Unrestricted / QI) ---
 DATA: lv_werks TYPE werks_d,
       lv_qi    TYPE abap_bool.
@@ -135,6 +148,34 @@ ENDLOOP.
 SORT lt_matu. DELETE ADJACENT DUPLICATES FROM lt_matu.
 DESCRIBE TABLE lt_matu LINES lv_matcount.
 
+" --- "Terakhir masuk": MAX(BUDAT) pergerakan terima (SHKZG='S') tiap material
+"     ke SLoc dipantau, dalam rentang tanggal. Dipakai utk urut Terbaru/Terlama. ---
+TYPES: BEGIN OF ty_lin, matnr TYPE mseg-matnr, lgort TYPE mseg-lgort, budat TYPE mkpf-budat, END OF ty_lin.
+DATA: lt_lin TYPE TABLE OF ty_lin, ls_lin TYPE ty_lin.
+TYPES: BEGIN OF ty_lastin, matnr TYPE matnr, lgort TYPE lgort_d, budat TYPE mkpf-budat, END OF ty_lastin.
+DATA: lt_lastin TYPE TABLE OF ty_lastin, ls_lastin TYPE ty_lastin.
+FIELD-SYMBOLS <li> TYPE ty_lastin.
+IF lt_matu IS NOT INITIAL.
+  SELECT m~matnr m~lgort h~budat
+    FROM mseg AS m INNER JOIN mkpf AS h ON m~mblnr = h~mblnr AND m~mjahr = h~mjahr
+    INTO CORRESPONDING FIELDS OF TABLE lt_lin
+    FOR ALL ENTRIES IN lt_matu
+    WHERE m~matnr = lt_matu-table_line
+      AND m~werks = lv_werks
+      AND m~lgort IN lt_lg
+      AND m~shkzg = 'S'
+      AND h~budat BETWEEN lv_from AND lv_to.
+  LOOP AT lt_lin INTO ls_lin.
+    READ TABLE lt_lastin ASSIGNING <li> WITH KEY matnr = ls_lin-matnr lgort = ls_lin-lgort.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_lastin ASSIGNING <li>.
+      <li>-matnr = ls_lin-matnr. <li>-lgort = ls_lin-lgort.
+    ENDIF.
+    IF ls_lin-budat > <li>-budat. <li>-budat = ls_lin-budat. ENDIF.
+  ENDLOOP.
+  SORT lt_lastin BY matnr lgort.
+ENDIF.
+
 " --- Enrich: maktx (MAKT), meins base (MARA), buyer (VBAK sudah ada -> KNA1) ---
 TYPES: BEGIN OF ty_makt, matnr TYPE makt-matnr, maktx TYPE makt-maktx, END OF ty_makt.
 DATA: lt_makt TYPE TABLE OF ty_makt, ls_makt TYPE ty_makt.
@@ -169,6 +210,7 @@ ENDIF.
 TYPES: BEGIN OF ty_out,
          matnr_d TYPE string, maktx TYPE string, lgort TYPE lgort_d,
          qty_str TYPE string, so_d TYPE string, buyer TYPE string,
+         lastin TYPE string,
        END OF ty_out.
 DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
 DATA: lv_meins TYPE mara-meins, lv_qty_c TYPE c LENGTH 40, lv_qty_num TYPE string,
@@ -222,6 +264,14 @@ LOOP AT lt_agg INTO ls_agg.
     ls_out-so_d  = '-'.
     ls_out-buyer = '(stok bebas)'.
   ENDIF.
+  " Terakhir masuk (YYYY-MM-DD; sortable & tampil). Kosong bila tak ada
+  " pergerakan masuk dalam rentang.
+  READ TABLE lt_lastin INTO ls_lastin WITH KEY matnr = ls_agg-matnr lgort = ls_agg-lgort BINARY SEARCH.
+  IF sy-subrc = 0 AND ls_lastin-budat IS NOT INITIAL.
+    ls_out-lastin = ls_lastin-budat(4) && '-' && ls_lastin-budat+4(2) && '-' && ls_lastin-budat+6(2).
+  ELSE.
+    ls_out-lastin = ''.
+  ENDIF.
   APPEND ls_out TO lt_out.
 ENDLOOP.
 
@@ -244,6 +294,6 @@ LOOP AT lt_out INTO ls_out.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_buyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_buyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_buyer WITH ` `.
-%>{"matnr":"<%= ls_out-matnr_d %>","maktx":"<%= lv_e_maktx %>","lgort":"<%= ls_out-lgort %>","qty":"<%= ls_out-qty_str %>","so":"<%= ls_out-so_d %>","buyer":"<%= lv_e_buyer %>"}<%
+%>{"matnr":"<%= ls_out-matnr_d %>","maktx":"<%= lv_e_maktx %>","lgort":"<%= ls_out-lgort %>","qty":"<%= ls_out-qty_str %>","so":"<%= ls_out-so_d %>","buyer":"<%= lv_e_buyer %>","lastin":"<%= ls_out-lastin %>"}<%
 ENDLOOP.
 %>]}
