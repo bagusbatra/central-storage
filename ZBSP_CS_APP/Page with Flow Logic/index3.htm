@@ -224,6 +224,14 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     /* --- Ikon inline SVG (gaya Lucide, tanpa CDN) --- */
     .ic { width:1em; height:1em; vertical-align:-0.14em; fill:none; stroke:currentColor;
       stroke-width:2; stroke-linecap:round; stroke-linejoin:round; display:inline-block; flex-shrink:0; }
+    /* --- Skeleton loader (shimmer) --- */
+    @keyframes skel-shimmer { 0% { background-position:100% 50%; } 100% { background-position:0 50%; } }
+    .skel { background:linear-gradient(90deg,#eceff3 25%,#dfe4ea 37%,#eceff3 63%); background-size:400% 100%;
+      animation:skel-shimmer 1.4s ease infinite; border-radius:6px; }
+    .skel-dark { background:linear-gradient(90deg,#1e293b 25%,#334155 37%,#1e293b 63%); background-size:400% 100%; }
+    .skel-wrap { padding:14px 16px; }
+    .skel-row { display:flex; gap:12px; padding:11px 14px; border-bottom:1px solid #f3f4f6; }
+    .skel-row .skel { height:12px; align-self:center; }
     /* --- KPI bar (CSS murni, tanpa library) --- */
     .kpi-bar { display:flex; gap:12px; flex-wrap:wrap; margin:6px 0 24px; }
     .kpi-card { flex:1 1 140px; min-width:140px; background:#fff; border:1px solid #e5e7eb;
@@ -555,6 +563,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           if(s) s.textContent = 'gagal memuat — memakai data terakhir';
         });
     }
+    skelTicker();   // skeleton di ticker sampai data pertama masuk
     loadFeed();
     setInterval(loadFeed, 15000);
 
@@ -599,6 +608,41 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     }
 
     /* --- Drill-down KPI: klik kartu -> daftar material berstok (AJAX) --- */
+    /* --- Skeleton loader helpers (shimmer) --- */
+    function skelRows(n, cols){
+      var w = ['2','3','1','1','2'], h = '';
+      for(var i=0;i<n;i++){
+        h += '<div class="skel-row">';
+        for(var c=0;c<cols;c++){ h += '<div class="skel" style="flex:'+w[c%w.length]+';"></div>'; }
+        h += '</div>';
+      }
+      return h;
+    }
+    function skelDrilldown(){
+      return '<div class="skel-wrap">'
+        + '<div class="skel" style="width:38%;height:16px;margin-bottom:12px;"></div>'
+        + '<div class="skel" style="width:62%;height:10px;margin-bottom:16px;"></div>'
+        + '<div style="display:flex;gap:12px;margin-bottom:14px;">'
+        +   '<div class="skel" style="width:130px;height:30px;"></div>'
+        +   '<div class="skel" style="width:130px;height:30px;"></div>'
+        +   '<div class="skel" style="flex:1;height:30px;"></div></div>'
+        + skelRows(7, 5) + '</div>';
+    }
+    function skelSidePanel(){
+      return '<div class="skel-wrap">'
+        + '<div class="skel" style="width:50%;height:12px;margin-bottom:14px;"></div>'
+        + '<div class="skel" style="width:100%;height:32px;margin-bottom:14px;"></div>'
+        + skelRows(6, 5) + '</div>';
+    }
+    function skelTicker(){
+      var el = document.getElementById('feed-list');
+      if(!el) return;
+      el.innerHTML =
+          '<span class="skel skel-dark" style="display:inline-block;width:230px;height:14px;margin:0 20px;"></span>'
+        + '<span class="skel skel-dark" style="display:inline-block;width:180px;height:14px;margin:0 20px;"></span>'
+        + '<span class="skel skel-dark" style="display:inline-block;width:210px;height:14px;margin:0 20px;"></span>'
+        + '<span class="skel skel-dark" style="display:inline-block;width:160px;height:14px;margin:0 20px;"></span>';
+    }
     function dashDetail(sec, card){
       var panel = document.getElementById('kpi-detail');
       var cards = document.querySelectorAll('.kpi-card');
@@ -615,7 +659,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         : ('Bagian ' + sec);
       var tip = card.getAttribute('title') || '';
       panel.style.display = 'block';
-      panel.innerHTML = '<div class="loading">Memuat data ' + feedEsc(label) + '&hellip;</div>';
+      panel.innerHTML = skelDrilldown();
       // kirim rentang tanggal filter atas -> dipakai hitung "terakhir masuk"
       var fEl = document.querySelector('[name="date_from"]'),
           tEl = document.querySelector('[name="date_to"]');
@@ -759,7 +803,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       var body  = document.getElementById('so-body');
       document.getElementById('so-title').textContent = 'SO ' + so;
       document.getElementById('so-scope').textContent = '';
-      body.innerHTML = '<div class="loading">Memuat&hellip;</div>';
+      body.innerHTML = skelSidePanel();
       panel.classList.add('open'); panel.setAttribute('aria-hidden','false');
       ov.classList.add('open');
       fetch('dash_so.htm?so='+encodeURIComponent(so)+'&sec='+encodeURIComponent(sec), { headers:{'Accept':'application/json'}, cache:'no-store' })
