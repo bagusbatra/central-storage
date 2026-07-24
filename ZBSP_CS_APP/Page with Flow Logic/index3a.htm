@@ -273,9 +273,14 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .dd-filters { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; padding:10px 16px; border-bottom:1px solid #f3f4f6; }
     .dd-f { display:flex; flex-direction:column; gap:3px; font-size:0.68rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px; }
     .dd-f select { font-size:0.82rem; font-weight:400; text-transform:none; padding:5px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#374151; }
+    .dd-f-grow { flex:1 1 220px; min-width:180px; }
+    .dd-search { width:100%; box-sizing:border-box; font-size:0.82rem; font-weight:400; text-transform:none; padding:5px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#374151; }
+    .dd-search:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.18); }
     /* No. SO dapat diklik + panel geser kanan (progres produksi SO) */
     .so-link { color:#2563eb; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-weight:600; }
     .so-link:hover { color:#1e3a8a; }
+    .item-link { color:#0d9488; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-weight:600; }
+    .item-link:hover { color:#0f766e; }
     .so-overlay { position:fixed; inset:0; background:rgba(15,23,42,0.35); opacity:0; visibility:hidden; transition:opacity .2s ease; z-index:990; }
     .so-overlay.open { opacity:1; visibility:visible; }
     .so-panel { position:fixed; top:0; right:0; height:100%; width:min(480px,92vw); background:#fff;
@@ -621,13 +626,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     /* State drill-down: disimpan agar filter bisa re-render tanpa fetch ulang */
     var _ddPanel=null, _ddRows=[], _ddLabel='', _ddTip='', _ddCount=0, _ddSec=0,
         _ddCust='__all__', _ddSort='new', _ddSloc='__all__',
-        _ddCustList=[], _ddSlocList=[];
+        _ddCustList=[], _ddSlocList=[], _ddSearch='';
     function renderDetail(panel, label, tip, data){
       _ddPanel = panel;
       _ddRows  = (data && data.rows) ? data.rows : [];
       _ddCount = (data && typeof data.matcount !== 'undefined') ? data.matcount : _ddRows.length;
       _ddLabel = label; _ddTip = tip;
-      _ddCust='__all__'; _ddSort='new'; _ddSloc='__all__';
+      _ddCust='__all__'; _ddSort='new'; _ddSloc='__all__'; _ddSearch='';
       dashRender();
     }
     function dashSetCust(v){ _ddCust = (v==='-1') ? '__all__' : _ddCustList[+v]; dashRender(); }
@@ -685,25 +690,53 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         slocs.forEach(function(s,i){ h += '<option value="'+i+'"'+(_ddSloc===s?' selected':'')+'>'+feedEsc(s)+'</option>'; });
         h += '</select></label>';
       }
+      h += '<label class="dd-f dd-f-grow"><span>Cari</span><input type="text" id="dd-search" class="dd-search" placeholder="Material / deskripsi / No. SO&hellip;" autocomplete="off" value="'+feedEsc(_ddSearch)+'"></label>';
       h += '</div>';
       // tabel flat
       h += '<div class="kpi-detail-scroll"><table><thead><tr>'
-        + '<th>Material</th><th>Deskripsi</th><th>SLoc</th><th>Qty</th><th>No. SO</th><th>Buyer</th><th>Terakhir Masuk</th>'
-        + '</tr></thead><tbody>';
+        + '<th>Material</th><th>Deskripsi</th><th>SLoc</th><th>Qty</th><th>No.SO / Item</th><th>Buyer</th><th>Terakhir Masuk</th>'
+        + '</tr></thead><tbody id="dd-tbody">';
       fr.forEach(function(r){
-        var soCell = (r.so && r.so!=='-')
-          ? '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Lihat progres produksi SO ini">'+feedEsc(r.so)+'</span>'
-          : feedEsc(r.so);
-        h += '<tr><td>'+feedEsc(r.matnr)+'</td><td>'+feedEsc(r.maktx)+'</td><td>'+feedEsc(r.lgort)+'</td>'
+        var soCell;
+        if(r.so && r.so!=='-'){
+          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Progres produksi SO (semua item)">'+feedEsc(r.so)+'</span> / '
+            + (r.item
+                ? '<span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" title="Progres produksi item ini">'+feedEsc(r.item)+'</span>'
+                : '-');
+        } else { soCell = '-'; }
+        var srch = feedEsc(((r.matnr||'')+' '+(r.maktx||'')+' '+(r.so||'')+' '+(r.item||'')).toLowerCase());
+        h += '<tr data-s="'+srch+'"><td>'+feedEsc(r.matnr)+'</td><td>'+feedEsc(r.maktx)+'</td><td>'+feedEsc(r.lgort)+'</td>'
           + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+soCell+'</td><td>'+feedEsc(r.buyer)+'</td>'
           + '<td>'+feedEsc(r.lastin||'-')+'</td></tr>';
       });
-      h += '</tbody></table></div>';
+      h += '</tbody></table><div id="dd-empty" class="loading" style="display:none;">Tidak ada baris yang cocok dengan pencarian.</div></div>';
       panel.innerHTML = h;
       // klik No. SO -> panel geser kanan (progres produksi SO di kategori kartu)
       panel.querySelectorAll('.so-link').forEach(function(a){
         a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec); });
       });
+      // klik Item -> sidebar SO dgn search item auto-terisi (hanya item itu)
+      panel.querySelectorAll('.item-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec, a.getAttribute('data-item')); });
+      });
+      // search material/deskripsi/No.SO: filter show/hide TANPA re-render (fokus terjaga)
+      var ds = document.getElementById('dd-search');
+      if(ds){ ds.addEventListener('input', function(){ _ddSearch = ds.value; ddApplySearch(); }); }
+      ddApplySearch();   // terapkan search yang tersimpan (persist saat dropdown berubah)
+    }
+    function ddApplySearch(){
+      var q = (_ddSearch || '').trim().toLowerCase();
+      var tb = document.getElementById('dd-tbody');
+      if(!tb) return;
+      var trs = tb.querySelectorAll('tr'), shown = 0;
+      trs.forEach(function(tr){
+        var s = tr.getAttribute('data-s') || '';
+        var ok = (q === '') || (s.indexOf(q) !== -1);
+        tr.style.display = ok ? '' : 'none';
+        if(ok) shown++;
+      });
+      var em = document.getElementById('dd-empty');
+      if(em) em.style.display = shown ? 'none' : 'block';
     }
     function dashDetailClose(){
       var panel = document.getElementById('kpi-detail');
@@ -715,7 +748,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     /* --- Side panel kanan: progres produksi SO (dash_so.htm) --- */
     /* State side panel SO */
     var _soRows=[], _soBuyer='';
-    function openSo(so, sec){
+    function openSo(so, sec, presetItem){
       var panel = document.getElementById('so-panel');
       var ov    = document.getElementById('so-overlay');
       var body  = document.getElementById('so-body');
@@ -731,6 +764,11 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
           _soRows  = (d && d.rows) ? d.rows : [];
           _soBuyer = (d && d.buyer) ? d.buyer : '';
           soRender();
+          // auto-filter ke item yang diklik (kalau ada)
+          if(presetItem){
+            var si = document.getElementById('so-search');
+            if(si){ si.value = presetItem; soFilter(presetItem); }
+          }
         })
         .catch(function(){ body.innerHTML = '<div class="err">Gagal memuat data SO.</div>'; });
     }

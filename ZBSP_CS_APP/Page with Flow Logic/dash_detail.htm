@@ -76,6 +76,7 @@ TYPES: BEGIN OF ty_agg,
          matnr TYPE matnr,
          lgort TYPE lgort_d,
          vbeln TYPE mska-vbeln,
+         posnr TYPE mska-posnr,
          qty   TYPE p LENGTH 15 DECIMALS 3,
        END OF ty_agg.
 DATA: lt_agg TYPE TABLE OF ty_agg, ls_agg TYPE ty_agg.
@@ -83,11 +84,11 @@ FIELD-SYMBOLS <a> TYPE ty_agg.
 
 " --- SO-stock (MSKA, sobkz='E') ---
 TYPES: BEGIN OF ty_mska,
-         matnr TYPE mska-matnr, lgort TYPE mska-lgort, vbeln TYPE mska-vbeln,
+         matnr TYPE mska-matnr, lgort TYPE mska-lgort, vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
          kalab TYPE mska-kalab, kains TYPE mska-kains,
        END OF ty_mska.
 DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
-SELECT matnr lgort vbeln kalab kains FROM mska
+SELECT matnr lgort vbeln posnr kalab kains FROM mska
   INTO CORRESPONDING FIELDS OF TABLE lt_mska
   WHERE werks = lv_werks
     AND lgort IN lt_lg
@@ -129,6 +130,7 @@ LOOP AT lt_mska INTO ls_mska.
   ENDIF.
   CLEAR ls_agg.
   ls_agg-matnr = ls_mska-matnr. ls_agg-lgort = ls_mska-lgort. ls_agg-vbeln = ls_mska-vbeln.
+  ls_agg-posnr = ls_mska-posnr.
   IF lv_qi = abap_true. ls_agg-qty = ls_mska-kains. ELSE. ls_agg-qty = ls_mska-kalab. ENDIF.
   IF ls_agg-qty > 0. COLLECT ls_agg INTO lt_agg. ENDIF.
 ENDLOOP.
@@ -209,7 +211,7 @@ ENDIF.
 " --- Field tampilan per baris ---
 TYPES: BEGIN OF ty_out,
          matnr_d TYPE string, maktx TYPE string, lgort TYPE lgort_d,
-         qty_str TYPE string, so_d TYPE string, buyer TYPE string,
+         qty_str TYPE string, so_d TYPE string, item TYPE string, buyer TYPE string,
          lastin TYPE string,
        END OF ty_out.
 DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
@@ -264,6 +266,13 @@ LOOP AT lt_agg INTO ls_agg.
     ls_out-so_d  = '-'.
     ls_out-buyer = '(stok bebas)'.
   ENDIF.
+  " SO item (posnr) tanpa leading zero; kosong utk stok bebas
+  IF ls_agg-posnr IS NOT INITIAL.
+    ls_out-item = ls_agg-posnr.
+    SHIFT ls_out-item LEFT DELETING LEADING '0'.
+  ELSE.
+    ls_out-item = ''.
+  ENDIF.
   " Terakhir masuk (YYYY-MM-DD; sortable & tampil). Kosong bila tak ada
   " pergerakan masuk dalam rentang.
   READ TABLE lt_lastin INTO ls_lastin WITH KEY matnr = ls_agg-matnr lgort = ls_agg-lgort BINARY SEARCH.
@@ -294,6 +303,6 @@ LOOP AT lt_out INTO ls_out.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_buyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_buyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_buyer WITH ` `.
-%>{"matnr":"<%= ls_out-matnr_d %>","maktx":"<%= lv_e_maktx %>","lgort":"<%= ls_out-lgort %>","qty":"<%= ls_out-qty_str %>","so":"<%= ls_out-so_d %>","buyer":"<%= lv_e_buyer %>","lastin":"<%= ls_out-lastin %>"}<%
+%>{"matnr":"<%= ls_out-matnr_d %>","maktx":"<%= lv_e_maktx %>","lgort":"<%= ls_out-lgort %>","qty":"<%= ls_out-qty_str %>","so":"<%= ls_out-so_d %>","item":"<%= ls_out-item %>","buyer":"<%= lv_e_buyer %>","lastin":"<%= ls_out-lastin %>"}<%
 ENDLOOP.
 %>]}
