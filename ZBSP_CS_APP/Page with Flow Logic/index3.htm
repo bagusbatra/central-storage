@@ -750,7 +750,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       fr.forEach(function(r){
         var soCell;
         if(r.so && r.so!=='-'){
-          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Progres produksi SO (semua item)">'+feedEsc(r.so)+'</span> / '
+          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item||'')+'" data-mat="'+feedEsc(r.matnr)+'" title="Progres produksi SO (semua item, baris ini disorot)">'+feedEsc(r.so)+'</span> / '
             + (r.item
                 ? '<span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" data-mat="'+feedEsc(r.matnr)+'" title="Progres produksi item ini (disorot di panel)">'+feedEsc(r.item)+'</span>'
                 : '-');
@@ -762,13 +762,13 @@ width="7" height="5"/></svg></span>Dashboard</a>
       });
       h += '</tbody></table><div id="dd-empty" class="loading" style="display:none;">Tidak ada baris yang cocok dengan pencarian.</div></div>';
       panel.innerHTML = h;
-      // klik No. SO -> panel geser kanan (progres produksi SO di kategori kartu)
+      // klik No. SO -> sidebar tampil SEMUA item, baris sumber di-highlight (tanpa filter)
       panel.querySelectorAll('.so-link').forEach(function(a){
-        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec); });
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec, a.getAttribute('data-item'), a.getAttribute('data-mat'), false); });
       });
-      // klik Item -> sidebar SO dgn search item auto-terisi (hanya item itu)
+      // klik Item -> highlight baris sumber DAN filter sidebar ke nomor item itu
       panel.querySelectorAll('.item-link').forEach(function(a){
-        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec, a.getAttribute('data-item'), a.getAttribute('data-mat')); });
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec, a.getAttribute('data-item'), a.getAttribute('data-mat'), true); });
       });
       // search material/deskripsi/No.SO: filter show/hide TANPA re-render (fokus terjaga)
       var ds = document.getElementById('dd-search');
@@ -799,7 +799,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     /* --- Side panel kanan: progres produksi SO (dash_so.htm) --- */
     /* State side panel SO */
     var _soRows=[], _soBuyer='';
-    function openSo(so, sec, presetItem, presetMat){
+    function openSo(so, sec, presetItem, presetMat, doFilter){
       var panel = document.getElementById('so-panel');
       var ov    = document.getElementById('so-overlay');
       var body  = document.getElementById('so-body');
@@ -815,8 +815,13 @@ width="7" height="5"/></svg></span>Dashboard</a>
           _soRows  = (d && d.rows) ? d.rows : [];
           _soBuyer = (d && d.buyer) ? d.buyer : '';
           soRender();
-          // sorot baris yang sama dgn item (& material) yang diklik
+          // sorot baris sumber yang diklik (item + material)
           if(presetItem){ soHighlight(presetItem, presetMat); }
+          // klik dari Item -> filter sidebar ke nomor item tsb; klik dari SO -> tidak difilter
+          if(doFilter && presetItem){
+            var si = document.getElementById('so-search');
+            if(si){ si.value = presetItem; soFilter(presetItem); }
+          }
         })
         .catch(function(){ body.innerHTML = '<div class="err">Gagal memuat data SO.</div>'; });
     }
