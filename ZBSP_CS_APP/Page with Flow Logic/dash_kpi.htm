@@ -19,17 +19,17 @@ CONSTANTS: lc_w1000 TYPE werks_d VALUE '1000',
 
 TYPES: BEGIN OF ty_src,
          matnr TYPE matnr, werks TYPE werks_d, lgort TYPE lgort_d,
-         vbeln TYPE mska-vbeln,
+         vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
          unr TYPE p LENGTH 15 DECIMALS 3, qi TYPE p LENGTH 15 DECIMALS 3,
        END OF ty_src.
 DATA: lt_src TYPE TABLE OF ty_src, ls_src TYPE ty_src.
 
 TYPES: BEGIN OF ty_mska,
          matnr TYPE mska-matnr, werks TYPE mska-werks, lgort TYPE mska-lgort,
-         vbeln TYPE mska-vbeln, kalab TYPE mska-kalab, kains TYPE mska-kains,
+         vbeln TYPE mska-vbeln, posnr TYPE mska-posnr, kalab TYPE mska-kalab, kains TYPE mska-kains,
        END OF ty_mska.
 DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
-SELECT matnr werks lgort vbeln kalab kains FROM mska
+SELECT matnr werks lgort vbeln posnr kalab kains FROM mska
   INTO CORRESPONDING FIELDS OF TABLE lt_mska
   WHERE sobkz = 'E'
     AND ( kalab > 0 OR kains > 0 )
@@ -68,7 +68,8 @@ LOOP AT lt_mska INTO ls_mska.
   ENDIF.
   CLEAR ls_src.
   ls_src-matnr = ls_mska-matnr. ls_src-werks = ls_mska-werks. ls_src-lgort = ls_mska-lgort.
-  ls_src-vbeln = ls_mska-vbeln. ls_src-unr = ls_mska-kalab. ls_src-qi = ls_mska-kains.
+  ls_src-vbeln = ls_mska-vbeln. ls_src-posnr = ls_mska-posnr.
+  ls_src-unr = ls_mska-kalab. ls_src-qi = ls_mska-kains.
   APPEND ls_src TO lt_src.
 ENDLOOP.
 LOOP AT lt_mard INTO ls_mard.
@@ -78,8 +79,12 @@ LOOP AT lt_mard INTO ls_mard.
   APPEND ls_src TO lt_src.
 ENDLOOP.
 
-TYPES: BEGIN OF ty_stk, col TYPE i, matnr TYPE matnr, END OF ty_stk.
-DATA: lt_stk TYPE TABLE OF ty_stk, ls_stk TYPE ty_stk.
+" Sel detail distinct (col,matnr,lgort,vbeln,posnr) -> 3 metrik/kolom (mat/row/so).
+TYPES: BEGIN OF ty_cell,
+         col TYPE i, matnr TYPE matnr, lgort TYPE lgort_d,
+         vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
+       END OF ty_cell.
+DATA: lt_cell TYPE TABLE OF ty_cell, ls_cell TYPE ty_cell.
 DATA: lv_ucol TYPE i, lv_qcol TYPE i.
 LOOP AT lt_src INTO ls_src.
   CLEAR: lv_ucol, lv_qcol.
@@ -98,28 +103,66 @@ LOOP AT lt_src INTO ls_src.
   ELSEIF ls_src-werks = lc_w2000. lv_qcol = 7.
   ENDIF.
   IF ls_src-unr > 0 AND lv_ucol > 0.
-    ls_stk-col = lv_ucol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+    CLEAR ls_cell.
+    ls_cell-col = lv_ucol. ls_cell-matnr = ls_src-matnr. ls_cell-lgort = ls_src-lgort.
+    ls_cell-vbeln = ls_src-vbeln. ls_cell-posnr = ls_src-posnr.
+    APPEND ls_cell TO lt_cell.
   ENDIF.
   IF ls_src-qi > 0 AND lv_qcol > 0.
-    ls_stk-col = lv_qcol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+    CLEAR ls_cell.
+    ls_cell-col = lv_qcol. ls_cell-matnr = ls_src-matnr. ls_cell-lgort = ls_src-lgort.
+    ls_cell-vbeln = ls_src-vbeln. ls_cell-posnr = ls_src-posnr.
+    APPEND ls_cell TO lt_cell.
   ENDIF.
 ENDLOOP.
-SORT lt_stk BY col matnr.
-DELETE ADJACENT DUPLICATES FROM lt_stk COMPARING ALL FIELDS.
+SORT lt_cell BY col matnr lgort vbeln posnr.
+DELETE ADJACENT DUPLICATES FROM lt_cell COMPARING ALL FIELDS.
+
+TYPES: BEGIN OF ty_cnt, col TYPE i, mat TYPE i, row TYPE i, so TYPE i, END OF ty_cnt.
+DATA: lt_cnt TYPE TABLE OF ty_cnt.
+FIELD-SYMBOLS <cn> TYPE ty_cnt.
+DEFINE ensure_cnt.
+  READ TABLE lt_cnt ASSIGNING <cn> WITH KEY col = &1.
+  IF sy-subrc <> 0. APPEND INITIAL LINE TO lt_cnt ASSIGNING <cn>. <cn>-col = &1. ENDIF.
+END-OF-DEFINITION.
+LOOP AT lt_cell INTO ls_cell.
+  ensure_cnt ls_cell-col.
+  <cn>-row = <cn>-row + 1.
+ENDLOOP.
+DATA lt_cm TYPE TABLE OF ty_cell.
+lt_cm = lt_cell.
+SORT lt_cm BY col matnr.
+DELETE ADJACENT DUPLICATES FROM lt_cm COMPARING col matnr.
+LOOP AT lt_cm INTO ls_cell.
+  ensure_cnt ls_cell-col.
+  <cn>-mat = <cn>-mat + 1.
+ENDLOOP.
+DATA lt_cs TYPE TABLE OF ty_cell.
+lt_cs = lt_cell.
+DELETE lt_cs WHERE vbeln IS INITIAL.
+SORT lt_cs BY col vbeln.
+DELETE ADJACENT DUPLICATES FROM lt_cs COMPARING col vbeln.
+LOOP AT lt_cs INTO ls_cell.
+  ensure_cnt ls_cell-col.
+  <cn>-so = <cn>-so + 1.
+ENDLOOP.
 
 DATA: lv_tot1 TYPE i, lv_tot2 TYPE i, lv_tot3 TYPE i, lv_tot4 TYPE i,
-      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i.
-LOOP AT lt_stk INTO ls_stk.
-  CASE ls_stk-col.
-    WHEN 1. lv_tot1 = lv_tot1 + 1.
-    WHEN 2. lv_tot2 = lv_tot2 + 1.
-    WHEN 3. lv_tot3 = lv_tot3 + 1.
-    WHEN 4. lv_tot4 = lv_tot4 + 1.
-    WHEN 5. lv_tot5 = lv_tot5 + 1.
-    WHEN 6. lv_tot6 = lv_tot6 + 1.
-    WHEN 7. lv_tot7 = lv_tot7 + 1.
+      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i,
+      lv_r1 TYPE i, lv_r2 TYPE i, lv_r3 TYPE i, lv_r4 TYPE i, lv_r5 TYPE i, lv_r6 TYPE i, lv_r7 TYPE i,
+      lv_s1 TYPE i, lv_s2 TYPE i, lv_s3 TYPE i, lv_s4 TYPE i, lv_s5 TYPE i, lv_s6 TYPE i, lv_s7 TYPE i.
+DATA ls_cnt TYPE ty_cnt.
+LOOP AT lt_cnt INTO ls_cnt.
+  CASE ls_cnt-col.
+    WHEN 1. lv_tot1 = ls_cnt-mat. lv_r1 = ls_cnt-row. lv_s1 = ls_cnt-so.
+    WHEN 2. lv_tot2 = ls_cnt-mat. lv_r2 = ls_cnt-row. lv_s2 = ls_cnt-so.
+    WHEN 3. lv_tot3 = ls_cnt-mat. lv_r3 = ls_cnt-row. lv_s3 = ls_cnt-so.
+    WHEN 4. lv_tot4 = ls_cnt-mat. lv_r4 = ls_cnt-row. lv_s4 = ls_cnt-so.
+    WHEN 5. lv_tot5 = ls_cnt-mat. lv_r5 = ls_cnt-row. lv_s5 = ls_cnt-so.
+    WHEN 6. lv_tot6 = ls_cnt-mat. lv_r6 = ls_cnt-row. lv_s6 = ls_cnt-so.
+    WHEN 7. lv_tot7 = ls_cnt-mat. lv_r7 = ls_cnt-row. lv_s7 = ls_cnt-so.
   ENDCASE.
 ENDLOOP.
 
 response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
-%>{"tot":[<%= lv_tot1 %>,<%= lv_tot2 %>,<%= lv_tot3 %>,<%= lv_tot4 %>,<%= lv_tot5 %>,<%= lv_tot6 %>,<%= lv_tot7 %>]}
+%>{"mat":[<%= lv_tot1 %>,<%= lv_tot2 %>,<%= lv_tot3 %>,<%= lv_tot4 %>,<%= lv_tot5 %>,<%= lv_tot6 %>,<%= lv_tot7 %>],"row":[<%= lv_r1 %>,<%= lv_r2 %>,<%= lv_r3 %>,<%= lv_r4 %>,<%= lv_r5 %>,<%= lv_r6 %>,<%= lv_r7 %>],"so":[<%= lv_s1 %>,<%= lv_s2 %>,<%= lv_s3 %>,<%= lv_s4 %>,<%= lv_s5 %>,<%= lv_s6 %>,<%= lv_s7 %>]}

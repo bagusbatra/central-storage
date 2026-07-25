@@ -73,6 +73,7 @@ TYPES: BEGIN OF ty_src,
          werks TYPE werks_d,
          lgort TYPE lgort_d,
          vbeln TYPE mska-vbeln,   " terisi hanya utk SO-stock (MSKA)
+         posnr TYPE mska-posnr,   " SO item (utk hitung baris/SO)
          unr   TYPE p LENGTH 15 DECIMALS 3,
          qi    TYPE p LENGTH 15 DECIMALS 3,
        END OF ty_src.
@@ -81,10 +82,10 @@ DATA: lt_src TYPE TABLE OF ty_src, ls_src TYPE ty_src.
 " --- SO-stock (MSKA, sobkz='E') di SLoc dipantau ---
 TYPES: BEGIN OF ty_mska,
          matnr TYPE mska-matnr, werks TYPE mska-werks, lgort TYPE mska-lgort,
-         vbeln TYPE mska-vbeln, kalab TYPE mska-kalab, kains TYPE mska-kains,
+         vbeln TYPE mska-vbeln, posnr TYPE mska-posnr, kalab TYPE mska-kalab, kains TYPE mska-kains,
        END OF ty_mska.
 DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
-SELECT matnr werks lgort vbeln kalab kains FROM mska
+SELECT matnr werks lgort vbeln posnr kalab kains FROM mska
   INTO CORRESPONDING FIELDS OF TABLE lt_mska
   WHERE sobkz = 'E'
     AND ( kalab > 0 OR kains > 0 )   " #opt: hanya baris berstok (buang stok nol di DB)
@@ -126,7 +127,8 @@ LOOP AT lt_mska INTO ls_mska.
   ENDIF.
   CLEAR ls_src.
   ls_src-matnr = ls_mska-matnr. ls_src-werks = ls_mska-werks. ls_src-lgort = ls_mska-lgort.
-  ls_src-vbeln = ls_mska-vbeln. ls_src-unr = ls_mska-kalab. ls_src-qi = ls_mska-kains.
+  ls_src-vbeln = ls_mska-vbeln. ls_src-posnr = ls_mska-posnr.
+  ls_src-unr = ls_mska-kalab. ls_src-qi = ls_mska-kains.
   APPEND ls_src TO lt_src.
 ENDLOOP.
 LOOP AT lt_mard INTO ls_mard.
@@ -136,9 +138,16 @@ LOOP AT lt_mard INTO ls_mard.
   APPEND ls_src TO lt_src.
 ENDLOOP.
 
-" --- Set distinct (col, matnr) utk material berstok > 0 ---
-TYPES: BEGIN OF ty_stk, col TYPE i, matnr TYPE matnr, END OF ty_stk.
-DATA: lt_stk TYPE TABLE OF ty_stk, ls_stk TYPE ty_stk.
+" --- Sel detail distinct (col, matnr, lgort, vbeln, posnr) utk stok > 0 ---
+"     3 metrik per bagian dihitung dari sini:
+"       mat = COUNT DISTINCT matnr            -> angka utama kartu
+"       row = COUNT DISTINCT semua field      -> jumlah baris (spt drill-down)
+"       so  = COUNT DISTINCT vbeln (non-blank)-> jumlah Sales Order
+TYPES: BEGIN OF ty_cell,
+         col TYPE i, matnr TYPE matnr, lgort TYPE lgort_d,
+         vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
+       END OF ty_cell.
+DATA: lt_cell TYPE TABLE OF ty_cell, ls_cell TYPE ty_cell.
 DATA: lv_ucol TYPE i, lv_qcol TYPE i.
 LOOP AT lt_src INTO ls_src.
   CLEAR: lv_ucol, lv_qcol.
@@ -159,26 +168,70 @@ LOOP AT lt_src INTO ls_src.
   ELSEIF ls_src-werks = lc_w2000. lv_qcol = 7.
   ENDIF.
   IF ls_src-unr > 0 AND lv_ucol > 0.
-    ls_stk-col = lv_ucol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+    CLEAR ls_cell.
+    ls_cell-col = lv_ucol. ls_cell-matnr = ls_src-matnr. ls_cell-lgort = ls_src-lgort.
+    ls_cell-vbeln = ls_src-vbeln. ls_cell-posnr = ls_src-posnr.
+    APPEND ls_cell TO lt_cell.
   ENDIF.
   IF ls_src-qi > 0 AND lv_qcol > 0.
-    ls_stk-col = lv_qcol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
+    CLEAR ls_cell.
+    ls_cell-col = lv_qcol. ls_cell-matnr = ls_src-matnr. ls_cell-lgort = ls_src-lgort.
+    ls_cell-vbeln = ls_src-vbeln. ls_cell-posnr = ls_src-posnr.
+    APPEND ls_cell TO lt_cell.
   ENDIF.
 ENDLOOP.
-SORT lt_stk BY col matnr.
-DELETE ADJACENT DUPLICATES FROM lt_stk COMPARING ALL FIELDS.
+SORT lt_cell BY col matnr lgort vbeln posnr.
+DELETE ADJACENT DUPLICATES FROM lt_cell COMPARING ALL FIELDS.
 
+" Hitung 3 metrik per kolom ke lt_cnt.
+TYPES: BEGIN OF ty_cnt, col TYPE i, mat TYPE i, row TYPE i, so TYPE i, END OF ty_cnt.
+DATA: lt_cnt TYPE TABLE OF ty_cnt.
+FIELD-SYMBOLS <cn> TYPE ty_cnt.
+DEFINE ensure_cnt.
+  READ TABLE lt_cnt ASSIGNING <cn> WITH KEY col = &1.
+  IF sy-subrc <> 0. APPEND INITIAL LINE TO lt_cnt ASSIGNING <cn>. <cn>-col = &1. ENDIF.
+END-OF-DEFINITION.
+" row = tiap baris distinct lt_cell
+LOOP AT lt_cell INTO ls_cell.
+  ensure_cnt ls_cell-col.
+  <cn>-row = <cn>-row + 1.
+ENDLOOP.
+" mat = distinct (col,matnr)
+DATA lt_cm TYPE TABLE OF ty_cell.
+lt_cm = lt_cell.
+SORT lt_cm BY col matnr.
+DELETE ADJACENT DUPLICATES FROM lt_cm COMPARING col matnr.
+LOOP AT lt_cm INTO ls_cell.
+  ensure_cnt ls_cell-col.
+  <cn>-mat = <cn>-mat + 1.
+ENDLOOP.
+" so = distinct (col,vbeln) utk vbeln non-blank
+DATA lt_cs TYPE TABLE OF ty_cell.
+lt_cs = lt_cell.
+DELETE lt_cs WHERE vbeln IS INITIAL.
+SORT lt_cs BY col vbeln.
+DELETE ADJACENT DUPLICATES FROM lt_cs COMPARING col vbeln.
+LOOP AT lt_cs INTO ls_cell.
+  ensure_cnt ls_cell-col.
+  <cn>-so = <cn>-so + 1.
+ENDLOOP.
+
+" Ekstrak ke variabel per kolom. lv_totN = mat (angka utama & basis bar),
+" lv_rN = baris, lv_sN = jumlah SO.
 DATA: lv_tot1 TYPE i, lv_tot2 TYPE i, lv_tot3 TYPE i, lv_tot4 TYPE i,
-      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i.
-LOOP AT lt_stk INTO ls_stk.
-  CASE ls_stk-col.
-    WHEN 1. lv_tot1 = lv_tot1 + 1.
-    WHEN 2. lv_tot2 = lv_tot2 + 1.
-    WHEN 3. lv_tot3 = lv_tot3 + 1.
-    WHEN 4. lv_tot4 = lv_tot4 + 1.
-    WHEN 5. lv_tot5 = lv_tot5 + 1.
-    WHEN 6. lv_tot6 = lv_tot6 + 1.
-    WHEN 7. lv_tot7 = lv_tot7 + 1.
+      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i,
+      lv_r1 TYPE i, lv_r2 TYPE i, lv_r3 TYPE i, lv_r4 TYPE i, lv_r5 TYPE i, lv_r6 TYPE i, lv_r7 TYPE i,
+      lv_s1 TYPE i, lv_s2 TYPE i, lv_s3 TYPE i, lv_s4 TYPE i, lv_s5 TYPE i, lv_s6 TYPE i, lv_s7 TYPE i.
+DATA ls_cnt TYPE ty_cnt.
+LOOP AT lt_cnt INTO ls_cnt.
+  CASE ls_cnt-col.
+    WHEN 1. lv_tot1 = ls_cnt-mat. lv_r1 = ls_cnt-row. lv_s1 = ls_cnt-so.
+    WHEN 2. lv_tot2 = ls_cnt-mat. lv_r2 = ls_cnt-row. lv_s2 = ls_cnt-so.
+    WHEN 3. lv_tot3 = ls_cnt-mat. lv_r3 = ls_cnt-row. lv_s3 = ls_cnt-so.
+    WHEN 4. lv_tot4 = ls_cnt-mat. lv_r4 = ls_cnt-row. lv_s4 = ls_cnt-so.
+    WHEN 5. lv_tot5 = ls_cnt-mat. lv_r5 = ls_cnt-row. lv_s5 = ls_cnt-so.
+    WHEN 6. lv_tot6 = ls_cnt-mat. lv_r6 = ls_cnt-row. lv_s6 = ls_cnt-so.
+    WHEN 7. lv_tot7 = ls_cnt-mat. lv_r7 = ls_cnt-row. lv_s7 = ls_cnt-so.
   ENDCASE.
 ENDLOOP.
 
@@ -238,7 +291,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       border-radius:10px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
     .kpi-label { font-size:0.70rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; }
     .kpi-value { font-size:1.7rem; font-weight:800; color:#0f172a; margin:4px 0 2px; line-height:1; }
-    .kpi-cap { font-size:0.66rem; color:#9ca3af; margin:0 0 8px; }
+    .kpi-cap { font-size:0.66rem; color:#9ca3af; margin:0 0 6px; }
+    .kpi-sub { display:flex; flex-wrap:wrap; gap:6px; margin:0 0 8px; }
+    .kpi-chip { font-size:0.64rem; color:#6b7280; background:#f1f5f9; border-radius:6px; padding:2px 7px; cursor:help; white-space:nowrap; }
+    .kpi-qi .kpi-chip { background:#f3e8ff; color:#6b21a8; }
     /* Baris kontrol auto-refresh KPI */
     .kpi-refresh { display:flex; align-items:center; gap:10px; margin:0 2px 14px; }
     .kpi-refresh-btn { font-size:0.76rem; padding:5px 12px; border:1px solid #d1d5db; background:#fff;
@@ -413,44 +469,72 @@ width="7" height="5"/></svg></span>Dashboard</a>
     <div class="kpi-bar">
       <div class="kpi-card" data-sec="1" onclick="dashDetail(1,this)" title="Stok Unrestricted &mdash; Plant 1000 &middot; SLoc 1D00">
         <div class="kpi-label">Bahan <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
-        <div class="kpi-value num-fmt"><%= lv_tot1 %></div>
+        <div class="kpi-value num-fmt" title="Jumlah JENIS material unik yang berstok di bagian ini"><%= lv_tot1 %></div>
         <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-sub">
+          <span class="kpi-chip" title="Jumlah baris data stok &mdash; 1 material bisa muncul di banyak baris (beda batch / SO / item)"><%= lv_r1 %> baris</span>
+          <span class="kpi-chip" title="Jumlah Sales Order berbeda yang materialnya ada di bagian ini"><%= lv_s1 %> SO</span>
+        </div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w1 %>%;"></div></div>
       </div>
       <div class="kpi-card" data-sec="2" onclick="dashDetail(2,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2KCS">
         <div class="kpi-label">Central Storage <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
-        <div class="kpi-value num-fmt"><%= lv_tot2 %></div>
+        <div class="kpi-value num-fmt" title="Jumlah JENIS material unik yang berstok di bagian ini"><%= lv_tot2 %></div>
         <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-sub">
+          <span class="kpi-chip" title="Jumlah baris data stok &mdash; 1 material bisa muncul di banyak baris (beda batch / SO / item)"><%= lv_r2 %> baris</span>
+          <span class="kpi-chip" title="Jumlah Sales Order berbeda yang materialnya ada di bagian ini"><%= lv_s2 %> SO</span>
+        </div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w2 %>%;"></div></div>
       </div>
       <div class="kpi-card" data-sec="3" onclick="dashDetail(3,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2261, 2262">
         <div class="kpi-label">Machining <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
-        <div class="kpi-value num-fmt"><%= lv_tot3 %></div>
+        <div class="kpi-value num-fmt" title="Jumlah JENIS material unik yang berstok di bagian ini"><%= lv_tot3 %></div>
         <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-sub">
+          <span class="kpi-chip" title="Jumlah baris data stok &mdash; 1 material bisa muncul di banyak baris (beda batch / SO / item)"><%= lv_r3 %> baris</span>
+          <span class="kpi-chip" title="Jumlah Sales Order berbeda yang materialnya ada di bagian ini"><%= lv_s3 %> SO</span>
+        </div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w3 %>%;"></div></div>
       </div>
       <div class="kpi-card" data-sec="4" onclick="dashDetail(4,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 22E2, 22E3">
         <div class="kpi-label">Banding <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
-        <div class="kpi-value num-fmt"><%= lv_tot4 %></div>
+        <div class="kpi-value num-fmt" title="Jumlah JENIS material unik yang berstok di bagian ini"><%= lv_tot4 %></div>
         <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-sub">
+          <span class="kpi-chip" title="Jumlah baris data stok &mdash; 1 material bisa muncul di banyak baris (beda batch / SO / item)"><%= lv_r4 %> baris</span>
+          <span class="kpi-chip" title="Jumlah Sales Order berbeda yang materialnya ada di bagian ini"><%= lv_s4 %> SO</span>
+        </div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w4 %>%;"></div></div>
       </div>
       <div class="kpi-card" data-sec="5" onclick="dashDetail(5,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 229K">
         <div class="kpi-label">Sanding <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
-        <div class="kpi-value num-fmt"><%= lv_tot5 %></div>
+        <div class="kpi-value num-fmt" title="Jumlah JENIS material unik yang berstok di bagian ini"><%= lv_tot5 %></div>
         <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-sub">
+          <span class="kpi-chip" title="Jumlah baris data stok &mdash; 1 material bisa muncul di banyak baris (beda batch / SO / item)"><%= lv_r5 %> baris</span>
+          <span class="kpi-chip" title="Jumlah Sales Order berbeda yang materialnya ada di bagian ini"><%= lv_s5 %> SO</span>
+        </div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w5 %>%;"></div></div>
       </div>
       <div class="kpi-card kpi-qi" data-sec="6" onclick="dashDetail(6,this)" title="Stok Quality Inspection &mdash; Plant 1000 &middot; SLoc 1D00">
         <div class="kpi-label">QI 1000 <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
-        <div class="kpi-value num-fmt"><%= lv_tot6 %></div>
+        <div class="kpi-value num-fmt" title="Jumlah JENIS material unik dgn stok QI di plant ini"><%= lv_tot6 %></div>
         <div class="kpi-cap">material dlm QI</div>
+        <div class="kpi-sub">
+          <span class="kpi-chip" title="Jumlah baris data stok QI &mdash; 1 material bisa muncul di banyak baris (beda batch / SO / item)"><%= lv_r6 %> baris</span>
+          <span class="kpi-chip" title="Jumlah Sales Order berbeda dgn stok QI di plant ini"><%= lv_s6 %> SO</span>
+        </div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w6 %>%;"></div></div>
       </div>
       <div class="kpi-card kpi-qi" data-sec="7" onclick="dashDetail(7,this)" title="Stok Quality Inspection &mdash; Plant 2000 &middot; SLoc 2KCS, 2261, 2262, 22E2, 22E3, 229K">
         <div class="kpi-label">QI 2000 <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
-        <div class="kpi-value num-fmt"><%= lv_tot7 %></div>
+        <div class="kpi-value num-fmt" title="Jumlah JENIS material unik dgn stok QI di plant ini"><%= lv_tot7 %></div>
         <div class="kpi-cap">material dlm QI</div>
+        <div class="kpi-sub">
+          <span class="kpi-chip" title="Jumlah baris data stok QI &mdash; 1 material bisa muncul di banyak baris (beda batch / SO / item)"><%= lv_r7 %> baris</span>
+          <span class="kpi-chip" title="Jumlah Sales Order berbeda dgn stok QI di plant ini"><%= lv_s7 %> SO</span>
+        </div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w7 %>%;"></div></div>
       </div>
     </div>
@@ -586,14 +670,21 @@ width="7" height="5"/></svg></span>Dashboard</a>
       fetch('dash_kpi.htm', { headers:{'Accept':'application/json'}, cache:'no-store' })
         .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
         .then(function(d){
-          var tot = (d && d.tot) ? d.tot : [];
-          var vals  = document.querySelectorAll('.kpi-bar .kpi-value');
-          var fills = document.querySelectorAll('.kpi-bar .kpi-fill');
-          var max = 0; tot.forEach(function(v){ if(v > max) max = v; });
+          var mat = (d && d.mat) ? d.mat : [];
+          var row = (d && d.row) ? d.row : [];
+          var so  = (d && d.so)  ? d.so  : [];
+          var cards = document.querySelectorAll('.kpi-bar .kpi-card');
+          var max = 0; mat.forEach(function(v){ if(v > max) max = v; });
           if(max === 0) max = 1;
-          tot.forEach(function(v, i){
-            if(vals[i])  vals[i].textContent = v;
-            if(fills[i]) fills[i].style.width = Math.round(v * 100 / max) + '%';
+          mat.forEach(function(v, i){
+            var c = cards[i]; if(!c) return;
+            var val  = c.querySelector('.kpi-value');
+            var fill = c.querySelector('.kpi-fill');
+            var chips = c.querySelectorAll('.kpi-chip');
+            if(val)  val.textContent = v;
+            if(fill) fill.style.width = Math.round(v * 100 / max) + '%';
+            if(chips[0]) chips[0].textContent = (row[i] || 0) + ' baris';
+            if(chips[1]) chips[1].textContent = (so[i]  || 0) + ' SO';
           });
           setKpiStamp();
         })
