@@ -371,7 +371,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   </div>
 
   <div class="navbar">
-    <a href="index3.htm" class="nav-btn active"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
+    <a href="index3.htm" class="nav-btn active"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" 
+width="7" height="5"/></svg></span>Dashboard</a>
     <a href="monitoring.htm" class="nav-btn"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Monitoring</a>
   </div>
 
@@ -400,7 +401,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     </div>
 
     <div class="kpi-refresh">
-      <button type="button" class="kpi-refresh-btn" onclick="loadKpi()" title="Perbarui angka stok sekarang"><svg class="ic" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>&nbsp;Refresh</button>
+      <button type="button" class="kpi-refresh-btn" onclick="loadKpi()" title="Perbarui angka stok sekarang"><svg class="ic" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 
+14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>&nbsp;Refresh</button>
       <%-- Tombol "Mode TV" DISEMBUNYIKAN dulu (permintaan user). CSS body.tv-mode
            & fungsi toggleTv() sengaja dibiarkan supaya mudah dipasang lagi. --%>
       <span id="kpi-stamp" class="kpi-stamp">Stok per <%= lv_ts_time %></span>
