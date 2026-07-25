@@ -255,7 +255,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .kpi-refresh-btn { font-size:0.76rem; padding:5px 12px; border:1px solid #d1d5db; background:#fff;
       color:#374151; border-radius:8px; cursor:pointer; }
     .kpi-refresh-btn:hover { background:#f3f4f6; }
-    .kpi-stamp { font-size:0.74rem; color:#6b7280; }
+    .kpi-stamp { font-size:0.74rem; color:#6b7280; display:inline-flex; align-items:center; gap:6px; }
+    .cn-ring { flex-shrink:0; }
+    .cn-ring-fg { transition:stroke-dashoffset 1ms linear; }
+    .cn-ring-fg._stuck { stroke:#dc2626 !important; }
     /* --- Mode TV: perbesar elemen untuk tampilan monitor/pantau --- */
     body.tv-mode { padding-bottom:68px; }
     body.tv-mode .kpi-card { min-width:200px; padding:20px 22px; }
@@ -411,7 +414,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>&nbsp;Refresh</button>
       <%-- Tombol "Mode TV" DISEMBUNYIKAN dulu (permintaan user). CSS body.tv-mode
            & fungsi toggleTv() sengaja dibiarkan supaya mudah dipasang lagi. --%>
-      <span id="kpi-stamp" class="kpi-stamp">Stok per <%= lv_ts_time %></span>
+      <span class="kpi-stamp"><span id="kpi-stamp-txt">Stok per <%= lv_ts_time %></span><svg class="cn-ring" viewBox="0 0 20 20" width="14" height="14"><circle cx="10" cy="10" r="8" fill="none" stroke="#e5e7eb" stroke-width="2"/><circle class="cn-ring-fg" id="kpi-ring" cx="10" cy="10" r="8" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="50.265" stroke-dashoffset="0" transform="rotate(-90 10 10)"/></svg></span>
     </div>
 
     <!-- KPI bar: jumlah JENIS MATERIAL berstok per bagian (hover = SLoc cakupan;
@@ -485,7 +488,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
 
   <!-- Ticker realtime: item pergerakan berjalan kanan->kiri, fixed di dasar layar -->
   <div class="ticker-bar" id="ticker-bar" title="Arahkan kursor untuk menjeda">
-    <div class="ticker-label"><svg class="ic" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Pergerakan Barang <span id="feed-status" class="ticker-status">&mdash;</span></div>
+    <div class="ticker-label"><svg class="cn-ring" viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="8" fill="none" stroke="#334155" stroke-width="2"/><circle class="cn-ring-fg" id="feed-ring" cx="10" cy="10" r="8" fill="none" stroke="#93c5fd" stroke-width="2" stroke-dasharray="50.265" stroke-dashoffset="0" transform="rotate(-90 10 10)"/></svg> Pergerakan Barang <span id="feed-status" class="ticker-status">&mdash;</span></div>
     <div class="ticker-viewport"><div id="feed-list"></div></div>
     <div class="ticker-dots" id="ticker-dots"></div>
   </div>
@@ -589,12 +592,15 @@ width="7" height="5"/></svg></span>Dashboard</a>
       startFeedRotate();
     }
     function loadFeed(){
+      var ring = document.getElementById('feed-ring');
+      if(ring) ring.classList.add('_stuck');
       fetch('dash_feed.htm', { headers: { 'Accept': 'application/json' }, cache: 'no-store' })
         .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
         .then(function(rows){
           renderFeed(rows);
           var s = document.getElementById('feed-status');
           if(s) s.textContent = 'diperbarui ' + new Date().toLocaleTimeString('id-ID');
+          startProgress('feed-ring', 15000);
         })
         .catch(function(){
           var s = document.getElementById('feed-status');
@@ -602,6 +608,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
         });
     }
     skelTicker();   // skeleton di ticker sampai data pertama masuk
+    startProgress('feed-ring', 15000);
     loadFeed();
     setInterval(loadFeed, 15000);
 
@@ -626,12 +633,29 @@ width="7" height="5"/></svg></span>Dashboard</a>
       });
     })();
 
+    /* --- Countdown circular ring helper --- */
+    function startProgress(id, ms){
+      var ring = document.getElementById(id);
+      if(!ring) return;
+      ring.classList.remove('_stuck');
+      var r = parseFloat(ring.getAttribute('r'));
+      var c = 2 * Math.PI * r;
+      ring.setAttribute('stroke-dasharray', c);
+      ring.style.transition = 'none';
+      ring.style.strokeDashoffset = '0';
+      ring.getBoundingClientRect();
+      ring.style.transition = 'stroke-dashoffset ' + ms + 'ms linear';
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){ ring.style.strokeDashoffset = c; }); });
+    }
     /* --- Auto-refresh angka KPI (stok) tanpa reload halaman --- */
     function setKpiStamp(){
-      var s = document.getElementById('kpi-stamp');
+      var s = document.getElementById('kpi-stamp-txt');
       if(s) s.textContent = 'Stok per ' + new Date().toLocaleTimeString('id-ID');
+      startProgress('kpi-ring', 60000);
     }
     function loadKpi(){
+      var ring = document.getElementById('kpi-ring');
+      if(ring) ring.classList.add('_stuck');
       fetch('dash_kpi.htm', { headers:{'Accept':'application/json'}, cache:'no-store' })
         .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
         .then(function(d){
@@ -646,9 +670,10 @@ width="7" height="5"/></svg></span>Dashboard</a>
           });
           setKpiStamp();
         })
-        .catch(function(){ /* gagal -> biarkan angka terakhir */ });
+        .catch(function(){ /* gagal -> biarkan _stuck */ });
     }
     setInterval(loadKpi, 60000);   // stok berubah lambat -> 60 dtk cukup
+    startProgress('kpi-ring', 60000);
 
     /* --- Mode TV (layar besar) — tombol DISEMBUNYIKAN dulu (permintaan user).
        toggleTv dibiarkan agar mudah dipasang lagi; penerapan-otomatis dari
