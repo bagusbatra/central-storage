@@ -365,6 +365,12 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .fd-qty { color:#fff; font-weight:600; }
     .fd-buyer { color:#94a3b8; }
     .ticker-empty { color:#94a3b8; }
+    .ticker-dots { display:flex; align-items:center; gap:4px; padding:0 14px 0 4px; height:100%; }
+    .ticker-dot { width:7px; height:7px; border-radius:50%; background:#475569; cursor:pointer; transition:background .25s,transform .2s; flex-shrink:0; }
+    .ticker-dot.active { background:#93c5fd; transform:scale(1.3); }
+    .ticker-dot:hover { background:#94a3b8; }
+    body.tv-mode .ticker-dot { width:9px; height:9px; }
+    #ticker-bar._paused .ticker-dot.active { background:#fcd34d; }
     /* Hormati preferensi kurangi-gerak: fade dimatikan (ganti seketika) */
     @media (prefers-reduced-motion: reduce) { #feed-list { transition:none; } }
   </style>
@@ -479,6 +485,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
   <div class="ticker-bar" id="ticker-bar" title="Arahkan kursor untuk menjeda">
     <div class="ticker-label"><svg class="ic" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> Pergerakan Barang <span id="feed-status" class="ticker-status">&mdash;</span></div>
     <div class="ticker-viewport"><div id="feed-list"></div></div>
+    <div class="ticker-dots" id="ticker-dots"></div>
   </div>
 
   <!-- Side panel kanan: progres produksi SO (dibuka dari klik No. SO di drill-down) -->
@@ -518,7 +525,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     /* Bar realtime: satu item, berganti fade tiap ~4 dtk (tak scroll).
        Data (rows) di-refresh tiap 15 dtk oleh loadFeed; rotasi berjalan
        terpisah & pakai data terbaru. Jeda saat kursor hover. */
-    var _fdRows = [], _fdIdx = 0, _fdPaused = false, _fdTimer = null;
+    var _fdRows = [], _fdIdx = 0, _fdPaused = false, _fdPausedByClick = false, _fdTimer = null, _fdDotEl = null;
     function feedItemHtml(r){
       return '<span class="fd-time">'+feedEsc(r.waktu)+'</span>'
         + '<span class="fd-mat">'+feedEsc(r.matnr)+' '+feedEsc(r.maktx)+'</span>'
@@ -526,6 +533,20 @@ width="7" height="5"/></svg></span>Dashboard</a>
         + '<span class="fd-gerakan">'+feedEsc(r.gerakan)+'</span>'
         + '<span class="fd-qty">'+feedEsc(r.qty)+'</span>'
         + '<span class="fd-buyer">'+feedEsc(r.buyer)+'</span>';
+    }
+    function renderDots(){
+      _fdDotEl = document.getElementById('ticker-dots');
+      if(!_fdDotEl) return;
+      var h = '';
+      for(var i=0;i<_fdRows.length;i++){
+        h += '<span class="ticker-dot'+(i===_fdIdx?' active':'')+'" data-idx="'+i+'"></span>';
+      }
+      _fdDotEl.innerHTML = h;
+    }
+    function updateDots(){
+      if(!_fdDotEl) return;
+      var dots = _fdDotEl.children;
+      for(var i=0;i<dots.length;i++){ dots[i].classList.toggle('active',i===_fdIdx); }
     }
     function setFeedItem(html, noFade){
       var el = document.getElementById('feed-list');
@@ -541,6 +562,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       if(!_fdRows.length) return;
       if(_fdIdx >= _fdRows.length) _fdIdx = 0;
       setFeedItem(feedItemHtml(_fdRows[_fdIdx]));
+      updateDots();
     }
     function startFeedRotate(){
       if(_fdTimer) return;                   // sudah jalan
@@ -552,13 +574,15 @@ width="7" height="5"/></svg></span>Dashboard</a>
     }
     function renderFeed(rows){
       var wasEmpty = (_fdRows.length === 0);
-      _fdRows = rows || [];
+      _fdRows = (rows || []).slice(0, 20);
       if(!_fdRows.length){
         _fdIdx = 0;
         setFeedItem('<span class="ticker-empty">Belum ada pergerakan pada window terkini.</span>', true);
+        renderDots();
         return;
       }
       if(_fdIdx >= _fdRows.length) _fdIdx = 0;
+      renderDots();
       if(wasEmpty){ showFeedItem(); }        // tampilkan segera saat pertama ada data
       startFeedRotate();
     }
@@ -579,12 +603,25 @@ width="7" height="5"/></svg></span>Dashboard</a>
     loadFeed();
     setInterval(loadFeed, 15000);
 
-    /* Jeda rotasi saat kursor di atas bar (biar bisa dibaca) */
+    /* Jeda rotasi saat kursor di atas bar (biar bisa dibaca); klik/tap toggle manual */
     (function(){
       var bar = document.getElementById('ticker-bar');
       if(!bar) return;
-      bar.addEventListener('mouseenter', function(){ _fdPaused = true; });
-      bar.addEventListener('mouseleave', function(){ _fdPaused = false; });
+      bar.addEventListener('mouseenter', function(){ if(!_fdPausedByClick) _fdPaused = true; });
+      bar.addEventListener('mouseleave', function(){ if(!_fdPausedByClick) _fdPaused = false; });
+      bar.addEventListener('click', function(e){
+        // klik dot -> lompat ke item tertentu (jangan toggle pause)
+        var dot = e.target;
+        if(dot.classList && dot.classList.contains('ticker-dot')){
+          _fdIdx = parseInt(dot.getAttribute('data-idx'), 10);
+          showFeedItem();
+          return;
+        }
+        _fdPausedByClick = !_fdPausedByClick;
+        _fdPaused = _fdPausedByClick;
+        bar.classList.toggle('_paused', _fdPausedByClick);
+        bar.title = _fdPausedByClick ? 'Klik untuk melanjutkan rotasi' : 'Arahkan kursor untuk menjeda';
+      });
     })();
 
     /* --- Auto-refresh angka KPI (stok) tanpa reload halaman --- */
