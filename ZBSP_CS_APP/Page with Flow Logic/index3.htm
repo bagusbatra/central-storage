@@ -305,7 +305,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .item-link:hover { color:#0f766e; }
     .so-overlay { position:fixed; inset:0; background:rgba(15,23,42,0.35); opacity:0; visibility:hidden; transition:opacity .2s ease; z-index:990; }
     .so-overlay.open { opacity:1; visibility:visible; }
-    .so-panel { position:fixed; top:0; right:0; height:100%; width:min(480px,92vw); background:#fff;
+    .so-panel { position:fixed; top:0; right:0; height:100%; width:min(640px,95vw); background:#fff;
       box-shadow:-6px 0 18px rgba(0,0,0,0.20); transform:translateX(100%); transition:transform .25s ease;
       z-index:1000; display:flex; flex-direction:column; }
     .so-panel.open { transform:translateX(0); }
@@ -329,6 +329,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .so-prog { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; min-width:80px; }
     .so-prog-fill { height:100%; background:#16a34a; border-radius:4px; }
     .so-prog-t { font-size:0.7rem; color:#6b7280; }
+    .so-mon-link { display:inline-block; font-size:0.7rem; color:#2563eb; text-decoration:none; font-weight:600; white-space:nowrap; padding:2px 8px; border:1px solid #2563eb; border-radius:4px; transition:background .2s; }
+    .so-mon-link:hover { background:#2563eb; color:#fff; }
     .so-body .loading, .so-body .err { padding:14px 4px; font-size:0.85rem; color:#6b7280; }
     .so-body .err { color:#b91c1c; }
     /* --- Filter tanggal --- */
@@ -845,11 +847,12 @@ width="7" height="5"/></svg></span>Dashboard</a>
 
     /* --- Side panel kanan: progres produksi SO (dash_so.htm) --- */
     /* State side panel SO */
-    var _soRows=[], _soBuyer='';
+    var _soRows=[], _soBuyer='', _soNum='';
     function openSo(so, sec, presetItem, presetMat, doFilter){
       var panel = document.getElementById('so-panel');
       var ov    = document.getElementById('so-overlay');
       var body  = document.getElementById('so-body');
+      _soNum = so;
       document.getElementById('so-title').textContent = 'SO ' + so;
       document.getElementById('so-scope').textContent = '';
       body.innerHTML = skelSidePanel();
@@ -884,7 +887,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       if(!rows.length){ body.innerHTML = h + '<div class="loading">Tidak ada order produksi untuk SO ini di bagian tsb.</div>'; return; }
       // kotak pencarian filter SO item (di bawah buyer)
       h += '<div class="so-search-wrap"><input type="text" id="so-search" class="so-search" placeholder="Cari SO item (mis. 10)&hellip;" autocomplete="off"></div>';
-      h += '<table class="so-table"><thead><tr><th>Item</th><th>Order</th><th>Material</th><th>Target</th><th>Del</th><th>Progres</th></tr></thead><tbody id="so-tbody">';
+      h += '<table class="so-table"><thead><tr><th>Item</th><th>Order</th><th>Material</th><th>Target</th><th>Del</th><th>Progres</th><th>Aksi</th></tr></thead><tbody id="so-tbody">';
       rows.forEach(function(r){
         var p = parseInt(r.prog, 10); if (isNaN(p)) p = 0;
         h += '<tr data-item="'+feedEsc(r.item||'')+'" data-mat="'+feedEsc(r.matnr||'')+'"><td>'+feedEsc(r.item)+'</td><td>'+feedEsc(r.aufnr)+'</td>'
@@ -892,7 +895,8 @@ width="7" height="5"/></svg></span>Dashboard</a>
           + '<td class="num">'+feedEsc(r.target)+'</td>'
           + '<td class="num">'+feedEsc(r.del)+'</td>'
           + '<td><div class="so-prog"><div class="so-prog-fill" style="width:'+p+'%"></div></div>'
-          + '<span class="so-prog-t">'+p+'% &middot; '+feedEsc(r.status)+'</span></td></tr>';
+          + '<span class="so-prog-t">'+p+'% &middot; '+feedEsc(r.status)+'</span></td>'
+          + '<td><a href="monitoring.htm?so_num='+encodeURIComponent(_soNum)+'&item_num='+encodeURIComponent(r.item)+'" class="so-mon-link" title="Lihat di halaman Monitoring">Lihat</a></td></tr>';
       });
       h += '</tbody></table><div id="so-empty" class="loading" style="display:none;">Tidak ada SO item yang cocok.</div>';
       body.innerHTML = h;

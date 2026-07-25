@@ -1452,7 +1452,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
         <nav class="tab-nav" id="pel-tabs">
           <button class="tab-btn active" onclick="pelTab('tab-info', this)"><svg class="ic" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>&nbsp;Info Order</button>
-          <button class="tab-btn" onclick="pelTab('tab-pmb', this)"><svg class="ic" viewBox="0 0 24 24"><path d="M14.5 2v17.5c0 1.4-1.1 2.5-2.5 2.5s-2.5-1.1-2.5-2.5V2"/><path d="M8.5 2h7"/><path d="M14.5 16h-5"/></svg>&nbsp;Pembahanan</button>
+          <button class="tab-btn" onclick="pelTab('tab-pmb', this)"><svg class="ic" viewBox="0 0 24 24"><path d="M14.5 2v17.5c0 1.4-1.1 2.5-2.5 2.5s-2.5-1.1-2.5-2.5V2"/><path d="M8.5 2h7"/><path d="M14.5 16h-5"/></svg>&nbsp;Bahan</button>
           <button class="tab-btn" onclick="pelTab('tab-prod', this)"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>&nbsp;Produksi</button>
           <button class="tab-btn" onclick="pelTab('tab-stok', this)"><svg class="ic" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>&nbsp;Stok Saat Ini</button>
           <button class="tab-btn" onclick="pelTab('tab-hist', this)"><svg class="ic" viewBox="0 0 24 24"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>&nbsp;Riwayat Pergerakan</button>
@@ -1841,11 +1841,11 @@ terbaru dulu. Hover baris untuk lihat User &amp; nomor dokumen.</p>
                 <circle cx="60" cy="60" r="52" fill="none" stroke="#3987e5" stroke-width="12" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="<%= lv_off_pmb %>" transform="rotate(-90 60 60)"></circle>
                 <text x="60" y="60" text-anchor="middle" dominant-baseline="central" font-size="26" font-weight="700" fill="#1e3a8a"><%= lv_avg_pmb %>%</text>
               </svg>
-              <div class="donut-cap">PEMBAHANAN</div>
+              <div class="donut-cap">BAHAN</div>
               <div class="donut-sub">rata-rata progres &middot; <%= lv_cnt_pmb %> order (Plant 1000)</div>
             </div>
             <% ELSE. %>
-            <div class="donut-card" style="justify-content:center; min-height:104px;"><div class="donut-cap">PEMBAHANAN</div><div class="donut-sub">Belum ada data</div></div>
+            <div class="donut-card" style="justify-content:center; min-height:104px;"><div class="donut-cap">BAHAN</div><div class="donut-sub">Belum ada data</div></div>
             <% ENDIF. %>
             <% IF lv_cnt_prd > 0. %>
             <div class="donut-card">
