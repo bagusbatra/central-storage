@@ -208,6 +208,17 @@ DATA: lv_from_disp TYPE string,
 lv_from_disp = lv_from(4) && '-' && lv_from+4(2) && '-' && lv_from+6(2).
 lv_to_disp   = lv_to(4)   && '-' && lv_to+4(2)   && '-' && lv_to+6(2).
 
+" Prefill input filter: KOSONG secara default; terisi HANYA jika user submit
+" tanggal (lv_s_from/lv_s_to sudah tanpa '-'). Ini bikin filter tak terlihat
+" seolah "aktif 30 hari" padahal KPI tak tergantung tanggal.
+DATA: lv_ff_disp TYPE string, lv_ft_disp TYPE string.
+IF lv_s_from IS NOT INITIAL.
+  lv_ff_disp = lv_s_from(4) && '-' && lv_s_from+4(2) && '-' && lv_s_from+6(2).
+ENDIF.
+IF lv_s_to IS NOT INITIAL.
+  lv_ft_disp = lv_s_to(4) && '-' && lv_s_to+4(2) && '-' && lv_s_to+6(2).
+ENDIF.
+
 DATA: lv_ts_date TYPE string,
       lv_ts_time TYPE string.
 lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
@@ -328,6 +339,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .date-filter-form button { padding:10px 20px; background:#2563eb; color:#fff; border:none; border-radius:8px; font-weight:700; cursor:pointer; }
     .date-range-note { font-size:0.8rem; color:#6b7280; margin:12px 2px 20px; }
     .date-range-note b { color:#111827; }
+    .dd-daterange { display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap; margin:0 2px 14px;
+      padding:12px 14px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; }
+    .dd-daterange-hint { flex:1 1 200px; align-self:center; font-size:0.74rem; color:#9ca3af; }
+    .dd-daterange-hint b { color:#6b7280; }
     /* (CSS .dash-table & .feed-* lama dihapus — tabel per-buyer & panel feed
        versi lama sudah tidak dipakai; ganti drill-down .kpi-detail & ticker .fd-*) */
     /* --- Bar realtime fixed di dasar layar: 1 item, berganti fade (tak scroll) --- */
@@ -378,26 +393,9 @@ width="7" height="5"/></svg></span>Dashboard</a>
 
   <div class="content">
 
-    <!-- FILTER: rentang tanggal (MKPF-BUDAT) -->
-    <div class="filter-card">
-      <form method="get" action="index3.htm" class="date-filter-form">
-        <div class="form-group">
-          <label>Dari Tanggal</label>
-          <input type="date" name="date_from" value="<%= lv_from_disp %>">
-        </div>
-        <div class="form-group">
-          <label>Sampai Tanggal</label>
-          <input type="date" name="date_to" value="<%= lv_to_disp %>">
-        </div>
-        <div class="form-group">
-          <button type="submit">Terapkan</button>
-        </div>
-      </form>
-    </div>
     <div class="date-range-note">
       KPI menampilkan <b>stok saat ini</b> (jumlah jenis material berstok per bagian) &#8212;
-      snapshot langsung, tidak tergantung tanggal. Filter tanggal:
-      <b><%= lv_from_disp %></b> s/d <b><%= lv_to_disp %></b>.
+      snapshot langsung, <b>tidak tergantung tanggal</b>.
     </div>
 
     <div class="kpi-refresh">
@@ -412,7 +410,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
          KLIK kartu = tampilkan daftar material-nya di panel bawah) -->
     <div class="kpi-bar">
       <div class="kpi-card" data-sec="1" onclick="dashDetail(1,this)" title="Stok Unrestricted &mdash; Plant 1000 &middot; SLoc 1D00">
-        <div class="kpi-label">Pembahanan <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-label">Bahan <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
         <div class="kpi-value num-fmt"><%= lv_tot1 %></div>
         <div class="kpi-cap">jenis material berstok</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w1 %>%;"></div></div>
@@ -453,6 +451,18 @@ width="7" height="5"/></svg></span>Dashboard</a>
         <div class="kpi-cap">material dlm QI</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w7 %>%;"></div></div>
       </div>
+    </div>
+
+    <!-- Filter tanggal: HANYA memengaruhi kolom "Terakhir Masuk" & urutan Terbaru/Terlama
+         di panel drill-down. Default KOSONG (= 30 hari terakhir). Diletakkan di sini agar
+         jelas cakupannya, tidak disangka memfilter angka KPI. -->
+    <div class="dd-daterange">
+      <form method="get" action="index3.htm" class="date-filter-form">
+        <div class="form-group"><label>Dari Tanggal</label><input type="date" name="date_from" value="<%= lv_ff_disp %>"></div>
+        <div class="form-group"><label>Sampai Tanggal</label><input type="date" name="date_to" value="<%= lv_ft_disp %>"></div>
+        <div class="form-group"><button type="submit">Terapkan</button></div>
+      </form>
+      <div class="dd-daterange-hint">Rentang untuk kolom <b>Terakhir Masuk</b> &amp; urutan di detail. Kosong = 30 hari terakhir.</div>
     </div>
 
     <!-- Panel drill-down: diisi via AJAX (dash_detail.htm?sec=N) saat kartu diklik -->
