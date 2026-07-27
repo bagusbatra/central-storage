@@ -82,7 +82,6 @@ body.page-loading canvas { display: none; }
 .navbar {
   background: #ffffff; border-bottom: 2px solid #e5e7eb;
   padding: 0 28px; display: flex; align-items: stretch;
-  margin-bottom: 24px;
 }
 .nav-btn {
   padding: 14px 26px; font-size: 0.9rem; font-weight: 600; color: #6b7280;
@@ -94,7 +93,7 @@ body.page-loading canvas { display: none; }
 .nav-icon { font-size: 1rem; }
 
 /* ===== CONTENT ===== */
-.content { padding: 28px; }
+.content { padding: 22px; }
 
 /* ===== PERIOD FILTER ===== */
 .filter-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }

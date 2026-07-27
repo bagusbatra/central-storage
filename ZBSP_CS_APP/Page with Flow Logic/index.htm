@@ -230,7 +230,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard Grafis - Central Storage KMI 2</title>
-  <link rel="stylesheet" href="css/style.css?r=12">
+  <link rel="stylesheet" href="css/style.css?r=13">
   <style>
     /* --- Ikon inline SVG (gaya Lucide, tanpa CDN) --- */
     .ic { width:1em; height:1em; vertical-align:-0.14em; fill:none; stroke:currentColor;
@@ -405,6 +405,54 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .cs-prog-fill._g { background:#16a34a; } .cs-prog-fill._y { background:#eab308; } .cs-prog-fill._r { background:#dc2626; }
     .cs-prog-t { font-size:0.68rem; color:#6b7280; }
     .cs-rank { color:#94a3b8; font-weight:700; text-align:center; }
+
+    /* ================= REDESAIN "Production Pipeline" (scope: index.htm) =================
+       Ditaruh paling akhir & memakai selector >= spesifisitas aslinya supaya menang atas
+       css/style.css tanpa mengubah file bersama itu (monitoring.htm tak terpengaruh). */
+    :root{
+      --canvas:#E9EDF3; --ink:#1B2430; --muted:#6B7482; --faint:#98A2B2;
+      --hair:#E1E6EE; --hair2:#EEF1F6; --primary:#2F6FED;
+      --s-bahan:#B45309; --s-central:#0E7490; --s-machining:#2563EB;
+      --s-banding:#7C3AED; --s-sanding:#DB2777; --s-qi:#64748B;
+      --good:#16A34A; --warn:#D97706; --crit:#DC2626;
+      --cs-shadow:0 1px 2px rgba(20,32,54,.05),0 6px 18px -12px rgba(20,32,54,.22);
+    }
+    /* Kanvas ber-tint -> kartu putih "mengambang" (perbaikan utama monoton putih) */
+    body{ background:var(--canvas); color:var(--ink); }
+    .content{ background:transparent; }
+
+    /* --- KPI 7 kartu jadi pipeline berwarna per tahap --- */
+    .kpi-bar{ gap:14px; }
+    .kpi-card{ border:1px solid var(--hair); border-radius:12px; box-shadow:var(--cs-shadow); padding:15px 16px 16px; }
+    .kpi-card:hover{ transform:translateY(-2px); box-shadow:0 2px 4px rgba(20,32,54,.06),0 14px 26px -14px rgba(20,32,54,.30); }
+    .kpi-card .kpi-label{ display:flex; align-items:center; gap:9px; color:var(--muted); font-size:0.68rem; letter-spacing:.05em; }
+    .kpi-card .kpi-label::before{ content:""; width:22px; height:22px; border-radius:7px; background:var(--faint); flex:none; }
+    .kpi-card .kpi-caret{ margin-left:auto; }
+    .kpi-card .kpi-value{ font-size:2rem; font-weight:700; letter-spacing:-.02em; color:var(--ink); margin:11px 0 2px; }
+    .kpi-card .kpi-cap{ color:var(--faint); }
+    .kpi-card .kpi-track{ height:5px; background:#EDF1F6; }
+    .kpi-card.active{ border-color:var(--primary); box-shadow:0 0 0 2px rgba(47,111,237,.22); }
+    /* warna per tahap (chip + bar) — alur mentah -> jadi */
+    .kpi-card[data-sec="1"] .kpi-label::before{ background:var(--s-bahan); }    .kpi-card[data-sec="1"] .kpi-fill{ background:var(--s-bahan); }
+    .kpi-card[data-sec="2"] .kpi-label::before{ background:var(--s-central); }   .kpi-card[data-sec="2"] .kpi-fill{ background:var(--s-central); }
+    .kpi-card[data-sec="3"] .kpi-label::before{ background:var(--s-machining); } .kpi-card[data-sec="3"] .kpi-fill{ background:var(--s-machining); }
+    .kpi-card[data-sec="4"] .kpi-label::before{ background:var(--s-banding); }   .kpi-card[data-sec="4"] .kpi-fill{ background:var(--s-banding); }
+    .kpi-card[data-sec="5"] .kpi-label::before{ background:var(--s-sanding); }   .kpi-card[data-sec="5"] .kpi-fill{ background:var(--s-sanding); }
+    .kpi-card[data-sec="6"] .kpi-label::before,
+    .kpi-card[data-sec="7"] .kpi-label::before{ background:var(--s-qi); }
+    .kpi-card.kpi-qi .kpi-fill{ background:var(--s-qi); }
+
+    /* --- Panel cs-* : depth + header lebih tenang --- */
+    .cs-panel{ border-color:var(--hair); box-shadow:var(--cs-shadow); }
+    .cs-panel-head{ border-bottom-color:var(--hair2); }
+    .cs-panel th{ background:#F7F9FC; color:var(--muted); }
+
+    /* --- Progres bar Bahan Masuk pakai warna semantik --- */
+    .cs-prog-fill{ background:var(--s-central); }
+    .cs-prog-fill._g{ background:var(--good); } .cs-prog-fill._y{ background:var(--warn); } .cs-prog-fill._r{ background:var(--crit); }
+
+    /* --- Catatan rentang jadi eyebrow tenang --- */
+    .date-range-note{ color:var(--muted); }
   </style>
 </head>
 <body>
