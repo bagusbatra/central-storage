@@ -14,7 +14,9 @@
 *&
 *& Balas: { "so":"..","item":"..","buyer":"..",
 *&          "rows":[ {cat,dispo,item,aufnr,matnr,maktx,sloc,target,del,prog}, ... ] }
-*&   sloc = AFPO-LGORT (Storage Location order tsb).
+*&   sloc = lokasi PENERIMAAN hasil order (MSEG mvt 101, shkzg='S', per aufnr,
+*&          ambil GR TERBARU by budat/cputm). AFPO-LGORT dipakai fallback saja
+*&          krn utk order WM/PN umumnya kosong.
 *& ⚠️ set_header_field: fallback set_content_type spt endpoint lain.
 *& ⚠️ AFKO-DISPO (MRP Controller) — pola sama dgn wf_dispo_range di
 *&    monitoring_bom.htm. Kode WM1/WM2/PN1/PN2 diketik sesuai instruksi user.
@@ -75,6 +77,47 @@ IF lt_matr IS NOT INITIAL.
   SORT lt_makt BY matnr.
 ENDIF.
 
+" --- SLoc penerimaan (GR) per order ---
+" AFPO-LGORT kosong utk order WM/PN, jadi SLoc diambil dari lokasi PENERIMAAN
+" hasil order: MSEG mvt 101 (shkzg='S', receipt ke order), ambil yg TERBARU
+" (budat lalu cputm). Order yg belum ada GR -> fallback AFPO-LGORT (biasanya
+" juga kosong -> UI tampil '-').
+DATA lt_aufnr TYPE TABLE OF afpo-aufnr.
+LOOP AT lt_ord INTO ls_ord.
+  APPEND ls_ord-aufnr TO lt_aufnr.
+ENDLOOP.
+SORT lt_aufnr. DELETE ADJACENT DUPLICATES FROM lt_aufnr.
+
+TYPES: BEGIN OF ty_gr,
+         aufnr TYPE mseg-aufnr, lgort TYPE mseg-lgort,
+         budat TYPE mkpf-budat, cputm TYPE mkpf-cputm,
+       END OF ty_gr.
+DATA: lt_gr_raw TYPE TABLE OF ty_gr, ls_gr_raw TYPE ty_gr,
+      lt_grsl   TYPE TABLE OF ty_gr, ls_grsl TYPE ty_gr.
+FIELD-SYMBOLS <gr> TYPE ty_gr.
+IF lt_aufnr IS NOT INITIAL.
+  SELECT m~aufnr m~lgort h~budat h~cputm
+    FROM mseg AS m INNER JOIN mkpf AS h ON m~mblnr = h~mblnr AND m~mjahr = h~mjahr
+    INTO CORRESPONDING FIELDS OF TABLE lt_gr_raw
+    FOR ALL ENTRIES IN lt_aufnr
+    WHERE m~aufnr = lt_aufnr-table_line
+      AND m~bwart = '101'
+      AND m~shkzg = 'S'
+      AND m~lgort <> ''.
+  LOOP AT lt_gr_raw INTO ls_gr_raw.
+    READ TABLE lt_grsl ASSIGNING <gr> WITH KEY aufnr = ls_gr_raw-aufnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_grsl ASSIGNING <gr>.
+      <gr>-aufnr = ls_gr_raw-aufnr.
+      <gr>-lgort = ls_gr_raw-lgort. <gr>-budat = ls_gr_raw-budat. <gr>-cputm = ls_gr_raw-cputm.
+    ELSEIF ls_gr_raw-budat > <gr>-budat
+        OR ( ls_gr_raw-budat = <gr>-budat AND ls_gr_raw-cputm >= <gr>-cputm ).
+      <gr>-lgort = ls_gr_raw-lgort. <gr>-budat = ls_gr_raw-budat. <gr>-cputm = ls_gr_raw-cputm.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_grsl BY aufnr.
+ENDIF.
+
 " --- Bentuk baris tampilan ---
 TYPES: BEGIN OF ty_out,
          cat TYPE string, dispo TYPE string, item TYPE string, aufnr TYPE string,
@@ -122,7 +165,9 @@ LOOP AT lt_ord INTO ls_ord.
   ls_out-matnr = lv_mat.
   READ TABLE lt_makt INTO ls_makt WITH KEY matnr = ls_ord-matnr BINARY SEARCH.
   IF sy-subrc = 0. ls_out-maktx = ls_makt-maktx. ENDIF.
-  ls_out-sloc = ls_ord-lgort.
+  " SLoc = lokasi penerimaan GR (MSEG 101); fallback AFPO-LGORT bila tak ada GR.
+  READ TABLE lt_grsl INTO ls_grsl WITH KEY aufnr = ls_ord-aufnr BINARY SEARCH.
+  IF sy-subrc = 0. ls_out-sloc = ls_grsl-lgort. ELSE. ls_out-sloc = ls_ord-lgort. ENDIF.
   lv_meins_ext = ls_ord-meins.
   CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT' EXPORTING input = lv_meins_ext IMPORTING output = lv_meins_ext.
   fmt_qty ls_ord-psmng ls_out-target.
