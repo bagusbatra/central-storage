@@ -1,0 +1,296 @@
+<%@ page language="abap" %><%
+*&---------------------------------------------------------------------*
+*& BSP Page — dash_cs.htm
+*&---------------------------------------------------------------------*
+*& Endpoint JSON utk DUA panel di atas KPI dashboard (index.htm):
+*&   (1) "Bahan Masuk" — daftar stok material di Central Storage
+*&       (Plant 2000 / SLoc 2KCS). LOGIKA STOK SAMA PERSIS dgn kartu KPI
+*&       Central Storage (dash_detail.htm sec=2): MSKA SO-stock (sobkz='E',
+*&       unrestricted KALAB>0) + MARD free-stock (LABST>0), sample customer
+*&       2000000004 dibuang via VBAK. Diperkaya kolom Progres & End Date
+*&       dari order produksi Plant 2000 (AFPO⨝AFKO) yg cocok SO+Item+Material.
+*&   (2) "Buyer" — ranking buyer yg punya real stock di 2KCS (COUNT DISTINCT
+*&       vbeln & matnr per buyer). Hanya SO-stock; free-stock dikecualikan.
+*&
+*& Balas: { "rows":[ {matnr,maktx,so,item,qty,prog,enddate}, ... ],
+*&          "buyers":[ {buyer,so_count,mat_count}, ... ] }
+*&
+*& ⚠️ set_header_field: fallback set_content_type spt endpoint lain
+*&    (runtime->server->response->set_content_type(...)).
+*& ⚠️ Logika stok dikembarkan dari dash_detail.htm sec=2 — kalau salah satu
+*&    diubah, samakan KEDUANYA agar angka konsisten dgn kartu KPI.
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_sample TYPE kna1-kunnr VALUE '2000000004',
+           lc_werks  TYPE werks_d    VALUE '2000',
+           lc_lgort  TYPE lgort_d    VALUE '2KCS'.
+
+" --- Agregat stok per (matnr, vbeln, posnr) ---
+TYPES: BEGIN OF ty_agg,
+         matnr TYPE matnr,
+         vbeln TYPE mska-vbeln,
+         posnr TYPE mska-posnr,
+         qty   TYPE p LENGTH 15 DECIMALS 3,
+       END OF ty_agg.
+DATA: lt_agg TYPE TABLE OF ty_agg, ls_agg TYPE ty_agg.
+
+" --- SO-stock (MSKA, sobkz='E', unrestricted) ---
+TYPES: BEGIN OF ty_mska,
+         matnr TYPE mska-matnr, vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
+         kalab TYPE mska-kalab,
+       END OF ty_mska.
+DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
+SELECT matnr vbeln posnr kalab FROM mska
+  INTO CORRESPONDING FIELDS OF TABLE lt_mska
+  WHERE werks = lc_werks AND lgort = lc_lgort AND sobkz = 'E' AND kalab > 0.
+
+" --- Free stock (MARD, unrestricted) ---
+TYPES: BEGIN OF ty_mard, matnr TYPE mard-matnr, labst TYPE mard-labst, END OF ty_mard.
+DATA: lt_mard TYPE TABLE OF ty_mard, ls_mard TYPE ty_mard.
+SELECT matnr labst FROM mard
+  INTO CORRESPONDING FIELDS OF TABLE lt_mard
+  WHERE werks = lc_werks AND lgort = lc_lgort AND labst > 0.
+
+" --- Peta SO-stock -> customer (buang sample) ---
+TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
+DATA: lt_vbeln_r TYPE TABLE OF vbak-vbeln,
+      lt_vbak    TYPE TABLE OF ty_vbak, ls_vbak TYPE ty_vbak.
+LOOP AT lt_mska INTO ls_mska.
+  APPEND ls_mska-vbeln TO lt_vbeln_r.
+ENDLOOP.
+SORT lt_vbeln_r. DELETE ADJACENT DUPLICATES FROM lt_vbeln_r.
+IF lt_vbeln_r IS NOT INITIAL.
+  SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
+    FOR ALL ENTRIES IN lt_vbeln_r
+    WHERE vbeln = lt_vbeln_r-table_line.
+  SORT lt_vbak BY vbeln.
+ENDIF.
+
+" --- Bangun agregat (COLLECT menjumlahkan qty utk key sama) ---
+LOOP AT lt_mska INTO ls_mska.
+  READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
+  IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
+    CONTINUE.
+  ENDIF.
+  CLEAR ls_agg.
+  ls_agg-matnr = ls_mska-matnr. ls_agg-vbeln = ls_mska-vbeln. ls_agg-posnr = ls_mska-posnr.
+  ls_agg-qty   = ls_mska-kalab.
+  IF ls_agg-qty > 0. COLLECT ls_agg INTO lt_agg. ENDIF.
+ENDLOOP.
+LOOP AT lt_mard INTO ls_mard.
+  CLEAR ls_agg.
+  ls_agg-matnr = ls_mard-matnr.   " vbeln/posnr kosong (stok bebas)
+  ls_agg-qty   = ls_mard-labst.
+  IF ls_agg-qty > 0. COLLECT ls_agg INTO lt_agg. ENDIF.
+ENDLOOP.
+SORT lt_agg BY matnr vbeln posnr.
+
+" --- Daftar material unik (utk MAKT & MARA batched) ---
+DATA: lt_matu TYPE TABLE OF matnr.
+LOOP AT lt_agg INTO ls_agg.
+  APPEND ls_agg-matnr TO lt_matu.
+ENDLOOP.
+SORT lt_matu. DELETE ADJACENT DUPLICATES FROM lt_matu.
+
+TYPES: BEGIN OF ty_makt, matnr TYPE makt-matnr, maktx TYPE makt-maktx, END OF ty_makt.
+DATA: lt_makt TYPE TABLE OF ty_makt, ls_makt TYPE ty_makt.
+TYPES: BEGIN OF ty_mara, matnr TYPE mara-matnr, meins TYPE mara-meins, END OF ty_mara.
+DATA: lt_mara TYPE TABLE OF ty_mara, ls_mara TYPE ty_mara.
+IF lt_matu IS NOT INITIAL.
+  SELECT matnr maktx FROM makt INTO TABLE lt_makt
+    FOR ALL ENTRIES IN lt_matu
+    WHERE matnr = lt_matu-table_line AND spras = sy-langu.
+  SORT lt_makt BY matnr.
+  SELECT matnr meins FROM mara INTO TABLE lt_mara
+    FOR ALL ENTRIES IN lt_matu
+    WHERE matnr = lt_matu-table_line.
+  SORT lt_mara BY matnr.
+ENDIF.
+
+" --- Progres & End Date: order produksi Plant 2000 utk SO+Item+Material ---
+"     Progres = Σ WEMNG / Σ PSMNG (per kdauf,kdpos,matnr). End Date = MAX(GLTRP).
+"     GLTRP (basic finish date) ada di AFKO (header order).
+TYPES: BEGIN OF ty_ordraw,
+         kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, matnr TYPE afpo-matnr,
+         psmng TYPE afpo-psmng, wemng TYPE afpo-wemng, gltrp TYPE afko-gltrp,
+       END OF ty_ordraw.
+DATA: lt_ordraw TYPE TABLE OF ty_ordraw, ls_ordraw TYPE ty_ordraw.
+TYPES: BEGIN OF ty_prog,
+         kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, matnr TYPE afpo-matnr,
+         psmng TYPE p LENGTH 15 DECIMALS 3, wemng TYPE p LENGTH 15 DECIMALS 3,
+         gltrp TYPE afko-gltrp,
+       END OF ty_prog.
+DATA: lt_prog TYPE TABLE OF ty_prog, ls_prog TYPE ty_prog.
+FIELD-SYMBOLS <pr> TYPE ty_prog.
+IF lt_vbeln_r IS NOT INITIAL.
+  SELECT a~kdauf a~kdpos a~matnr a~psmng a~wemng k~gltrp
+    FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+    INTO CORRESPONDING FIELDS OF TABLE lt_ordraw
+    FOR ALL ENTRIES IN lt_vbeln_r
+    WHERE a~kdauf = lt_vbeln_r-table_line
+      AND a~pwerk = lc_werks.
+  LOOP AT lt_ordraw INTO ls_ordraw.
+    READ TABLE lt_prog ASSIGNING <pr>
+      WITH KEY kdauf = ls_ordraw-kdauf kdpos = ls_ordraw-kdpos matnr = ls_ordraw-matnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_prog ASSIGNING <pr>.
+      <pr>-kdauf = ls_ordraw-kdauf. <pr>-kdpos = ls_ordraw-kdpos. <pr>-matnr = ls_ordraw-matnr.
+    ENDIF.
+    <pr>-psmng = <pr>-psmng + ls_ordraw-psmng.
+    <pr>-wemng = <pr>-wemng + ls_ordraw-wemng.
+    IF ls_ordraw-gltrp > <pr>-gltrp. <pr>-gltrp = ls_ordraw-gltrp. ENDIF.
+  ENDLOOP.
+  SORT lt_prog BY kdauf kdpos matnr.
+ENDIF.
+
+" --- Bentuk baris tampilan (rows) ---
+TYPES: BEGIN OF ty_out,
+         matnr TYPE string, maktx TYPE string, so TYPE string, item TYPE string,
+         qty TYPE string, prog TYPE i, has_prog TYPE abap_bool, enddate TYPE string,
+       END OF ty_out.
+DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
+DATA: lv_meins TYPE mara-meins, lv_qty_c TYPE c LENGTH 40, lv_qty_num TYPE string,
+      lv_mat TYPE matnr, lv_qlen TYPE i, lv_qoff TYPE i.
+LOOP AT lt_agg INTO ls_agg.
+  CLEAR ls_out.
+  " matnr display
+  lv_mat = ls_agg-matnr.
+  CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT' EXPORTING input = lv_mat IMPORTING output = lv_mat.
+  ls_out-matnr = lv_mat.
+  READ TABLE lt_makt INTO ls_makt WITH KEY matnr = ls_agg-matnr BINARY SEARCH.
+  IF sy-subrc = 0. ls_out-maktx = ls_makt-maktx. ENDIF.
+  " qty + base UoM
+  CLEAR lv_meins.
+  READ TABLE lt_mara INTO ls_mara WITH KEY matnr = ls_agg-matnr BINARY SEARCH.
+  IF sy-subrc = 0. lv_meins = ls_mara-meins. ENDIF.
+  CALL FUNCTION 'CONVERSION_EXIT_CUNIT_OUTPUT' EXPORTING input = lv_meins IMPORTING output = lv_meins.
+  CLEAR: lv_qty_c, lv_qty_num.
+  WRITE ls_agg-qty TO lv_qty_c NO-GROUPING.
+  lv_qty_num = lv_qty_c. CONDENSE lv_qty_num.
+  REPLACE ALL OCCURRENCES OF ',' IN lv_qty_num WITH '.'.
+  IF lv_qty_num CS '.'.
+    DO.
+      lv_qlen = strlen( lv_qty_num ). IF lv_qlen = 0. EXIT. ENDIF.
+      lv_qoff = lv_qlen - 1.
+      IF lv_qty_num+lv_qoff(1) <> '0'. EXIT. ENDIF.
+      lv_qty_num = lv_qty_num(lv_qoff).
+    ENDDO.
+    lv_qlen = strlen( lv_qty_num ).
+    IF lv_qlen > 0.
+      lv_qoff = lv_qlen - 1.
+      IF lv_qty_num+lv_qoff(1) = '.'. lv_qty_num = lv_qty_num(lv_qoff). ENDIF.
+    ENDIF.
+  ENDIF.
+  ls_out-qty = |{ lv_qty_num } { lv_meins }|.
+  " SO + item (kalau SO-stock)
+  IF ls_agg-vbeln IS NOT INITIAL.
+    ls_out-so = ls_agg-vbeln. SHIFT ls_out-so LEFT DELETING LEADING '0'.
+    IF ls_agg-posnr IS NOT INITIAL.
+      ls_out-item = ls_agg-posnr. SHIFT ls_out-item LEFT DELETING LEADING '0'.
+    ENDIF.
+    " Progres & End Date dari order Plant 2000 yg cocok
+    READ TABLE lt_prog INTO ls_prog
+      WITH KEY kdauf = ls_agg-vbeln kdpos = ls_agg-posnr matnr = ls_agg-matnr BINARY SEARCH.
+    IF sy-subrc = 0 AND ls_prog-psmng > 0.
+      ls_out-has_prog = abap_true.
+      ls_out-prog = ls_prog-wemng * 100 / ls_prog-psmng.
+      IF ls_out-prog > 100. ls_out-prog = 100. ENDIF.
+      IF ls_prog-gltrp IS NOT INITIAL.
+        ls_out-enddate = ls_prog-gltrp(4) && '-' && ls_prog-gltrp+4(2) && '-' && ls_prog-gltrp+6(2).
+      ENDIF.
+    ENDIF.
+  ELSE.
+    ls_out-so = ''. ls_out-item = ''.
+  ENDIF.
+  APPEND ls_out TO lt_out.
+ENDLOOP.
+
+" --- Ranking Buyer (hanya SO-stock; distinct vbeln & matnr per buyer) ---
+"     Resolusi buyer: vbeln -> VBAK-KUNNR -> KNA1-NAME1.
+TYPES: BEGIN OF ty_kna1, kunnr TYPE kna1-kunnr, name1 TYPE kna1-name1, END OF ty_kna1.
+DATA: lt_kunnr_r TYPE TABLE OF kna1-kunnr,
+      lt_kna1    TYPE TABLE OF ty_kna1, ls_kna1 TYPE ty_kna1.
+LOOP AT lt_vbak INTO ls_vbak.
+  IF ls_vbak-kunnr = lc_sample. CONTINUE. ENDIF.
+  APPEND ls_vbak-kunnr TO lt_kunnr_r.
+ENDLOOP.
+SORT lt_kunnr_r. DELETE ADJACENT DUPLICATES FROM lt_kunnr_r.
+IF lt_kunnr_r IS NOT INITIAL.
+  SELECT kunnr name1 FROM kna1 INTO TABLE lt_kna1
+    FOR ALL ENTRIES IN lt_kunnr_r
+    WHERE kunnr = lt_kunnr_r-table_line.
+  SORT lt_kna1 BY kunnr.
+ENDIF.
+
+" Kombinasi unik (buyer, vbeln, matnr) dari SO-stock agg -> hitung distinct.
+TYPES: BEGIN OF ty_bset, buyer TYPE string, vbeln TYPE mska-vbeln, matnr TYPE matnr, END OF ty_bset.
+DATA: lt_bset TYPE TABLE OF ty_bset, ls_bset TYPE ty_bset.
+DATA lv_buyer TYPE string.
+LOOP AT lt_agg INTO ls_agg WHERE vbeln IS NOT INITIAL.
+  READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_agg-vbeln BINARY SEARCH.
+  IF sy-subrc <> 0 OR ls_vbak-kunnr = lc_sample. CONTINUE. ENDIF.
+  CLEAR lv_buyer.
+  READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = ls_vbak-kunnr BINARY SEARCH.
+  IF sy-subrc = 0. lv_buyer = ls_kna1-name1. ENDIF.
+  IF lv_buyer IS INITIAL. lv_buyer = ls_vbak-kunnr. ENDIF.
+  CLEAR ls_bset.
+  ls_bset-buyer = lv_buyer. ls_bset-vbeln = ls_agg-vbeln. ls_bset-matnr = ls_agg-matnr.
+  APPEND ls_bset TO lt_bset.
+ENDLOOP.
+SORT lt_bset BY buyer vbeln matnr.
+DELETE ADJACENT DUPLICATES FROM lt_bset COMPARING buyer vbeln matnr.
+
+TYPES: BEGIN OF ty_buyer, buyer TYPE string, so_count TYPE i, mat_count TYPE i, END OF ty_buyer.
+DATA: lt_buyer TYPE TABLE OF ty_buyer, ls_buyer TYPE ty_buyer.
+FIELD-SYMBOLS <b> TYPE ty_buyer.
+DATA: lt_bso TYPE TABLE OF ty_bset, ls_bso TYPE ty_bset.
+" mat_count: distinct (buyer,matnr)
+DATA lt_bmat TYPE TABLE OF ty_bset.
+lt_bmat = lt_bset.
+SORT lt_bmat BY buyer matnr.
+DELETE ADJACENT DUPLICATES FROM lt_bmat COMPARING buyer matnr.
+LOOP AT lt_bmat INTO ls_bset.
+  READ TABLE lt_buyer ASSIGNING <b> WITH KEY buyer = ls_bset-buyer.
+  IF sy-subrc <> 0. APPEND INITIAL LINE TO lt_buyer ASSIGNING <b>. <b>-buyer = ls_bset-buyer. ENDIF.
+  <b>-mat_count = <b>-mat_count + 1.
+ENDLOOP.
+" so_count: distinct (buyer,vbeln)
+lt_bso = lt_bset.
+SORT lt_bso BY buyer vbeln.
+DELETE ADJACENT DUPLICATES FROM lt_bso COMPARING buyer vbeln.
+LOOP AT lt_bso INTO ls_bso.
+  READ TABLE lt_buyer ASSIGNING <b> WITH KEY buyer = ls_bso-buyer.
+  IF sy-subrc <> 0. APPEND INITIAL LINE TO lt_buyer ASSIGNING <b>. <b>-buyer = ls_bso-buyer. ENDIF.
+  <b>-so_count = <b>-so_count + 1.
+ENDLOOP.
+SORT lt_buyer BY mat_count DESCENDING so_count DESCENDING buyer ASCENDING.
+
+" ===== Output JSON =====
+response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+%>{"rows":[<%
+DATA: lv_first TYPE abap_bool VALUE abap_true,
+      lv_e_maktx TYPE string.
+LOOP AT lt_out INTO ls_out.
+  IF lv_first = abap_false. %>,<% ENDIF.
+  lv_first = abap_false.
+  lv_e_maktx = ls_out-maktx.
+  REPLACE ALL OCCURRENCES OF '\' IN lv_e_maktx WITH '\\'.
+  REPLACE ALL OCCURRENCES OF '"' IN lv_e_maktx WITH '\"'.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_maktx WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_maktx WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_maktx WITH ` `.
+  %>{"matnr":"<%= ls_out-matnr %>","maktx":"<%= lv_e_maktx %>","so":"<%= ls_out-so %>","item":"<%= ls_out-item %>","qty":"<%= ls_out-qty %>","prog":<% IF ls_out-has_prog = abap_true. %><%= ls_out-prog %><% ELSE. %>null<% ENDIF. %>,"enddate":"<%= ls_out-enddate %>"}<%
+ENDLOOP.
+%>],"buyers":[<%
+DATA: lv_bfirst TYPE abap_bool VALUE abap_true, lv_e_buyer TYPE string.
+LOOP AT lt_buyer INTO ls_buyer.
+  IF lv_bfirst = abap_false. %>,<% ENDIF.
+  lv_bfirst = abap_false.
+  lv_e_buyer = ls_buyer-buyer.
+  REPLACE ALL OCCURRENCES OF '\' IN lv_e_buyer WITH '\\'.
+  REPLACE ALL OCCURRENCES OF '"' IN lv_e_buyer WITH '\"'.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_buyer WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_buyer WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_buyer WITH ` `.
+  %>{"buyer":"<%= lv_e_buyer %>","so_count":<%= ls_buyer-so_count %>,"mat_count":<%= ls_buyer-mat_count %>}<%
+ENDLOOP.
+%>]}

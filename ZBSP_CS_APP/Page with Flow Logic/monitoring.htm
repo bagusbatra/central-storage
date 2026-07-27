@@ -16,9 +16,9 @@
 "         Jalan balik ke sini dari kedua halaman itu tetap ada (tombol
 "         "Pelacakan" di navbar mereka).
 "       - semua form action & link Reset diarahkan ke index.htm
-"       - selector reset sessionStorage ikut jadi a[href="index3.htm"]
+"       - selector reset sessionStorage ikut jadi a[href="index.htm"]
 "         (tetap discope ke form.parentNode, jadi navbar tidak terjaring)
-"       - userLogout() -> index3.htm?~logoff TETAP, sekarang mendarat di sini
+"       - userLogout() -> index.htm?~logoff TETAP, sekarang mendarat di sini
 "     ⚠️ pelacakan.htm SENGAJA DIPERTAHANKAN (keputusan user) — file itu
 "     duplikat isi halaman ini. Perbaikan bug WAJIB diterapkan ke KEDUANYA,
 "     kalau tidak keduanya akan menyimpang diam-diam.
@@ -1386,7 +1386,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   </div>
 
   <div class="navbar">
-    <a href="index3.htm" class="nav-btn"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
+    <a href="index.htm" class="nav-btn"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span>Dashboard</a>
     <a href="monitoring.htm" class="nav-btn active"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Monitoring</a>
   </div>
 

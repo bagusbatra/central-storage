@@ -1,7 +1,7 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Page — Dashboard Grafis Central Storage (index3.htm)
+*& BSP Page — Dashboard Grafis Central Storage (index.htm)
 *&---------------------------------------------------------------------*
 *& Dua bagian:
 *&  (1) KPI STOK per bagian — 7 kartu; tiap kartu = COUNT DISTINCT MATNR
@@ -378,6 +378,28 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     #ticker-bar._paused .ticker-dot.active { background:#fcd34d; }
     /* Hormati preferensi kurangi-gerak: fade dimatikan (ganti seketika) */
     @media (prefers-reduced-motion: reduce) { #feed-list { transition:none; } }
+    /* --- Panel "Bahan Masuk" (stok 2KCS) + "Buyer" ranking, di atas KPI --- */
+    .cs-row { display:flex; gap:12px; flex-wrap:wrap; margin:6px 0 20px; }
+    .cs-panel { background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,0.05); display:flex; flex-direction:column; overflow:hidden; }
+    .cs-masuk { flex:2 1 380px; min-width:0; }
+    .cs-buyer { flex:1 1 240px; min-width:0; }
+    .cs-panel-head { padding:12px 16px; border-bottom:1px solid #f3f4f6; }
+    .cs-panel-title { font-weight:700; color:#0f172a; font-size:0.95rem; }
+    .cs-panel-sub { font-size:0.72rem; color:#6b7280; margin-top:2px; }
+    .cs-scroll { max-height:300px; overflow:auto; }
+    .cs-panel table { width:100%; border-collapse:collapse; }
+    .cs-panel th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.3px; padding:8px 12px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
+    .cs-panel td { padding:8px 12px; font-size:0.8rem; border-bottom:1px solid #f3f4f6; color:#374151; vertical-align:top; }
+    .cs-panel td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .cs-panel tbody tr:hover td { background:#fafbfc; }
+    .cs-panel .loading, .cs-panel .err { padding:14px 16px; font-size:0.82rem; color:#6b7280; }
+    .cs-panel .err { color:#b91c1c; }
+    .cs-panel code { font-size:0.76rem; }
+    .cs-prog { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; min-width:70px; }
+    .cs-prog-fill { height:100%; background:#2563eb; border-radius:4px; }
+    .cs-prog-fill._g { background:#16a34a; } .cs-prog-fill._y { background:#eab308; } .cs-prog-fill._r { background:#dc2626; }
+    .cs-prog-t { font-size:0.68rem; color:#6b7280; }
+    .cs-rank { color:#94a3b8; font-weight:700; text-align:center; }
   </style>
 </head>
 <body>
@@ -397,7 +419,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   </div>
 
   <div class="navbar">
-    <a href="index3.htm" class="nav-btn active"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16"
+    <a href="index.htm" class="nav-btn active"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16"
 width="7" height="5"/></svg></span>Dashboard</a>
     <a href="monitoring.htm" class="nav-btn"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Monitoring</a>
   </div>
@@ -409,8 +431,27 @@ width="7" height="5"/></svg></span>Dashboard</a>
       snapshot langsung, <b>tidak tergantung tanggal</b>.
     </div>
 
+    <!-- Panel Bahan Masuk (stok 2KCS, logika = kartu Central Storage) + Buyer ranking.
+         Diisi via AJAX dash_cs.htm saat load + auto-refresh 60 dtk. -->
+    <div class="cs-row">
+      <div class="cs-panel cs-masuk">
+        <div class="cs-panel-head">
+          <div class="cs-panel-title">Bahan Masuk</div>
+          <div class="cs-panel-sub">Stok material di Central Storage &#8212; Plant 2000 &middot; SLoc 2KCS</div>
+        </div>
+        <div class="cs-scroll" id="cs-masuk-body"></div>
+      </div>
+      <div class="cs-panel cs-buyer">
+        <div class="cs-panel-head">
+          <div class="cs-panel-title">Buyer</div>
+          <div class="cs-panel-sub">Buyer dengan real stock di Central Storage (2KCS)</div>
+        </div>
+        <div class="cs-scroll" id="cs-buyer-body"></div>
+      </div>
+    </div>
+
     <div class="kpi-refresh">
-      <button type="button" class="kpi-refresh-btn" onclick="loadKpi()" title="Perbarui angka stok sekarang"><svg class="ic" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1
+      <button type="button" class="kpi-refresh-btn" onclick="loadKpi();loadCs()" title="Perbarui angka stok sekarang"><svg class="ic" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1
 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>&nbsp;Refresh</button>
       <%-- Tombol "Mode TV" DISEMBUNYIKAN dulu (permintaan user). CSS body.tv-mode
            & fungsi toggleTv() sengaja dibiarkan supaya mudah dipasang lagi. --%>
@@ -468,7 +509,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
          di panel drill-down. Default KOSONG (= 30 hari terakhir). Diletakkan di sini agar
          jelas cakupannya, tidak disangka memfilter angka KPI. -->
     <div class="dd-daterange">
-      <form method="get" action="index3.htm" class="date-filter-form">
+      <form method="get" action="index.htm" class="date-filter-form">
         <div class="form-group"><label>Dari Tanggal</label><input type="date" name="date_from" value="<%= lv_ff_disp %>"></div>
         <div class="form-group"><label>Sampai Tanggal</label><input type="date" name="date_to" value="<%= lv_ft_disp %>"></div>
         <div class="form-group"><button type="submit">Terapkan</button></div>
@@ -515,7 +556,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var hu = document.querySelector('.header-user');
       if (dd && hu && !hu.contains(e.target)) { dd.classList.remove('open'); }
     });
-    function userLogout() { window.location.href = 'index3.htm?~logoff'; }
+    function userLogout() { window.location.href = 'index.htm?~logoff'; }
 
     /* Format angka id-ID (titik ribuan) — mandiri, tidak bergantung js.js */
     document.querySelectorAll('.num-fmt').forEach(function(el) {
@@ -674,6 +715,69 @@ width="7" height="5"/></svg></span>Dashboard</a>
     }
     setInterval(loadKpi, 60000);   // stok berubah lambat -> 60 dtk cukup
     startProgress('kpi-ring', 60000);
+
+    /* --- Panel Bahan Masuk + Buyer (dash_cs.htm) — refresh 60 dtk, cadence sama KPI --- */
+    function csProgClass(p){ if(p>=100) return '_g'; if(p<15) return '_r'; if(p<40) return '_y'; return ''; }
+    function renderCsMasuk(rows){
+      var el = document.getElementById('cs-masuk-body');
+      if(!el) return;
+      if(!rows.length){ el.innerHTML = '<div class="loading">Tidak ada stok di Central Storage (2KCS).</div>'; return; }
+      var h = '<table><thead><tr><th>Material</th><th>Deskripsi</th><th>No.SO / Item</th><th>Qty</th><th>Progres</th><th>End Date</th></tr></thead><tbody>';
+      rows.forEach(function(r){
+        var soCell;
+        if(r.so){
+          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item||'')+'" data-mat="'+feedEsc(r.matnr)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(r.so)+'</span>'
+            + (r.item ? ' / '+feedEsc(r.item) : '');
+        } else { soCell = '<span style="color:#9ca3af;">(stok bebas)</span>'; }
+        var progCell;
+        if(r.prog === null || typeof r.prog === 'undefined'){
+          progCell = '<span style="color:#cbd5e1;">&mdash;</span>';
+        } else {
+          var p = parseInt(r.prog, 10); if(isNaN(p)) p = 0;
+          progCell = '<div class="cs-prog"><div class="cs-prog-fill '+csProgClass(p)+'" style="width:'+p+'%"></div></div><span class="cs-prog-t">'+p+'%</span>';
+        }
+        h += '<tr><td><code>'+feedEsc(r.matnr)+'</code></td><td>'+feedEsc(r.maktx)+'</td><td>'+soCell+'</td>'
+          + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+progCell+'</td>'
+          + '<td>'+feedEsc(r.enddate||'-')+'</td></tr>';
+      });
+      h += '</tbody></table>';
+      el.innerHTML = h;
+      el.querySelectorAll('.so-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 2, a.getAttribute('data-item'), a.getAttribute('data-mat'), false); });
+      });
+    }
+    function renderCsBuyer(buyers){
+      var el = document.getElementById('cs-buyer-body');
+      if(!el) return;
+      if(!buyers.length){ el.innerHTML = '<div class="loading">Belum ada buyer dengan stok di 2KCS.</div>'; return; }
+      var h = '<table><thead><tr><th style="width:32px;">#</th><th>Buyer</th><th style="text-align:right;">Total SO</th><th style="text-align:right;">Jenis Mat.</th></tr></thead><tbody>';
+      buyers.forEach(function(b, i){
+        h += '<tr><td class="cs-rank">'+(i+1)+'</td><td>'+feedEsc(b.buyer)+'</td>'
+          + '<td class="num">'+feedEsc(b.so_count)+'</td><td class="num">'+feedEsc(b.mat_count)+'</td></tr>';
+      });
+      h += '</tbody></table>';
+      el.innerHTML = h;
+    }
+    function loadCs(){
+      fetch('dash_cs.htm', { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          renderCsMasuk((d && d.rows)   ? d.rows   : []);
+          renderCsBuyer((d && d.buyers) ? d.buyers : []);
+        })
+        .catch(function(){
+          var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body');
+          if(m) m.innerHTML = '<div class="err">Gagal memuat data. Coba Refresh.</div>';
+          if(b) b.innerHTML = '<div class="err">Gagal memuat data.</div>';
+        });
+    }
+    (function(){   // skeleton sampai data pertama masuk
+      var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body');
+      if(m) m.innerHTML = '<div class="skel-wrap">' + skelRows(6, 5) + '</div>';
+      if(b) b.innerHTML = '<div class="skel-wrap">' + skelRows(5, 3) + '</div>';
+    })();
+    loadCs();
+    setInterval(loadCs, 60000);
 
     /* --- Mode TV (layar besar) — tombol DISEMBUNYIKAN dulu (permintaan user).
        toggleTv dibiarkan agar mudah dipasang lagi; penerapan-otomatis dari
