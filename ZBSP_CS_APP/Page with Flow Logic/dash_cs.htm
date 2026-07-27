@@ -9,12 +9,14 @@
 *&       Diperkaya kolom Progres & End Date dari order produksi Plant 2000
 *&       (AFPO⨝AFKO) yg cocok SO+Item+Material.
 *&       ⚠️ WORKLIST FILTER (permintaan user): baris SO-stock HANYA tampil bila
-*&       SO+Item-nya MASIH punya SO-stock tersisa di Plant 1000 (belum dikirim
-*&       semua ke 2KCS). Kalau SO+Item sudah kirim semua bahan dari Plant 1000
-*&       -> SEMUA barisnya disembunyikan (tak perlu dicek lagi). Baris stok
+*&       (a) SO+Item-nya MASIH punya SO-stock tersisa di Plant 1000 (belum
+*&           dikirim semua ke 2KCS) — cek MSKA werks=1000 (SEMUA SLoc),
+*&           sobkz='E', (KALAB>0 OR KAINS>0 OR KASPE>0); DAN
+*&       (b) SO+Item punya >=1 ORDER BELUM SELESAI di MRP PNL/Moulding
+*&           (AFPO⨝AFKO, DISPO IN WM1/WM2/PN1/PN2, WEMNG<PSMNG) — yaitu
+*&           sidebar dash_mrp.htm tidak akan kosong.
+*&       Kalau salah satu tak terpenuhi -> baris disembunyikan. Baris stok
 *&       bebas (tanpa SO+Item) TIDAK difilter -> selalu tampil.
-*&       Cek "masih di 1000" = MSKA werks=1000 (SEMUA SLoc), sobkz='E',
-*&       (KALAB>0 OR KAINS>0 OR KASPE>0) utk (vbeln,posnr) tsb.
 *&   (2) "Buyer" — ranking buyer yg punya real stock di 2KCS (COUNT DISTINCT
 *&       vbeln & matnr per buyer). Hanya SO-stock; free-stock dikecualikan.
 *&   (3) "Sales Order" — daftar SO yg materialnya ada di 2KCS, urut End Date
@@ -126,6 +128,30 @@ IF lt_soitem IS NOT INITIAL.
   SORT lt_p1000 BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_p1000.
 ENDIF.
 
+" --- Filter tambahan: SO+Item HARUS punya >=1 ORDER BELUM SELESAI di MRP
+"     PNL/Moulding (DISPO WM1/WM2/PN1/PN2, WEMNG<PSMNG) — sama persis dgn isi
+"     sidebar dash_mrp.htm. Kalau sidebar bakal KOSONG utk SO+Item, baris
+"     2KCS-nya disembunyikan (tak perlu dicek). Stok bebas tak terpengaruh. ---
+DATA: lt_mrp_open TYPE TABLE OF ty_soitem.
+IF lt_soitem IS NOT INITIAL.
+  DATA: BEGIN OF ls_moc, kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, END OF ls_moc.
+  DATA lt_moc LIKE TABLE OF ls_moc.
+  SELECT a~kdauf a~kdpos
+    FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+    INTO TABLE lt_moc
+    FOR ALL ENTRIES IN lt_soitem
+    WHERE a~kdauf = lt_soitem-vbeln
+      AND a~kdpos = lt_soitem-posnr
+      AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' )
+      AND a~psmng > 0
+      AND a~wemng < a~psmng.
+  LOOP AT lt_moc INTO ls_moc.
+    ls_soitem-vbeln = ls_moc-kdauf. ls_soitem-posnr = ls_moc-kdpos.
+    APPEND ls_soitem TO lt_mrp_open.
+  ENDLOOP.
+  SORT lt_mrp_open BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_mrp_open.
+ENDIF.
+
 " --- Daftar material unik (utk MAKT & MARA batched) ---
 DATA: lt_matu TYPE TABLE OF matnr.
 LOOP AT lt_agg INTO ls_agg.
@@ -193,10 +219,14 @@ DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
 DATA: lv_meins TYPE mara-meins, lv_qty_c TYPE c LENGTH 40, lv_qty_num TYPE string,
       lv_mat TYPE matnr, lv_qlen TYPE i, lv_qoff TYPE i.
 LOOP AT lt_agg INTO ls_agg.
-  " Worklist filter: baris SO-stock hanya tampil bila SO+Item-nya masih punya
-  " bahan tersisa di Plant 1000. Stok bebas (vbeln kosong) tak difilter.
+  " Worklist filter: baris SO-stock hanya tampil bila SO+Item-nya (a) masih punya
+  " bahan tersisa di Plant 1000, DAN (b) punya >=1 order belum selesai di MRP
+  " PNL/Moulding (sidebar tidak kosong). Stok bebas (vbeln kosong) tak difilter.
   IF ls_agg-vbeln IS NOT INITIAL.
     READ TABLE lt_p1000 TRANSPORTING NO FIELDS
+      WITH KEY vbeln = ls_agg-vbeln posnr = ls_agg-posnr BINARY SEARCH.
+    IF sy-subrc <> 0. CONTINUE. ENDIF.
+    READ TABLE lt_mrp_open TRANSPORTING NO FIELDS
       WITH KEY vbeln = ls_agg-vbeln posnr = ls_agg-posnr BINARY SEARCH.
     IF sy-subrc <> 0. CONTINUE. ENDIF.
   ENDIF.

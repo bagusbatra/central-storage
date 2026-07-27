@@ -23,7 +23,8 @@
 *&---------------------------------------------------------------------*
 CONSTANTS lc_sample TYPE kna1-kunnr VALUE '2000000004'.
 DATA: lv_so_in TYPE string, lv_item_in TYPE string,
-      lv_so TYPE vbak-vbeln, lv_item TYPE afpo-kdpos.
+      lv_so TYPE vbak-vbeln, lv_item TYPE vbap-posnr.   " NUMC6 -> auto zero-pad
+                                                        " (afpo-kdpos bisa tak zero-pad)
 lv_so_in   = request->get_form_field( 'so' ).
 lv_item_in = request->get_form_field( 'item' ).
 CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
