@@ -393,6 +393,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .cs-col-right .cs-scroll { max-height:260px; }
     .cs-panel table { width:100%; border-collapse:collapse; }
     .cs-panel th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.3px; padding:8px 12px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
+    .cs-panel th[title] { text-decoration:underline dotted #cbd5e1; text-underline-offset:2px; cursor:help; }
     .cs-panel td { padding:8px 12px; font-size:0.8rem; border-bottom:1px solid #f3f4f6; color:#374151; vertical-align:top; }
     .cs-panel td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
     .cs-panel tbody tr:hover td { background:#fafbfc; }
@@ -735,7 +736,14 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var el = document.getElementById('cs-masuk-body');
       if(!el) return;
       if(!rows.length){ el.innerHTML = '<div class="loading">Tidak ada stok di Central Storage (2KCS).</div>'; return; }
-      var h = '<table><thead><tr><th>Material</th><th>Deskripsi</th><th>No.SO / Item</th><th>Qty</th><th>Progres</th><th>End Date</th></tr></thead><tbody>';
+      var h = '<table><thead><tr>'
+        + '<th title="Nomor material (tanpa leading zero).">Material</th>'
+        + '<th title="Nama / deskripsi material.">Deskripsi</th>'
+        + '<th title="Nomor Sales Order &amp; item pemilik stok SO ini. Klik No.SO untuk lihat progres produksi. (stok bebas = tanpa SO)">No.SO / Item</th>'
+        + '<th title="Jumlah stok di Central Storage (2KCS), status Unrestricted, dalam satuan dasar material.">Qty</th>'
+        + '<th title="Progres produksi order Plant 2000 untuk SO+Item+Material ini (Del QTY / Target QTY). Kosong bila tak ada order.">Progres</th>'
+        + '<th title="Tanggal selesai dasar order produksi Plant 2000 (AFKO-GLTRP). Kosong bila tak ada order.">End Date</th>'
+        + '</tr></thead><tbody>';
       rows.forEach(function(r){
         var soCell;
         if(r.so){
@@ -763,7 +771,12 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var el = document.getElementById('cs-buyer-body');
       if(!el) return;
       if(!buyers.length){ el.innerHTML = '<div class="loading">Belum ada buyer dengan stok di 2KCS.</div>'; return; }
-      var h = '<table><thead><tr><th style="width:32px;">#</th><th>Buyer</th><th style="text-align:right;">Total SO</th><th style="text-align:right;">Jenis Mat.</th></tr></thead><tbody>';
+      var h = '<table><thead><tr>'
+        + '<th style="width:32px;" title="Peringkat berdasar jumlah jenis material terbanyak.">#</th>'
+        + '<th title="Nama customer / buyer.">Buyer</th>'
+        + '<th style="text-align:right;" title="Jumlah SO berbeda milik buyer ini yang punya stok di 2KCS.">Total SO</th>'
+        + '<th style="text-align:right;" title="Jumlah jenis material berbeda milik buyer ini yang ada di 2KCS.">Jenis Mat.</th>'
+        + '</tr></thead><tbody>';
       buyers.forEach(function(b, i){
         h += '<tr><td class="cs-rank">'+(i+1)+'</td><td>'+feedEsc(b.buyer)+'</td>'
           + '<td class="num">'+feedEsc(b.so_count)+'</td><td class="num">'+feedEsc(b.mat_count)+'</td></tr>';
@@ -775,7 +788,11 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var el = document.getElementById('cs-so-body');
       if(!el) return;
       if(!sos.length){ el.innerHTML = '<div class="loading">Belum ada SO dengan material di 2KCS.</div>'; return; }
-      var h = '<table><thead><tr><th>No.SO</th><th>Buyer</th><th>End Date</th></tr></thead><tbody>';
+      var h = '<table><thead><tr>'
+        + '<th title="Nomor Sales Order yang materialnya ada di 2KCS. Klik untuk lihat progres produksi.">No.SO</th>'
+        + '<th title="Nama customer / buyer SO.">Buyer</th>'
+        + '<th title="Tanggal selesai terakhir (MAX AFKO-GLTRP) order Plant 2000 milik SO. Kosong bila tak ada order.">End Date</th>'
+        + '</tr></thead><tbody>';
       sos.forEach(function(s){
         h += '<tr><td><span class="so-link" data-so="'+feedEsc(s.so)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(s.so)+'</span></td>'
           + '<td>'+feedEsc(s.buyer)+'</td><td>'+feedEsc(s.enddate||'-')+'</td></tr>';
