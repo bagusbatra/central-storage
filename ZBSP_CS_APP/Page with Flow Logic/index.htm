@@ -386,6 +386,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .cs-col-right { flex:1 1 260px; min-width:0; display:flex; flex-direction:column; gap:12px; }
     .cs-panel-head { padding:12px 16px; border-bottom:1px solid #f3f4f6; }
     .cs-panel-title { font-weight:700; color:#0f172a; font-size:0.95rem; }
+    .cs-count { display:inline-block; margin-left:8px; font-size:0.7rem; font-weight:700; color:#6b7280; background:#eef1f6; border-radius:999px; padding:1px 8px; vertical-align:middle; font-variant-numeric:tabular-nums; }
     .cs-panel-sub { font-size:0.72rem; color:#6b7280; margin-top:2px; }
     .cs-scroll { max-height:300px; overflow:auto; }
     /* Bahan Masuk: tinggi tetap 550px (scroll internal) */
@@ -489,7 +490,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     <div class="cs-row">
       <div class="cs-panel cs-masuk">
         <div class="cs-panel-head">
-          <div class="cs-panel-title">Bahan Masuk</div>
+          <div class="cs-panel-title">Bahan Masuk<span class="cs-count" id="cs-masuk-count"></span></div>
           <div class="cs-panel-sub">Stok material di Central Storage &#8212; Plant 2000 &middot; SLoc 2KCS</div>
         </div>
         <div class="cs-scroll" id="cs-masuk-body"></div>
@@ -497,14 +498,14 @@ width="7" height="5"/></svg></span>Dashboard</a>
       <div class="cs-col-right">
         <div class="cs-panel cs-buyer">
           <div class="cs-panel-head">
-            <div class="cs-panel-title">Buyer</div>
+            <div class="cs-panel-title">Buyer<span class="cs-count" id="cs-buyer-count"></span></div>
             <div class="cs-panel-sub">Buyer dengan real stock di Central Storage (2KCS)</div>
           </div>
           <div class="cs-scroll" id="cs-buyer-body"></div>
         </div>
         <div class="cs-panel cs-so">
           <div class="cs-panel-head">
-            <div class="cs-panel-title">Sales Order</div>
+            <div class="cs-panel-title">Sales Order<span class="cs-count" id="cs-so-count"></span></div>
             <div class="cs-panel-sub">SO yang materialnya ada di 2KCS &#8212; urut End Date</div>
           </div>
           <div class="cs-scroll" id="cs-so-body"></div>
@@ -783,6 +784,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     function renderCsMasuk(rows){
       var el = document.getElementById('cs-masuk-body');
       if(!el) return;
+      var cnt = document.getElementById('cs-masuk-count'); if(cnt) cnt.textContent = rows.length;
       if(!rows.length){ el.innerHTML = '<div class="loading">Tidak ada stok di Central Storage (2KCS).</div>'; return; }
       var h = '<table><thead><tr>'
         + '<th title="Nomor material (tanpa leading zero).">Material</th>'
@@ -818,6 +820,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     function renderCsBuyer(buyers){
       var el = document.getElementById('cs-buyer-body');
       if(!el) return;
+      var cnt = document.getElementById('cs-buyer-count'); if(cnt) cnt.textContent = buyers.length;
       if(!buyers.length){ el.innerHTML = '<div class="loading">Belum ada buyer dengan stok di 2KCS.</div>'; return; }
       var h = '<table><thead><tr>'
         + '<th style="width:32px;" title="Peringkat berdasar jumlah jenis material terbanyak.">#</th>'
@@ -835,6 +838,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     function renderCsSos(sos){
       var el = document.getElementById('cs-so-body');
       if(!el) return;
+      var cnt = document.getElementById('cs-so-count'); if(cnt) cnt.textContent = sos.length;
       if(!sos.length){ el.innerHTML = '<div class="loading">Belum ada SO dengan material di 2KCS.</div>'; return; }
       var h = '<table><thead><tr>'
         + '<th title="Nomor Sales Order yang materialnya ada di 2KCS. Klik untuk lihat progres produksi.">No.SO</th>'
