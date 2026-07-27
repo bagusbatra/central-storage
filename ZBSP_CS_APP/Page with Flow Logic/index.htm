@@ -336,6 +336,11 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .so-mon-link:hover { background:#2563eb; color:#fff; }
     .so-body .loading, .so-body .err { padding:14px 4px; font-size:0.85rem; color:#6b7280; }
     .so-body .err { color:#b91c1c; }
+    /* Sidebar MRP (Bahan Masuk): grup PNL / Moulding */
+    .mrp-group { margin-bottom:16px; }
+    .mrp-group-head { display:flex; align-items:center; gap:8px; font-size:0.74rem; font-weight:800; color:#4338ca; letter-spacing:0.4px; text-transform:uppercase; padding:6px 10px; background:#eef2ff; border:1px solid #e0e7ff; border-radius:6px; margin-bottom:6px; }
+    .mrp-gc { font-weight:700; color:#6366f1; background:#fff; border-radius:999px; padding:0 7px; font-size:0.7rem; }
+    .mrp-badge { display:inline-block; font-size:0.68rem; font-weight:700; color:#3730a3; background:#e0e7ff; border-radius:5px; padding:1px 6px; font-family:monospace; }
     /* --- Filter tanggal --- */
     .date-filter-form { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
     .date-filter-form .form-group { display:block; }
@@ -432,7 +437,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .kpi-card .kpi-value{ font-size:2rem; font-weight:700; letter-spacing:-.02em; color:var(--ink); margin:11px 0 2px; }
     .kpi-card .kpi-cap{ color:var(--faint); }
     .kpi-card .kpi-track{ height:5px; background:#EDF1F6; }
-    .kpi-card.active{ border-color:var(--primary); box-shadow:0 0 0 2px rgba(47,111,237,.22); }
+    .kpi-card.active{ border-color:var(--primary); box-shadow:0 0 0 2px r gba(47,111,237,.22); }
     /* warna per tahap (chip + bar) — alur mentah -> jadi */
     .kpi-card[data-sec="1"] .kpi-label::before{ background:var(--s-bahan); }    .kpi-card[data-sec="1"] .kpi-fill{ background:var(--s-bahan); }
     .kpi-card[data-sec="2"] .kpi-label::before{ background:var(--s-central); }   .kpi-card[data-sec="2"] .kpi-fill{ background:var(--s-central); }
@@ -479,12 +484,6 @@ width="7" height="5"/></svg></span>Dashboard</a>
   </div>
 
   <div class="content">
-
-    <div class="date-range-note">
-      KPI menampilkan <b>stok saat ini</b> (jumlah jenis material berstok per bagian) &#8212;
-      snapshot langsung, <b>tidak tergantung tanggal</b>.
-    </div>
-
     <!-- Panel Bahan Masuk (stok 2KCS, logika = kartu Central Storage) + Buyer ranking.
          Diisi via AJAX dash_cs.htm saat load + auto-refresh 60 dtk. -->
     <div class="cs-row">
@@ -566,18 +565,6 @@ width="7" height="5"/></svg></span>Dashboard</a>
         <div class="kpi-cap">material dlm QI</div>
         <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w7 %>%;"></div></div>
       </div>
-    </div>
-
-    <!-- Filter tanggal: HANYA memengaruhi kolom "Terakhir Masuk" & urutan Terbaru/Terlama
-         di panel drill-down. Default KOSONG (= 30 hari terakhir). Diletakkan di sini agar
-         jelas cakupannya, tidak disangka memfilter angka KPI. -->
-    <div class="dd-daterange">
-      <form method="get" action="index.htm" class="date-filter-form">
-        <div class="form-group"><label>Dari Tanggal</label><input type="date" name="date_from" value="<%= lv_ff_disp %>"></div>
-        <div class="form-group"><label>Sampai Tanggal</label><input type="date" name="date_to" value="<%= lv_ft_disp %>"></div>
-        <div class="form-group"><button type="submit">Terapkan</button></div>
-      </form>
-      <div class="dd-daterange-hint">Rentang untuk kolom <b>Terakhir Masuk</b> &amp; urutan di detail. Kosong = 30 hari terakhir.</div>
     </div>
 
     <!-- Panel drill-down: diisi via AJAX (dash_detail.htm?sec=N) saat kartu diklik -->
@@ -789,7 +776,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var h = '<table><thead><tr>'
         + '<th title="Nomor material (tanpa leading zero).">Material</th>'
         + '<th title="Nama / deskripsi material.">Deskripsi</th>'
-        + '<th title="Nomor Sales Order &amp; item pemilik stok SO ini. Klik No.SO / Item untuk buka panel kanan: progres SO ini di Plant 1000 (Bahan). (stok bebas = tanpa SO)">No.SO / Item</th>'
+        + '<th title="Nomor Sales Order &amp; item pemilik stok SO ini. Klik No.SO / Item untuk buka panel kanan: order yang BELUM SELESAI berdasarkan MRP (PNL: PN1/PN2, Moulding: WM1/WM2). (stok bebas = tanpa SO)">No.SO / Item</th>'
         + '<th title="Jumlah stok di Central Storage (2KCS), status Unrestricted, dalam satuan dasar material.">Qty</th>'
         + '<th title="Progres produksi order Plant 2000 untuk SO+Item+Material ini (Del QTY / Target QTY). Kosong bila tak ada order.">Progres</th>'
         + '<th title="Tanggal selesai dasar order produksi Plant 2000 (AFKO-GLTRP). Kosong bila tak ada order.">End Date</th>'
@@ -797,8 +784,8 @@ width="7" height="5"/></svg></span>Dashboard</a>
       rows.forEach(function(r){
         var soCell;
         if(r.so){
-          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Buka panel kanan: progres SO ini di Plant 1000 (Bahan)">'+feedEsc(r.so)+'</span>'
-            + (r.item ? ' / <span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" data-mat="'+feedEsc(r.matnr)+'" title="Buka panel kanan &amp; sorot item ini di Plant 1000 (Bahan)">'+feedEsc(r.item)+'</span>' : '');
+          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Buka panel kanan: order belum selesai SO ini (MRP PNL/Moulding)">'+feedEsc(r.so)+'</span>'
+            + (r.item ? ' / <span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" title="Buka panel kanan: order belum selesai item ini (MRP PNL/Moulding)">'+feedEsc(r.item)+'</span>' : '');
         } else { soCell = '<span style="color:#9ca3af;">(stok bebas)</span>'; }
         var progCell;
         if(r.prog === null || typeof r.prog === 'undefined'){
@@ -813,13 +800,13 @@ width="7" height="5"/></svg></span>Dashboard</a>
       });
       h += '</tbody></table>';
       el.innerHTML = h;
-      // Klik No.SO -> side panel kanan: progres SO di Plant 1000 (Bahan / sec=1), semua item.
+      // Klik No.SO -> side panel kanan MRP: order belum selesai SO (semua item).
       el.querySelectorAll('.so-link').forEach(function(a){
-        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 1, '', '', false); });
+        a.addEventListener('click', function(){ openMrp(a.getAttribute('data-so'), ''); });
       });
-      // Klik Item -> side panel kanan (sec=1), sorot & filter ke item itu.
+      // Klik Item -> side panel kanan MRP difilter ke SO+Item itu.
       el.querySelectorAll('.item-link').forEach(function(a){
-        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 1, a.getAttribute('data-item'), a.getAttribute('data-mat'), true); });
+        a.addEventListener('click', function(){ openMrp(a.getAttribute('data-so'), a.getAttribute('data-item')); });
       });
     }
     function renderCsBuyer(buyers){
@@ -1113,6 +1100,60 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var panel = document.getElementById('so-panel');
       panel.classList.remove('open'); panel.setAttribute('aria-hidden','true');
       document.getElementById('so-overlay').classList.remove('open');
+    }
+
+    /* --- Side panel kanan versi MRP (dipakai panel Bahan Masuk) ---
+       Berbasis AFKO-DISPO: order BELUM SELESAI (Del<Target) utk SO(+Item),
+       dikelompokkan PNL (PN1/PN2) & Moulding (WM1/WM2). Endpoint dash_mrp.htm.
+       Memakai shell #so-panel yang sama (closeSo/overlay/Esc tetap berlaku). */
+    var _mrpRows=[], _mrpBuyer='', _mrpNum='';
+    function openMrp(so, item){
+      var panel = document.getElementById('so-panel');
+      var ov    = document.getElementById('so-overlay');
+      var body  = document.getElementById('so-body');
+      _mrpNum = so;
+      document.getElementById('so-title').textContent = 'SO ' + so + (item ? (' · Item ' + item) : '');
+      document.getElementById('so-scope').textContent = 'Order belum selesai · per MRP (PNL / Moulding)';
+      body.innerHTML = skelSidePanel();
+      panel.classList.add('open'); panel.setAttribute('aria-hidden','false');
+      ov.classList.add('open');
+      fetch('dash_mrp.htm?so='+encodeURIComponent(so)+'&item='+encodeURIComponent(item||''), { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          _mrpRows  = (d && d.rows) ? d.rows : [];
+          _mrpBuyer = (d && d.buyer) ? d.buyer : '';
+          mrpRender();
+        })
+        .catch(function(){ body.innerHTML = '<div class="err">Gagal memuat data MRP.</div>'; });
+    }
+    function mrpRender(){
+      var body = document.getElementById('so-body');
+      var rows = _mrpRows;
+      var h = '<div class="so-meta">Buyer: <b>'+feedEsc(_mrpBuyer||'-')+'</b> &middot; hanya order <b>belum selesai</b></div>';
+      if(!rows.length){
+        body.innerHTML = h + '<div class="loading">Tidak ada order belum selesai (PNL/Moulding) untuk SO+Item ini.</div>';
+        return;
+      }
+      var cats = [{ key:'PNL', label:'PNL (PN1/PN2)' }, { key:'MOULDING', label:'Moulding (WM1/WM2)' }];
+      cats.forEach(function(c){
+        var cr = rows.filter(function(r){ return r.cat === c.key; });
+        if(!cr.length) return;
+        h += '<div class="mrp-group"><div class="mrp-group-head">'+c.label+' <span class="mrp-gc">'+cr.length+'</span></div>';
+        h += '<table class="so-table"><thead><tr><th>Item</th><th>Material</th><th>MRP</th><th title="Storage Location order (AFPO-LGORT)">SLoc</th><th>Target</th><th>Del</th><th>Progres</th><th>Aksi</th></tr></thead><tbody>';
+        cr.forEach(function(r){
+          var p = parseInt(r.prog, 10); if(isNaN(p)) p = 0;
+          h += '<tr><td>'+feedEsc(r.item)+'</td>'
+            + '<td>'+feedEsc(r.matnr)+'<div class="so-mat-d">'+feedEsc(r.maktx)+'</div></td>'
+            + '<td><span class="mrp-badge">'+feedEsc(r.dispo)+'</span></td>'
+            + '<td>'+feedEsc(r.sloc||'-')+'</td>'
+            + '<td class="num">'+feedEsc(r.target)+'</td>'
+            + '<td class="num">'+feedEsc(r.del)+'</td>'
+            + '<td><div class="so-prog"><div class="so-prog-fill" style="width:'+p+'%"></div></div><span class="so-prog-t">'+p+'%</span></td>'
+            + '<td><a href="monitoring.htm?so_num='+encodeURIComponent(_mrpNum)+'&item_num='+encodeURIComponent(r.item)+'" class="so-mon-link" title="Lihat di halaman Monitoring">Lihat</a></td></tr>';
+        });
+        h += '</tbody></table></div>';
+      });
+      body.innerHTML = h;
     }
     function soRender(){
       var body = document.getElementById('so-body');
