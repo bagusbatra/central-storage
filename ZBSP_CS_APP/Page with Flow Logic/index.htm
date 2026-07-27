@@ -791,7 +791,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var h = '<table><thead><tr>'
         + '<th title="Nomor Sales Order yang materialnya ada di 2KCS. Klik untuk lihat progres produksi.">No.SO</th>'
         + '<th title="Nama customer / buyer SO.">Buyer</th>'
-        + '<th title="Tanggal selesai terakhir (MAX AFKO-GLTRP) order Plant 2000 milik SO. Kosong bila tak ada order.">End Date</th>'
+        + '<th title="End Date di kartu Sales Order = AFKO-GLTRP (Basic Finish Date / tanggal selesai dasar order produksi).">End Date</th>'
         + '</tr></thead><tbody>';
       sos.forEach(function(s){
         h += '<tr><td><span class="so-link" data-so="'+feedEsc(s.so)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(s.so)+'</span></td>'
