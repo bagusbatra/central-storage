@@ -3,12 +3,18 @@
 *& BSP Page — dash_cs.htm
 *&---------------------------------------------------------------------*
 *& Endpoint JSON utk DUA panel di atas KPI dashboard (index.htm):
-*&   (1) "Bahan Masuk" — daftar stok material di Central Storage
-*&       (Plant 2000 / SLoc 2KCS). LOGIKA STOK SAMA PERSIS dgn kartu KPI
-*&       Central Storage (dash_detail.htm sec=2): MSKA SO-stock (sobkz='E',
-*&       unrestricted KALAB>0) + MARD free-stock (LABST>0), sample customer
-*&       2000000004 dibuang via VBAK. Diperkaya kolom Progres & End Date
-*&       dari order produksi Plant 2000 (AFPO⨝AFKO) yg cocok SO+Item+Material.
+*&   (1) "Bahan Masuk" — real stock material di Central Storage (Plant 2000 /
+*&       SLoc 2KCS): MSKA SO-stock (sobkz='E', unrestricted KALAB>0) + MARD
+*&       free-stock (LABST>0), sample customer 2000000004 dibuang via VBAK.
+*&       Diperkaya kolom Progres & End Date dari order produksi Plant 2000
+*&       (AFPO⨝AFKO) yg cocok SO+Item+Material.
+*&       ⚠️ WORKLIST FILTER (permintaan user): baris SO-stock HANYA tampil bila
+*&       SO+Item-nya MASIH punya SO-stock tersisa di Plant 1000 (belum dikirim
+*&       semua ke 2KCS). Kalau SO+Item sudah kirim semua bahan dari Plant 1000
+*&       -> SEMUA barisnya disembunyikan (tak perlu dicek lagi). Baris stok
+*&       bebas (tanpa SO+Item) TIDAK difilter -> selalu tampil.
+*&       Cek "masih di 1000" = MSKA werks=1000 (SEMUA SLoc), sobkz='E',
+*&       (KALAB>0 OR KAINS>0 OR KASPE>0) utk (vbeln,posnr) tsb.
 *&   (2) "Buyer" — ranking buyer yg punya real stock di 2KCS (COUNT DISTINCT
 *&       vbeln & matnr per buyer). Hanya SO-stock; free-stock dikecualikan.
 *&   (3) "Sales Order" — daftar SO yg materialnya ada di 2KCS, urut End Date
@@ -20,12 +26,15 @@
 *&
 *& ⚠️ set_header_field: fallback set_content_type spt endpoint lain
 *&    (runtime->server->response->set_content_type(...)).
-*& ⚠️ Logika stok dikembarkan dari dash_detail.htm sec=2 — kalau salah satu
-*&    diubah, samakan KEDUANYA agar angka konsisten dgn kartu KPI.
+*& ⚠️ Sumber stok 2KCS meniru dash_detail.htm sec=2, TAPI baris "rows" di sini
+*&    di-FILTER worklist (lihat butir 1) sehingga TIDAK lagi identik jumlahnya
+*&    dgn kartu KPI Central Storage. Buyer & Sales Order (butir 2/3) TETAP
+*&    berbasis seluruh SO-stock 2KCS (tanpa filter worklist).
 *&---------------------------------------------------------------------*
-CONSTANTS: lc_sample TYPE kna1-kunnr VALUE '2000000004',
-           lc_werks  TYPE werks_d    VALUE '2000',
-           lc_lgort  TYPE lgort_d    VALUE '2KCS'.
+CONSTANTS: lc_sample    TYPE kna1-kunnr VALUE '2000000004',
+           lc_werks     TYPE werks_d    VALUE '2000',
+           lc_lgort     TYPE lgort_d    VALUE '2KCS',
+           lc_werks_src TYPE werks_d    VALUE '1000'.   " Plant asal (Pembahanan)
 
 " --- Agregat stok per (matnr, vbeln, posnr) ---
 TYPES: BEGIN OF ty_agg,
@@ -86,6 +95,36 @@ LOOP AT lt_mard INTO ls_mard.
   IF ls_agg-qty > 0. COLLECT ls_agg INTO lt_agg. ENDIF.
 ENDLOOP.
 SORT lt_agg BY matnr vbeln posnr.
+
+" --- WORKLIST FILTER: himpunan (vbeln,posnr) yg MASIH punya SO-stock di Plant
+"     1000 (belum dikirim semua ke 2KCS). Baris 2KCS milik SO+Item di LUAR
+"     himpunan ini disembunyikan (lihat catatan header butir 1). ---
+TYPES: BEGIN OF ty_soitem, vbeln TYPE mska-vbeln, posnr TYPE mska-posnr, END OF ty_soitem.
+DATA: lt_soitem TYPE TABLE OF ty_soitem, ls_soitem TYPE ty_soitem,
+      lt_p1000  TYPE TABLE OF ty_soitem.
+LOOP AT lt_agg INTO ls_agg WHERE vbeln IS NOT INITIAL.
+  ls_soitem-vbeln = ls_agg-vbeln. ls_soitem-posnr = ls_agg-posnr.
+  APPEND ls_soitem TO lt_soitem.
+ENDLOOP.
+SORT lt_soitem BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_soitem.
+IF lt_soitem IS NOT INITIAL.
+  DATA: BEGIN OF ls_m1000, vbeln TYPE mska-vbeln, posnr TYPE mska-posnr, END OF ls_m1000.
+  DATA lt_m1000 LIKE TABLE OF ls_m1000.
+  " Ada SO-stock (MSKA) apa pun (unrestricted/QI/blocked) di Plant 1000 (semua
+  " SLoc) utk SO+Item? Kalau ada -> SO+Item itu 'belum dikirim semua'.
+  SELECT vbeln posnr FROM mska INTO TABLE lt_m1000
+    FOR ALL ENTRIES IN lt_soitem
+    WHERE werks = lc_werks_src
+      AND vbeln = lt_soitem-vbeln
+      AND posnr = lt_soitem-posnr
+      AND sobkz = 'E'
+      AND ( kalab > 0 OR kains > 0 OR kaspe > 0 ).
+  LOOP AT lt_m1000 INTO ls_m1000.
+    ls_soitem-vbeln = ls_m1000-vbeln. ls_soitem-posnr = ls_m1000-posnr.
+    APPEND ls_soitem TO lt_p1000.
+  ENDLOOP.
+  SORT lt_p1000 BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_p1000.
+ENDIF.
 
 " --- Daftar material unik (utk MAKT & MARA batched) ---
 DATA: lt_matu TYPE TABLE OF matnr.
@@ -154,6 +193,13 @@ DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
 DATA: lv_meins TYPE mara-meins, lv_qty_c TYPE c LENGTH 40, lv_qty_num TYPE string,
       lv_mat TYPE matnr, lv_qlen TYPE i, lv_qoff TYPE i.
 LOOP AT lt_agg INTO ls_agg.
+  " Worklist filter: baris SO-stock hanya tampil bila SO+Item-nya masih punya
+  " bahan tersisa di Plant 1000. Stok bebas (vbeln kosong) tak difilter.
+  IF ls_agg-vbeln IS NOT INITIAL.
+    READ TABLE lt_p1000 TRANSPORTING NO FIELDS
+      WITH KEY vbeln = ls_agg-vbeln posnr = ls_agg-posnr BINARY SEARCH.
+    IF sy-subrc <> 0. CONTINUE. ENDIF.
+  ENDIF.
   CLEAR ls_out.
   " matnr display
   lv_mat = ls_agg-matnr.

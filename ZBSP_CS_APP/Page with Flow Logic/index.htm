@@ -414,7 +414,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
       --canvas:#E9EDF3; --ink:#1B2430; --muted:#6B7482; --faint:#98A2B2;
       --hair:#E1E6EE; --hair2:#EEF1F6; --primary:#2F6FED;
       --s-bahan:#B45309; --s-central:#0E7490; --s-machining:#2563EB;
-      --s-banding:#7C3AED; --s-sanding:#DB2777; --s-qi:#64748B;
+      --s-banding:#7C3AED; --s-sanding:#009411; --s-qi:#64748B;
       --good:#16A34A; --warn:#D97706; --crit:#DC2626;
       --cs-shadow:0 1px 2px rgba(20,32,54,.05),0 6px 18px -12px rgba(20,32,54,.22);
     }
@@ -491,7 +491,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       <div class="cs-panel cs-masuk">
         <div class="cs-panel-head">
           <div class="cs-panel-title">Bahan Masuk<span class="cs-count" id="cs-masuk-count"></span></div>
-          <div class="cs-panel-sub">Stok material di Central Storage &#8212; Plant 2000 &middot; SLoc 2KCS</div>
+          <div class="cs-panel-sub">Real stock 2KCS &#8212; hanya SO+Item yang bahannya belum lengkap dikirim dari Plant 1000</div>
         </div>
         <div class="cs-scroll" id="cs-masuk-body"></div>
       </div>
@@ -789,7 +789,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var h = '<table><thead><tr>'
         + '<th title="Nomor material (tanpa leading zero).">Material</th>'
         + '<th title="Nama / deskripsi material.">Deskripsi</th>'
-        + '<th title="Nomor Sales Order &amp; item pemilik stok SO ini. Klik No.SO untuk lihat progres produksi. (stok bebas = tanpa SO)">No.SO / Item</th>'
+        + '<th title="Nomor Sales Order &amp; item pemilik stok SO ini. Klik No.SO / Item untuk buka panel kanan: progres SO ini di Plant 1000 (Bahan). (stok bebas = tanpa SO)">No.SO / Item</th>'
         + '<th title="Jumlah stok di Central Storage (2KCS), status Unrestricted, dalam satuan dasar material.">Qty</th>'
         + '<th title="Progres produksi order Plant 2000 untuk SO+Item+Material ini (Del QTY / Target QTY). Kosong bila tak ada order.">Progres</th>'
         + '<th title="Tanggal selesai dasar order produksi Plant 2000 (AFKO-GLTRP). Kosong bila tak ada order.">End Date</th>'
@@ -797,8 +797,8 @@ width="7" height="5"/></svg></span>Dashboard</a>
       rows.forEach(function(r){
         var soCell;
         if(r.so){
-          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item||'')+'" data-mat="'+feedEsc(r.matnr)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(r.so)+'</span>'
-            + (r.item ? ' / '+feedEsc(r.item) : '');
+          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Buka panel kanan: progres SO ini di Plant 1000 (Bahan)">'+feedEsc(r.so)+'</span>'
+            + (r.item ? ' / <span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" data-mat="'+feedEsc(r.matnr)+'" title="Buka panel kanan &amp; sorot item ini di Plant 1000 (Bahan)">'+feedEsc(r.item)+'</span>' : '');
         } else { soCell = '<span style="color:#9ca3af;">(stok bebas)</span>'; }
         var progCell;
         if(r.prog === null || typeof r.prog === 'undefined'){
@@ -813,8 +813,13 @@ width="7" height="5"/></svg></span>Dashboard</a>
       });
       h += '</tbody></table>';
       el.innerHTML = h;
+      // Klik No.SO -> side panel kanan: progres SO di Plant 1000 (Bahan / sec=1), semua item.
       el.querySelectorAll('.so-link').forEach(function(a){
-        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 2, a.getAttribute('data-item'), a.getAttribute('data-mat'), false); });
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 1, '', '', false); });
+      });
+      // Klik Item -> side panel kanan (sec=1), sorot & filter ke item itu.
+      el.querySelectorAll('.item-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 1, a.getAttribute('data-item'), a.getAttribute('data-mat'), true); });
       });
     }
     function renderCsBuyer(buyers){
