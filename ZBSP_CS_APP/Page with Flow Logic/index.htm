@@ -378,15 +378,19 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     #ticker-bar._paused .ticker-dot.active { background:#fcd34d; }
     /* Hormati preferensi kurangi-gerak: fade dimatikan (ganti seketika) */
     @media (prefers-reduced-motion: reduce) { #feed-list { transition:none; } }
-    /* --- Panel "Bahan Masuk" (stok 2KCS) + "Buyer" ranking, di atas KPI --- */
-    .cs-row { display:flex; gap:12px; flex-wrap:wrap; margin:6px 0 20px; }
+    /* --- Panel "Bahan Masuk" (stok 2KCS) + "Buyer" + "Sales Order", di atas KPI --- */
+    .cs-row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-start; margin:6px 0 20px; }
     .cs-panel { background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,0.05); display:flex; flex-direction:column; overflow:hidden; }
     .cs-masuk { flex:2 1 380px; min-width:0; }
-    .cs-buyer { flex:1 1 240px; min-width:0; }
+    /* kolom kanan: Buyer + Sales Order bertumpuk; Bahan Masuk kiri ikut memanjang */
+    .cs-col-right { flex:1 1 260px; min-width:0; display:flex; flex-direction:column; gap:12px; }
     .cs-panel-head { padding:12px 16px; border-bottom:1px solid #f3f4f6; }
     .cs-panel-title { font-weight:700; color:#0f172a; font-size:0.95rem; }
     .cs-panel-sub { font-size:0.72rem; color:#6b7280; margin-top:2px; }
     .cs-scroll { max-height:300px; overflow:auto; }
+    /* Bahan Masuk: tinggi tetap 550px (scroll internal) */
+    .cs-masuk .cs-scroll { max-height:550px; }
+    .cs-col-right .cs-scroll { max-height:260px; }
     .cs-panel table { width:100%; border-collapse:collapse; }
     .cs-panel th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.3px; padding:8px 12px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
     .cs-panel td { padding:8px 12px; font-size:0.8rem; border-bottom:1px solid #f3f4f6; color:#374151; vertical-align:top; }
@@ -441,12 +445,21 @@ width="7" height="5"/></svg></span>Dashboard</a>
         </div>
         <div class="cs-scroll" id="cs-masuk-body"></div>
       </div>
-      <div class="cs-panel cs-buyer">
-        <div class="cs-panel-head">
-          <div class="cs-panel-title">Buyer</div>
-          <div class="cs-panel-sub">Buyer dengan real stock di Central Storage (2KCS)</div>
+      <div class="cs-col-right">
+        <div class="cs-panel cs-buyer">
+          <div class="cs-panel-head">
+            <div class="cs-panel-title">Buyer</div>
+            <div class="cs-panel-sub">Buyer dengan real stock di Central Storage (2KCS)</div>
+          </div>
+          <div class="cs-scroll" id="cs-buyer-body"></div>
         </div>
-        <div class="cs-scroll" id="cs-buyer-body"></div>
+        <div class="cs-panel cs-so">
+          <div class="cs-panel-head">
+            <div class="cs-panel-title">Sales Order</div>
+            <div class="cs-panel-sub">SO yang materialnya ada di 2KCS &#8212; urut End Date</div>
+          </div>
+          <div class="cs-scroll" id="cs-so-body"></div>
+        </div>
       </div>
     </div>
 
@@ -758,23 +771,41 @@ width="7" height="5"/></svg></span>Dashboard</a>
       h += '</tbody></table>';
       el.innerHTML = h;
     }
+    function renderCsSos(sos){
+      var el = document.getElementById('cs-so-body');
+      if(!el) return;
+      if(!sos.length){ el.innerHTML = '<div class="loading">Belum ada SO dengan material di 2KCS.</div>'; return; }
+      var h = '<table><thead><tr><th>No.SO</th><th>Buyer</th><th>End Date</th></tr></thead><tbody>';
+      sos.forEach(function(s){
+        h += '<tr><td><span class="so-link" data-so="'+feedEsc(s.so)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(s.so)+'</span></td>'
+          + '<td>'+feedEsc(s.buyer)+'</td><td>'+feedEsc(s.enddate||'-')+'</td></tr>';
+      });
+      h += '</tbody></table>';
+      el.innerHTML = h;
+      el.querySelectorAll('.so-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 2, '', '', false); });
+      });
+    }
     function loadCs(){
       fetch('dash_cs.htm', { headers:{'Accept':'application/json'}, cache:'no-store' })
         .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
         .then(function(d){
           renderCsMasuk((d && d.rows)   ? d.rows   : []);
           renderCsBuyer((d && d.buyers) ? d.buyers : []);
+          renderCsSos((d && d.sos)      ? d.sos    : []);
         })
         .catch(function(){
-          var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body');
+          var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body'), s = document.getElementById('cs-so-body');
           if(m) m.innerHTML = '<div class="err">Gagal memuat data. Coba Refresh.</div>';
           if(b) b.innerHTML = '<div class="err">Gagal memuat data.</div>';
+          if(s) s.innerHTML = '<div class="err">Gagal memuat data.</div>';
         });
     }
     (function(){   // skeleton sampai data pertama masuk
-      var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body');
+      var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body'), s = document.getElementById('cs-so-body');
       if(m) m.innerHTML = '<div class="skel-wrap">' + skelRows(6, 5) + '</div>';
       if(b) b.innerHTML = '<div class="skel-wrap">' + skelRows(5, 3) + '</div>';
+      if(s) s.innerHTML = '<div class="skel-wrap">' + skelRows(4, 3) + '</div>';
     })();
     loadCs();
     setInterval(loadCs, 60000);

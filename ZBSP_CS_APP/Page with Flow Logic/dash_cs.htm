@@ -11,9 +11,12 @@
 *&       dari order produksi Plant 2000 (AFPO⨝AFKO) yg cocok SO+Item+Material.
 *&   (2) "Buyer" — ranking buyer yg punya real stock di 2KCS (COUNT DISTINCT
 *&       vbeln & matnr per buyer). Hanya SO-stock; free-stock dikecualikan.
+*&   (3) "Sales Order" — daftar SO yg materialnya ada di 2KCS, urut End Date
+*&       (MAX AFKO-GLTRP order Plant 2000 milik SO) naik; tanpa End Date terakhir.
 *&
 *& Balas: { "rows":[ {matnr,maktx,so,item,qty,prog,enddate}, ... ],
-*&          "buyers":[ {buyer,so_count,mat_count}, ... ] }
+*&          "buyers":[ {buyer,so_count,mat_count}, ... ],
+*&          "sos":[ {so,buyer,enddate}, ... ] }
 *&
 *& ⚠️ set_header_field: fallback set_content_type spt endpoint lain
 *&    (runtime->server->response->set_content_type(...)).
@@ -264,6 +267,47 @@ LOOP AT lt_bso INTO ls_bso.
 ENDLOOP.
 SORT lt_buyer BY mat_count DESCENDING so_count DESCENDING buyer ASCENDING.
 
+" --- Daftar Sales Order (SO yg materialnya ada di 2KCS), urut End Date ---
+"     End Date SO = MAX(AFKO-GLTRP) seluruh order Plant 2000 milik SO itu.
+"     Urut End Date naik (deadline terdekat dulu); SO tanpa End Date terakhir.
+TYPES: BEGIN OF ty_so,
+         vbeln   TYPE mska-vbeln, so_disp TYPE string, buyer TYPE string,
+         gltrp   TYPE afko-gltrp, enddate TYPE string, sortk TYPE c LENGTH 8,
+       END OF ty_so.
+DATA: lt_so TYPE TABLE OF ty_so, ls_so TYPE ty_so.
+FIELD-SYMBOLS <so> TYPE ty_so.
+LOOP AT lt_agg INTO ls_agg WHERE vbeln IS NOT INITIAL.
+  READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_agg-vbeln BINARY SEARCH.
+  IF sy-subrc <> 0 OR ls_vbak-kunnr = lc_sample. CONTINUE. ENDIF.
+  READ TABLE lt_so ASSIGNING <so> WITH KEY vbeln = ls_agg-vbeln.
+  IF sy-subrc <> 0.
+    APPEND INITIAL LINE TO lt_so ASSIGNING <so>.
+    <so>-vbeln = ls_agg-vbeln.
+    <so>-so_disp = ls_agg-vbeln. SHIFT <so>-so_disp LEFT DELETING LEADING '0'.
+    CLEAR lv_buyer.
+    READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = ls_vbak-kunnr BINARY SEARCH.
+    IF sy-subrc = 0. lv_buyer = ls_kna1-name1. ENDIF.
+    IF lv_buyer IS INITIAL. lv_buyer = ls_vbak-kunnr. ENDIF.
+    <so>-buyer = lv_buyer.
+  ENDIF.
+ENDLOOP.
+" End Date per SO = MAX(GLTRP) dari order Plant 2000 milik SO (lt_prog).
+LOOP AT lt_prog INTO ls_prog.
+  READ TABLE lt_so ASSIGNING <so> WITH KEY vbeln = ls_prog-kdauf.
+  IF sy-subrc = 0 AND ls_prog-gltrp > <so>-gltrp.
+    <so>-gltrp = ls_prog-gltrp.
+  ENDIF.
+ENDLOOP.
+LOOP AT lt_so ASSIGNING <so>.
+  IF <so>-gltrp IS NOT INITIAL.
+    <so>-enddate = <so>-gltrp(4) && '-' && <so>-gltrp+4(2) && '-' && <so>-gltrp+6(2).
+    <so>-sortk   = <so>-gltrp.
+  ELSE.
+    <so>-sortk = '99999999'.   " tanpa End Date -> paling belakang
+  ENDIF.
+ENDLOOP.
+SORT lt_so BY sortk ASCENDING vbeln ASCENDING.
+
 " ===== Output JSON =====
 response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
 %>{"rows":[<%
@@ -292,5 +336,18 @@ LOOP AT lt_buyer INTO ls_buyer.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_buyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_buyer WITH ` `.
   %>{"buyer":"<%= lv_e_buyer %>","so_count":<%= ls_buyer-so_count %>,"mat_count":<%= ls_buyer-mat_count %>}<%
+ENDLOOP.
+%>],"sos":[<%
+DATA: lv_sfirst TYPE abap_bool VALUE abap_true, lv_e_sbuyer TYPE string.
+LOOP AT lt_so INTO ls_so.
+  IF lv_sfirst = abap_false. %>,<% ENDIF.
+  lv_sfirst = abap_false.
+  lv_e_sbuyer = ls_so-buyer.
+  REPLACE ALL OCCURRENCES OF '\' IN lv_e_sbuyer WITH '\\'.
+  REPLACE ALL OCCURRENCES OF '"' IN lv_e_sbuyer WITH '\"'.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_sbuyer WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_sbuyer WITH ` `.
+  REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_sbuyer WITH ` `.
+  %>{"so":"<%= ls_so-so_disp %>","buyer":"<%= lv_e_sbuyer %>","enddate":"<%= ls_so-enddate %>"}<%
 ENDLOOP.
 %>]}
