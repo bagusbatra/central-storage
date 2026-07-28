@@ -783,8 +783,8 @@ width="7" height="5"/></svg></span>Dashboard</a>
       rows.forEach(function(r){
         var soCell;
         if(r.so){
-          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Buka panel kanan: order belum selesai SO ini (MRP PNL/Moulding)">'+feedEsc(r.so)+'</span>'
-            + (r.item ? ' / <span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" title="Buka panel kanan: order belum selesai item ini (MRP PNL/Moulding)">'+feedEsc(r.item)+'</span>' : '');
+          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Buka panel kanan: order belum selesai SO ini (Paneling/Moulding)">'+feedEsc(r.so)+'</span>'
+            + (r.item ? ' / <span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" title="Buka panel kanan: order belum selesai item ini (Paneling/Moulding)">'+feedEsc(r.item)+'</span>' : '');
         } else { soCell = '<span style="color:#9ca3af;">(stok bebas)</span>'; }
         var progCell;
         if(r.prog === null || typeof r.prog === 'undefined'){
@@ -1133,7 +1133,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var body  = document.getElementById('so-body');
       _mrpNum = so;
       document.getElementById('so-title').textContent = 'SO ' + so + (item ? (' · Item ' + item) : '');
-      document.getElementById('so-scope').textContent = 'Order belum selesai · per MRP (PNL / Moulding)';
+      document.getElementById('so-scope').textContent = 'Order belum selesai · (Paneling/Moulding)';
       body.innerHTML = skelSidePanel();
       panel.classList.add('open'); panel.setAttribute('aria-hidden','false');
       ov.classList.add('open');
@@ -1154,7 +1154,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
         body.innerHTML = h + '<div class="loading">Tidak ada order belum selesai (PNL/Moulding) untuk SO+Item ini.</div>';
         return;
       }
-      var cats = [{ key:'PNL', label:'PNL (PN1/PN2)' }, { key:'MOULDING', label:'Moulding (WM1/WM2)' }];
+      var cats = [{ key:'PNL', label:'Paneling' }, { key:'MOULDING', label:'Moulding' }];
       cats.forEach(function(c){
         var cr = rows.filter(function(r){ return r.cat === c.key; });
         if(!cr.length) return;

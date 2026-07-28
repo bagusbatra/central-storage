@@ -679,10 +679,17 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
       " Kalau cuma ada satu sisi (misal GR/GI biasa), tetap tampilkan sbg
       " unpaired (is_paired=false) — supaya tidak ada data yg hilang.
       " D40 saran#2: mapping bwart -> label deskriptif + kelas warna badge.
+      " #opt: MKPF di-SELECT ke tipe RAMPING (bukan TABLE OF mkpf penuh) —
+      " hemat memori; hanya field dipakai. (MSEG tetap penuh krn dipakai di
+      " logika pairing OUT/IN — dinarrow-kan terpisah bila perlu.)
+      TYPES: BEGIN OF ty_mkpf_s,
+               mblnr TYPE mkpf-mblnr, mjahr TYPE mkpf-mjahr, budat TYPE mkpf-budat,
+               cpudt TYPE mkpf-cpudt, cputm TYPE mkpf-cputm, usnam TYPE mkpf-usnam,
+             END OF ty_mkpf_s.
       DATA: lt_mseg TYPE TABLE OF mseg,
             ls_mseg TYPE mseg,
-            lt_mkpf TYPE TABLE OF mkpf,
-            ls_mkpf TYPE mkpf,
+            lt_mkpf TYPE TABLE OF ty_mkpf_s,
+            ls_mkpf TYPE ty_mkpf_s,
             lt_hist_mat_range TYPE TABLE OF matnr.
       SELECT mblnr mjahr zeile bwart shkzg matnr werks lgort charg
              menge meins aufnr sobkz kdauf kdpos
@@ -841,7 +848,13 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
       "        tidak difilter SO karena MARD tidak menyimpan referensi SO.
       "        Kita filter per material yg pernah muncul di lt_hist (jadi
       "        cuma material yg pernah dilihat di SO+Item ini).
-      DATA: lt_msks_stok TYPE TABLE OF mska.
+      " #opt: tipe ramping (bukan TABLE OF mska penuh) — hanya 7 field dipakai.
+      TYPES: BEGIN OF ty_msks_s,
+               matnr TYPE mska-matnr, werks TYPE mska-werks, lgort TYPE mska-lgort,
+               charg TYPE mska-charg, kalab TYPE mska-kalab, kains TYPE mska-kains,
+               kaspe TYPE mska-kaspe,
+             END OF ty_msks_s.
+      DATA: lt_msks_stok TYPE TABLE OF ty_msks_s.
       SELECT matnr werks lgort charg kalab kains kaspe
         FROM mska
         INTO CORRESPONDING FIELDS OF TABLE lt_msks_stok
@@ -851,7 +864,7 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
           AND ( ( werks = '1000' AND lgort = '1D00' )
              OR ( werks = '2000'
                   AND lgort IN ( '2KCS', '2261', '2262', '22E2', '22E3', '229K' ) ) ).
-      DATA: ls_msks_stok TYPE mska.
+      DATA: ls_msks_stok TYPE ty_msks_s.
       LOOP AT lt_msks_stok INTO ls_msks_stok.
         IF ls_msks_stok-kalab = 0 AND ls_msks_stok-kains = 0 AND ls_msks_stok-kaspe = 0. CONTINUE. ENDIF.
         CLEAR ls_stok.
@@ -875,8 +888,10 @@ IF lv_ui_so IS NOT INITIAL AND lv_ui_item IS NOT INITIAL.
         SORT lt_stok_mat_range.
         DELETE ADJACENT DUPLICATES FROM lt_stok_mat_range.
 
-        DATA: lt_stok_mara TYPE TABLE OF mara,
-              ls_stok_mara TYPE mara,
+        " #opt: MARA sangat lebar — SELECT ke tipe ramping (hanya matnr+meins).
+        TYPES: BEGIN OF ty_mara_s, matnr TYPE mara-matnr, meins TYPE mara-meins, END OF ty_mara_s.
+        DATA: lt_stok_mara TYPE TABLE OF ty_mara_s,
+              ls_stok_mara TYPE ty_mara_s,
               lt_stok_makt TYPE TABLE OF makt,
               ls_stok_makt TYPE makt.
         SELECT matnr meins FROM mara
