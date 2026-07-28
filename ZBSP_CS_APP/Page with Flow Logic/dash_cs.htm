@@ -38,6 +38,34 @@ CONSTANTS: lc_sample    TYPE kna1-kunnr VALUE '2000000004',
            lc_lgort     TYPE lgort_d    VALUE '2KCS',
            lc_werks_src TYPE werks_d    VALUE '1000'.   " Plant asal (Pembahanan)
 
+" ===== CACHE hasil (SHARED BUFFER, TTL 90 dtk) =====
+" Data 3 panel berubah lambat -> JSON hasil di-cache di memori app-server.
+" Request dalam TTL cukup BACA cache (nyaris nol query). Hanya 1 request per TTL
+" yg benar-benar menghitung. Tombol Refresh kirim ?fresh=1 utk paksa hitung ulang.
+" ⚠️ AKTIVASI: SHARED BUFFER pakai tabel INDX relid 'ZC'. Bila relid ini ditolak
+"    (bukan nilai domain RELID valid di sistem), ganti ke relid lain yg valid,
+"    atau ke 'TO/FROM DATABASE indx(zc)' (persisten, tetap jauh > ringan dari
+"    ~10 query live). Field cluster: ts (timestamp) & js (JSON string).
+CONSTANTS lc_ttl TYPE i VALUE 90.
+DATA: lv_json  TYPE string,
+      lv_now   TYPE timestamp,
+      lv_saved TYPE timestamp,
+      lv_age   TYPE i,
+      lv_fresh TYPE string.
+GET TIME STAMP FIELD lv_now.
+lv_fresh = request->get_form_field( 'fresh' ).
+IF lv_fresh IS INITIAL.
+  IMPORT ts = lv_saved js = lv_json FROM SHARED BUFFER indx(zc) ID 'DASHCS'.
+  IF sy-subrc = 0 AND lv_json IS NOT INITIAL.
+    lv_age = cl_abap_tstmp=>subtract( tstmp1 = lv_now tstmp2 = lv_saved ).
+    IF lv_age <= lc_ttl.
+      response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+      %><%= lv_json %><%
+      RETURN.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
 " --- Agregat stok per (matnr, vbeln, posnr) ---
 TYPES: BEGIN OF ty_agg,
          matnr TYPE matnr,
@@ -110,22 +138,18 @@ LOOP AT lt_agg INTO ls_agg WHERE vbeln IS NOT INITIAL.
 ENDLOOP.
 SORT lt_soitem BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_soitem.
 IF lt_soitem IS NOT INITIAL.
-  DATA: BEGIN OF ls_m1000, vbeln TYPE mska-vbeln, posnr TYPE mska-posnr, END OF ls_m1000.
-  DATA lt_m1000 LIKE TABLE OF ls_m1000.
   " Ada SO-stock (MSKA) apa pun (unrestricted/QI/blocked) di Plant 1000 (semua
   " SLoc) utk SO+Item? Kalau ada -> SO+Item itu 'belum dikirim semua'.
-  SELECT vbeln posnr FROM mska INTO TABLE lt_m1000
+  " #opt: SELECT langsung ke lt_p1000 — FOR ALL ENTRIES sudah auto-hapus baris
+  " duplikat, jadi tak perlu tabel antara + loop dedupe.
+  SELECT vbeln posnr FROM mska INTO TABLE lt_p1000
     FOR ALL ENTRIES IN lt_soitem
     WHERE werks = lc_werks_src
       AND vbeln = lt_soitem-vbeln
       AND posnr = lt_soitem-posnr
       AND sobkz = 'E'
       AND ( kalab > 0 OR kains > 0 OR kaspe > 0 ).
-  LOOP AT lt_m1000 INTO ls_m1000.
-    ls_soitem-vbeln = ls_m1000-vbeln. ls_soitem-posnr = ls_m1000-posnr.
-    APPEND ls_soitem TO lt_p1000.
-  ENDLOOP.
-  SORT lt_p1000 BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_p1000.
+  SORT lt_p1000 BY vbeln posnr.
 ENDIF.
 
 " --- Order MRP PNL/Moulding (DISPO WM/PN) per SO+Item, dipakai utk:
@@ -209,40 +233,25 @@ IF lt_matu IS NOT INITIAL.
   SORT lt_mara BY matnr.
 ENDIF.
 
-" --- GLTRP order Plant 2000 per SO+Item+Material — DIPAKAI HANYA utk End Date
-"     panel "Sales Order" (butir 3), BUKAN lagi utk baris Bahan Masuk (progres
-"     Bahan Masuk kini count-based dari order MRP, lihat lt_pc di atas). ---
-TYPES: BEGIN OF ty_ordraw,
-         kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, matnr TYPE afpo-matnr,
-         psmng TYPE afpo-psmng, wemng TYPE afpo-wemng, gltrp TYPE afko-gltrp,
-       END OF ty_ordraw.
-DATA: lt_ordraw TYPE TABLE OF ty_ordraw, ls_ordraw TYPE ty_ordraw.
-TYPES: BEGIN OF ty_prog,
-         kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, matnr TYPE afpo-matnr,
-         psmng TYPE p LENGTH 15 DECIMALS 3, wemng TYPE p LENGTH 15 DECIMALS 3,
-         gltrp TYPE afko-gltrp,
-       END OF ty_prog.
-DATA: lt_prog TYPE TABLE OF ty_prog, ls_prog TYPE ty_prog.
-FIELD-SYMBOLS <pr> TYPE ty_prog.
-IF lt_vbeln_r IS NOT INITIAL.
-  SELECT a~kdauf a~kdpos a~matnr a~psmng a~wemng k~gltrp
+" --- End Date panel "Sales Order" (butir 3) = MAX(AFKO-GLTRP) order Plant 2000
+"     per SO. #opt: agregasi didorong ke DB (GROUP BY + MAX) -> balas 1 baris/SO,
+"     tanpa tarik semua order + loop MAX di ABAP. ---
+TYPES: BEGIN OF ty_sogl, kdauf TYPE afpo-kdauf, gltrp TYPE afko-gltrp, END OF ty_sogl.
+DATA: lt_sogl TYPE TABLE OF ty_sogl, ls_sogl TYPE ty_sogl.
+" GROUP BY tak boleh dipakai bersama FOR ALL ENTRIES di release ini -> pakai
+" range IN (dibangun dari daftar SO) supaya agregasi MAX tetap didorong ke DB.
+DATA: lt_so_rng TYPE RANGE OF afpo-kdauf, ls_so_rng LIKE LINE OF lt_so_rng.
+LOOP AT lt_vbeln_r INTO ls_so_rng-low.
+  ls_so_rng-sign = 'I'. ls_so_rng-option = 'EQ'. APPEND ls_so_rng TO lt_so_rng.
+ENDLOOP.
+IF lt_so_rng IS NOT INITIAL.
+  SELECT a~kdauf MAX( k~gltrp )
     FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
-    INTO CORRESPONDING FIELDS OF TABLE lt_ordraw
-    FOR ALL ENTRIES IN lt_vbeln_r
-    WHERE a~kdauf = lt_vbeln_r-table_line
-      AND a~pwerk = lc_werks.
-  LOOP AT lt_ordraw INTO ls_ordraw.
-    READ TABLE lt_prog ASSIGNING <pr>
-      WITH KEY kdauf = ls_ordraw-kdauf kdpos = ls_ordraw-kdpos matnr = ls_ordraw-matnr.
-    IF sy-subrc <> 0.
-      APPEND INITIAL LINE TO lt_prog ASSIGNING <pr>.
-      <pr>-kdauf = ls_ordraw-kdauf. <pr>-kdpos = ls_ordraw-kdpos. <pr>-matnr = ls_ordraw-matnr.
-    ENDIF.
-    <pr>-psmng = <pr>-psmng + ls_ordraw-psmng.
-    <pr>-wemng = <pr>-wemng + ls_ordraw-wemng.
-    IF ls_ordraw-gltrp > <pr>-gltrp. <pr>-gltrp = ls_ordraw-gltrp. ENDIF.
-  ENDLOOP.
-  SORT lt_prog BY kdauf kdpos matnr.
+    INTO TABLE lt_sogl
+    WHERE a~kdauf IN lt_so_rng
+      AND a~pwerk = lc_werks
+    GROUP BY a~kdauf.
+  SORT lt_sogl BY kdauf.
 ENDIF.
 
 " --- Bentuk baris tampilan (rows) ---
@@ -399,14 +408,10 @@ LOOP AT lt_agg INTO ls_agg WHERE vbeln IS NOT INITIAL.
     <so>-buyer = lv_buyer.
   ENDIF.
 ENDLOOP.
-" End Date per SO = MAX(GLTRP) dari order Plant 2000 milik SO (lt_prog).
-LOOP AT lt_prog INTO ls_prog.
-  READ TABLE lt_so ASSIGNING <so> WITH KEY vbeln = ls_prog-kdauf.
-  IF sy-subrc = 0 AND ls_prog-gltrp > <so>-gltrp.
-    <so>-gltrp = ls_prog-gltrp.
-  ENDIF.
-ENDLOOP.
+" End Date per SO = MAX(GLTRP) order Plant 2000 (lt_sogl, sudah teragregasi DB).
 LOOP AT lt_so ASSIGNING <so>.
+  READ TABLE lt_sogl INTO ls_sogl WITH KEY kdauf = <so>-vbeln BINARY SEARCH.
+  IF sy-subrc = 0. <so>-gltrp = ls_sogl-gltrp. ENDIF.
   IF <so>-gltrp IS NOT INITIAL.
     <so>-enddate = <so>-gltrp(4) && '-' && <so>-gltrp+4(2) && '-' && <so>-gltrp+6(2).
     <so>-sortk   = <so>-gltrp.
@@ -416,13 +421,12 @@ LOOP AT lt_so ASSIGNING <so>.
 ENDLOOP.
 SORT lt_so BY sortk ASCENDING vbeln ASCENDING.
 
-" ===== Output JSON =====
-response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
-%>{"rows":[<%
-DATA: lv_first TYPE abap_bool VALUE abap_true,
-      lv_e_maktx TYPE string.
+" ===== Rakit JSON ke string (utk cache + output) =====
+DATA: lv_first  TYPE abap_bool VALUE abap_true,
+      lv_e_maktx TYPE string, lv_frag TYPE string.
+lv_json = `{"rows":[`.
 LOOP AT lt_out INTO ls_out.
-  IF lv_first = abap_false. %>,<% ENDIF.
+  IF lv_first = abap_false. lv_json = lv_json && `,`. ENDIF.
   lv_first = abap_false.
   lv_e_maktx = ls_out-maktx.
   REPLACE ALL OCCURRENCES OF '\' IN lv_e_maktx WITH '\\'.
@@ -430,12 +434,18 @@ LOOP AT lt_out INTO ls_out.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_maktx WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_maktx WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_maktx WITH ` `.
-  %>{"matnr":"<%= ls_out-matnr %>","maktx":"<%= lv_e_maktx %>","so":"<%= ls_out-so %>","item":"<%= ls_out-item %>","qty":"<%= ls_out-qty %>","prog":<% IF ls_out-has_prog = abap_true. %><%= ls_out-prog %><% ELSE. %>null<% ENDIF. %>}<%
+  lv_frag = |\{"matnr":"{ ls_out-matnr }","maktx":"{ lv_e_maktx }","so":"{ ls_out-so }","item":"{ ls_out-item }","qty":"{ ls_out-qty }","prog":|.
+  IF ls_out-has_prog = abap_true.
+    lv_frag = lv_frag && |{ ls_out-prog }|.
+  ELSE.
+    lv_frag = lv_frag && `null`.
+  ENDIF.
+  lv_json = lv_json && lv_frag && `}`.
 ENDLOOP.
-%>],"buyers":[<%
+lv_json = lv_json && `],"buyers":[`.
 DATA: lv_bfirst TYPE abap_bool VALUE abap_true, lv_e_buyer TYPE string.
 LOOP AT lt_buyer INTO ls_buyer.
-  IF lv_bfirst = abap_false. %>,<% ENDIF.
+  IF lv_bfirst = abap_false. lv_json = lv_json && `,`. ENDIF.
   lv_bfirst = abap_false.
   lv_e_buyer = ls_buyer-buyer.
   REPLACE ALL OCCURRENCES OF '\' IN lv_e_buyer WITH '\\'.
@@ -443,12 +453,12 @@ LOOP AT lt_buyer INTO ls_buyer.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_buyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_buyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_buyer WITH ` `.
-  %>{"buyer":"<%= lv_e_buyer %>","so_count":<%= ls_buyer-so_count %>,"mat_count":<%= ls_buyer-mat_count %>}<%
+  lv_json = lv_json && |\{"buyer":"{ lv_e_buyer }","so_count":{ ls_buyer-so_count },"mat_count":{ ls_buyer-mat_count }\}|.
 ENDLOOP.
-%>],"sos":[<%
+lv_json = lv_json && `],"sos":[`.
 DATA: lv_sfirst TYPE abap_bool VALUE abap_true, lv_e_sbuyer TYPE string.
 LOOP AT lt_so INTO ls_so.
-  IF lv_sfirst = abap_false. %>,<% ENDIF.
+  IF lv_sfirst = abap_false. lv_json = lv_json && `,`. ENDIF.
   lv_sfirst = abap_false.
   lv_e_sbuyer = ls_so-buyer.
   REPLACE ALL OCCURRENCES OF '\' IN lv_e_sbuyer WITH '\\'.
@@ -456,6 +466,11 @@ LOOP AT lt_so INTO ls_so.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_sbuyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_sbuyer WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_sbuyer WITH ` `.
-  %>{"so":"<%= ls_so-so_disp %>","buyer":"<%= lv_e_sbuyer %>","enddate":"<%= ls_so-enddate %>"}<%
+  lv_json = lv_json && |\{"so":"{ ls_so-so_disp }","buyer":"{ lv_e_sbuyer }","enddate":"{ ls_so-enddate }"\}|.
 ENDLOOP.
-%>]}
+lv_json = lv_json && `]}`.
+
+" ===== Simpan ke cache + keluarkan =====
+EXPORT ts = lv_now js = lv_json TO SHARED BUFFER indx(zc) ID 'DASHCS'.
+response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+%><%= lv_json %>

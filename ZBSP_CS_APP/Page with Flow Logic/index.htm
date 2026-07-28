@@ -513,7 +513,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     </div>
 
     <div class="kpi-refresh">
-      <button type="button" class="kpi-refresh-btn" onclick="loadKpi();loadCs()" title="Perbarui angka stok sekarang"><svg class="ic" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1
+      <button type="button" class="kpi-refresh-btn" onclick="loadKpi();loadCs(true)" title="Perbarui angka stok sekarang"><svg class="ic" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1
 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>&nbsp;Refresh</button>
       <%-- Tombol "Mode TV" DISEMBUNYIKAN dulu (permintaan user). CSS body.tv-mode
            & fungsi toggleTv() sengaja dibiarkan supaya mudah dipasang lagi. --%>
@@ -845,8 +845,10 @@ width="7" height="5"/></svg></span>Dashboard</a>
         a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 2, '', '', false); });
       });
     }
-    function loadCs(){
-      fetch('dash_cs.htm', { headers:{'Accept':'application/json'}, cache:'no-store' })
+    function loadCs(fresh){
+      // fresh=true (dari tombol Refresh) -> ?fresh=1 lewati cache server (SHARED BUFFER).
+      // auto-poll & resume-visibility panggil tanpa arg -> pakai cache (cepat).
+      fetch('dash_cs.htm' + (fresh === true ? '?fresh=1' : ''), { headers:{'Accept':'application/json'}, cache:'no-store' })
         .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
         .then(function(d){
           renderCsMasuk((d && d.rows)   ? d.rows   : []);
