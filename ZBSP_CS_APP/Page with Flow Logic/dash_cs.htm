@@ -6,8 +6,8 @@
 *&   (1) "Bahan Masuk" — real stock material di Central Storage (Plant 2000 /
 *&       SLoc 2KCS): MSKA SO-stock (sobkz='E', unrestricted KALAB>0) + MARD
 *&       free-stock (LABST>0), sample customer 2000000004 dibuang via VBAK.
-*&       Diperkaya kolom Progres & End Date dari order produksi Plant 2000
-*&       (AFPO⨝AFKO) yg cocok SO+Item+Material.
+*&       Kolom Progres = COUNT-BASED: (#material 100%) / (#total material) dari
+*&       order MRP PNL/Moulding SO+Item (lihat lt_pc). End Date SUDAH DIHAPUS.
 *&       ⚠️ WORKLIST FILTER (permintaan user): baris SO-stock HANYA tampil bila
 *&       (a) SO+Item-nya MASIH punya SO-stock tersisa di Plant 1000 (belum
 *&           dikirim semua ke 2KCS) — cek MSKA werks=1000 (SEMUA SLoc),
@@ -22,7 +22,7 @@
 *&   (3) "Sales Order" — daftar SO yg materialnya ada di 2KCS, urut End Date
 *&       (MAX AFKO-GLTRP order Plant 2000 milik SO) naik; tanpa End Date terakhir.
 *&
-*& Balas: { "rows":[ {matnr,maktx,so,item,qty,prog,enddate}, ... ],
+*& Balas: { "rows":[ {matnr,maktx,so,item,qty,prog}, ... ],
 *&          "buyers":[ {buyer,so_count,mat_count}, ... ],
 *&          "sos":[ {so,buyer,enddate}, ... ] }
 *&
@@ -128,28 +128,63 @@ IF lt_soitem IS NOT INITIAL.
   SORT lt_p1000 BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_p1000.
 ENDIF.
 
-" --- Filter tambahan: SO+Item HARUS punya >=1 ORDER BELUM SELESAI di MRP
-"     PNL/Moulding (DISPO WM1/WM2/PN1/PN2, WEMNG<PSMNG) — sama persis dgn isi
-"     sidebar dash_mrp.htm. Kalau sidebar bakal KOSONG utk SO+Item, baris
-"     2KCS-nya disembunyikan (tak perlu dicek). Stok bebas tak terpengaruh. ---
+" --- Order MRP PNL/Moulding (DISPO WM/PN) per SO+Item, dipakai utk:
+"     (b) FILTER: SO+Item HARUS punya >=1 order BELUM SELESAI (per order,
+"         WEMNG<PSMNG) — sidebar dash_mrp.htm tidak kosong; DAN
+"     PROGRES count-based: (#material 100%) / (#total material) per SO+Item.
+"     'material selesai' = agregasi per matnr, ΣWEMNG >= ΣPSMNG. ---
 DATA: lt_mrp_open TYPE TABLE OF ty_soitem.
+TYPES: BEGIN OF ty_pc, kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos,
+         total TYPE i, done TYPE i, prog TYPE i, END OF ty_pc.
+DATA: lt_pc TYPE TABLE OF ty_pc, ls_pc TYPE ty_pc.
 IF lt_soitem IS NOT INITIAL.
-  DATA: BEGIN OF ls_moc, kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, END OF ls_moc.
-  DATA lt_moc LIKE TABLE OF ls_moc.
-  SELECT a~kdauf a~kdpos
+  TYPES: BEGIN OF ty_wraw, kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos,
+           matnr TYPE afpo-matnr, psmng TYPE afpo-psmng, wemng TYPE afpo-wemng, END OF ty_wraw.
+  DATA: lt_wraw TYPE TABLE OF ty_wraw, ls_wraw TYPE ty_wraw, ls_open TYPE ty_soitem.
+  TYPES: BEGIN OF ty_wagg, kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, matnr TYPE afpo-matnr,
+           psmng TYPE p LENGTH 15 DECIMALS 3, wemng TYPE p LENGTH 15 DECIMALS 3, END OF ty_wagg.
+  DATA: lt_wagg TYPE TABLE OF ty_wagg, ls_wagg TYPE ty_wagg.
+  FIELD-SYMBOLS: <wa> TYPE ty_wagg, <pc> TYPE ty_pc.
+  " Ambil SEMUA order WM/PN (selesai + belum), psmng>0.
+  SELECT a~kdauf a~kdpos a~matnr a~psmng a~wemng
     FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
-    INTO TABLE lt_moc
+    INTO TABLE lt_wraw
     FOR ALL ENTRIES IN lt_soitem
     WHERE a~kdauf = lt_soitem-vbeln
       AND a~kdpos = lt_soitem-posnr
       AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' )
-      AND a~psmng > 0
-      AND a~wemng < a~psmng.
-  LOOP AT lt_moc INTO ls_moc.
-    ls_soitem-vbeln = ls_moc-kdauf. ls_soitem-posnr = ls_moc-kdpos.
-    APPEND ls_soitem TO lt_mrp_open.
+      AND a~psmng > 0.
+  LOOP AT lt_wraw INTO ls_wraw.
+    " (b) belum selesai per ORDER -> himpunan lt_mrp_open
+    IF ls_wraw-wemng < ls_wraw-psmng.
+      ls_open-vbeln = ls_wraw-kdauf. ls_open-posnr = ls_wraw-kdpos.
+      APPEND ls_open TO lt_mrp_open.
+    ENDIF.
+    " agregasi per (SO,Item,matnr) utk hitung material selesai
+    READ TABLE lt_wagg ASSIGNING <wa>
+      WITH KEY kdauf = ls_wraw-kdauf kdpos = ls_wraw-kdpos matnr = ls_wraw-matnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_wagg ASSIGNING <wa>.
+      <wa>-kdauf = ls_wraw-kdauf. <wa>-kdpos = ls_wraw-kdpos. <wa>-matnr = ls_wraw-matnr.
+    ENDIF.
+    <wa>-psmng = <wa>-psmng + ls_wraw-psmng.
+    <wa>-wemng = <wa>-wemng + ls_wraw-wemng.
   ENDLOOP.
   SORT lt_mrp_open BY vbeln posnr. DELETE ADJACENT DUPLICATES FROM lt_mrp_open.
+  " Rekap per (SO,Item): #material selesai / #total material -> persen.
+  LOOP AT lt_wagg INTO ls_wagg.
+    READ TABLE lt_pc ASSIGNING <pc> WITH KEY kdauf = ls_wagg-kdauf kdpos = ls_wagg-kdpos.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_pc ASSIGNING <pc>.
+      <pc>-kdauf = ls_wagg-kdauf. <pc>-kdpos = ls_wagg-kdpos.
+    ENDIF.
+    <pc>-total = <pc>-total + 1.
+    IF ls_wagg-wemng >= ls_wagg-psmng. <pc>-done = <pc>-done + 1. ENDIF.
+  ENDLOOP.
+  LOOP AT lt_pc ASSIGNING <pc>.
+    IF <pc>-total > 0. <pc>-prog = <pc>-done * 100 / <pc>-total. ENDIF.
+  ENDLOOP.
+  SORT lt_pc BY kdauf kdpos.
 ENDIF.
 
 " --- Daftar material unik (utk MAKT & MARA batched) ---
@@ -174,9 +209,9 @@ IF lt_matu IS NOT INITIAL.
   SORT lt_mara BY matnr.
 ENDIF.
 
-" --- Progres & End Date: order produksi Plant 2000 utk SO+Item+Material ---
-"     Progres = Σ WEMNG / Σ PSMNG (per kdauf,kdpos,matnr). End Date = MAX(GLTRP).
-"     GLTRP (basic finish date) ada di AFKO (header order).
+" --- GLTRP order Plant 2000 per SO+Item+Material — DIPAKAI HANYA utk End Date
+"     panel "Sales Order" (butir 3), BUKAN lagi utk baris Bahan Masuk (progres
+"     Bahan Masuk kini count-based dari order MRP, lihat lt_pc di atas). ---
 TYPES: BEGIN OF ty_ordraw,
          kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, matnr TYPE afpo-matnr,
          psmng TYPE afpo-psmng, wemng TYPE afpo-wemng, gltrp TYPE afko-gltrp,
@@ -213,7 +248,7 @@ ENDIF.
 " --- Bentuk baris tampilan (rows) ---
 TYPES: BEGIN OF ty_out,
          matnr TYPE string, maktx TYPE string, so TYPE string, item TYPE string,
-         qty TYPE string, prog TYPE i, has_prog TYPE abap_bool, enddate TYPE string,
+         qty TYPE string, prog TYPE i, has_prog TYPE abap_bool,
        END OF ty_out.
 DATA: lt_out TYPE TABLE OF ty_out, ls_out TYPE ty_out.
 DATA: lv_meins TYPE mara-meins, lv_qty_c TYPE c LENGTH 40, lv_qty_num TYPE string,
@@ -266,16 +301,13 @@ LOOP AT lt_agg INTO ls_agg.
     IF ls_agg-posnr IS NOT INITIAL.
       ls_out-item = ls_agg-posnr. SHIFT ls_out-item LEFT DELETING LEADING '0'.
     ENDIF.
-    " Progres & End Date dari order Plant 2000 yg cocok
-    READ TABLE lt_prog INTO ls_prog
-      WITH KEY kdauf = ls_agg-vbeln kdpos = ls_agg-posnr matnr = ls_agg-matnr BINARY SEARCH.
-    IF sy-subrc = 0 AND ls_prog-psmng > 0.
+    " Progres = count-based: #material selesai / #total material (order MRP
+    " PNL/Moulding SO+Item). Selalu terisi krn baris difilter punya order ini.
+    READ TABLE lt_pc INTO ls_pc
+      WITH KEY kdauf = ls_agg-vbeln kdpos = ls_agg-posnr BINARY SEARCH.
+    IF sy-subrc = 0 AND ls_pc-total > 0.
       ls_out-has_prog = abap_true.
-      ls_out-prog = ls_prog-wemng * 100 / ls_prog-psmng.
-      IF ls_out-prog > 100. ls_out-prog = 100. ENDIF.
-      IF ls_prog-gltrp IS NOT INITIAL.
-        ls_out-enddate = ls_prog-gltrp(4) && '-' && ls_prog-gltrp+4(2) && '-' && ls_prog-gltrp+6(2).
-      ENDIF.
+      ls_out-prog = ls_pc-prog.
     ENDIF.
   ELSE.
     ls_out-so = ''. ls_out-item = ''.
@@ -398,7 +430,7 @@ LOOP AT lt_out INTO ls_out.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf          IN lv_e_maktx WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline        IN lv_e_maktx WITH ` `.
   REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN lv_e_maktx WITH ` `.
-  %>{"matnr":"<%= ls_out-matnr %>","maktx":"<%= lv_e_maktx %>","so":"<%= ls_out-so %>","item":"<%= ls_out-item %>","qty":"<%= ls_out-qty %>","prog":<% IF ls_out-has_prog = abap_true. %><%= ls_out-prog %><% ELSE. %>null<% ENDIF. %>,"enddate":"<%= ls_out-enddate %>"}<%
+  %>{"matnr":"<%= ls_out-matnr %>","maktx":"<%= lv_e_maktx %>","so":"<%= ls_out-so %>","item":"<%= ls_out-item %>","qty":"<%= ls_out-qty %>","prog":<% IF ls_out-has_prog = abap_true. %><%= ls_out-prog %><% ELSE. %>null<% ENDIF. %>}<%
 ENDLOOP.
 %>],"buyers":[<%
 DATA: lv_bfirst TYPE abap_bool VALUE abap_true, lv_e_buyer TYPE string.

@@ -778,8 +778,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
         + '<th title="Nama / deskripsi material.">Deskripsi</th>'
         + '<th title="Nomor Sales Order &amp; item pemilik stok SO ini. Klik No.SO / Item untuk buka panel kanan: order yang BELUM SELESAI berdasarkan MRP (PNL: PN1/PN2, Moulding: WM1/WM2). (stok bebas = tanpa SO)">No.SO / Item</th>'
         + '<th title="Jumlah stok di Central Storage (2KCS), status Unrestricted, dalam satuan dasar material.">Qty</th>'
-        + '<th title="Progres produksi order Plant 2000 untuk SO+Item+Material ini (Del QTY / Target QTY). Kosong bila tak ada order.">Progres</th>'
-        + '<th title="Tanggal selesai dasar order produksi Plant 2000 (AFKO-GLTRP). Kosong bila tak ada order.">End Date</th>'
+        + '<th title="Progres SO+Item ini: jumlah material yang produksinya sudah 100% dibagi total material (order MRP PNL/Moulding). Sama untuk semua baris SO+Item yang sama.">Progres</th>'
         + '</tr></thead><tbody>';
       rows.forEach(function(r){
         var soCell;
@@ -795,8 +794,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
           progCell = '<div class="cs-prog"><div class="cs-prog-fill '+csProgClass(p)+'" style="width:'+p+'%"></div></div><span class="cs-prog-t">'+p+'%</span>';
         }
         h += '<tr><td><code>'+feedEsc(r.matnr)+'</code></td><td>'+feedEsc(r.maktx)+'</td><td>'+soCell+'</td>'
-          + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+progCell+'</td>'
-          + '<td>'+feedEsc(r.enddate||'-')+'</td></tr>';
+          + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+progCell+'</td></tr>';
       });
       h += '</tbody></table>';
       el.innerHTML = h;
