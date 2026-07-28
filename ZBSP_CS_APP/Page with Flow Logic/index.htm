@@ -779,7 +779,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
     /* --- Panel Bahan Masuk + Buyer (dash_cs.htm) — refresh 60 dtk, cadence sama KPI --- */
     function csProgClass(p){ if(p>=100) return '_g'; if(p<15) return '_r'; if(p<40) return '_y'; return ''; }
     /* --- Pagination helpers (dipakai 3 panel cs + drill-down) --- */
-    var CS_PP_MASUK = 13, CS_PP_BUYER = 6, CS_PP_SOS = 6;
+    var CS_PP_MASUK = 14, CS_PP_BUYER = 6, CS_PP_SOS = 6;
     var _pgM = { rows:[], page:0 }, _pgB = { rows:[], page:0 }, _pgS = { rows:[], page:0 };
     function clampPage(st, pp){
       var mx = Math.max(0, Math.ceil(st.rows.length / pp) - 1);
