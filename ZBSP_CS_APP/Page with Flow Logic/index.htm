@@ -49,158 +49,19 @@ ELSE.
 ENDIF.
 
 " ============================================================
-"  KPI = JUMLAH JENIS MATERIAL yang punya STOK di tiap bagian (permintaan
-"  user: KPI pakai stok RIIL saat ini, bukan hitung pergerakan).
-"    Kolom 1..5 (lokasi): stok UNRESTRICTED > 0 (MSKA-KALAB SO-stock +
-"      MARD-LABST stok bebas) pada SLoc bagian tsb.
-"    Kolom 6/7 (QI 1000/2000): stok status QUALITY INSPECTION > 0
-"      (MSKA-KAINS + MARD-INSME) pada SLoc dipantau di plant tsb.
-"  Nilai kartu = COUNT DISTINCT MATNR (bukan jumlah kuantitas -> bebas
-"  masalah beda satuan). Snapshot SAAT INI: filter tanggal TIDAK dipakai
-"  utk KPI (filter tetap tampil di UI atas permintaan user).
-"  Sample customer 2000000004 dikecualikan dari SO-stock (MSKA via VBAK).
-"  ⚠️ ASUMSI AKTIVASI: MSKA punya kolom LGORT (SO-stock ter-manage per
-"     storage location). Bila kernel menolak MSKA-LGORT, SO-stock tidak
-"     SLoc-managed di sistem ini -> lapor, akan saya alihkan ke sumber
-"     stok SLoc lain. MARD sudah pasti punya LGORT.
+"  KPI (7 kartu) KINI DIHITUNG ASINKRON via AJAX (dash_kpi.htm) — TIDAK lagi
+"  di server-render halaman ini. Alasan: query stok MSKA+MARD+VBAK BERAT
+"  (~15 dtk terukur) & dulu MEMBLOKIR kemunculan halaman (TTFB 15 dtk).
+"  Kini HTML shell keluar SEKETIKA; loadKpi() memanggil dash_kpi.htm lalu
+"  mengisi angka + lebar bar tiap kartu. lv_tot*/lv_w* DIBIARKAN 0 di sini
+"  (placeholder; skeleton "memuat" ditampilkan via JS sampai data tiba).
+"  ⚠️ dash_kpi.htm memuat LOGIKA HITUNG yang sama (kembar dgn versi lama di
+"     sini) — kalau perlu diubah, ubah di dash_kpi.htm.
 " ============================================================
-CONSTANTS: lc_w1000 TYPE werks_d VALUE '1000',
-           lc_w2000 TYPE werks_d VALUE '2000'.
-
-" Sumber stok tergabung: unr (unrestricted) & qi (quality insp) per SLoc.
-TYPES: BEGIN OF ty_src,
-         matnr TYPE matnr,
-         werks TYPE werks_d,
-         lgort TYPE lgort_d,
-         vbeln TYPE mska-vbeln,   " terisi hanya utk SO-stock (MSKA)
-         unr   TYPE p LENGTH 15 DECIMALS 3,
-         qi    TYPE p LENGTH 15 DECIMALS 3,
-       END OF ty_src.
-DATA: lt_src TYPE TABLE OF ty_src, ls_src TYPE ty_src.
-
-" --- SO-stock (MSKA, sobkz='E') di SLoc dipantau ---
-TYPES: BEGIN OF ty_mska,
-         matnr TYPE mska-matnr, werks TYPE mska-werks, lgort TYPE mska-lgort,
-         vbeln TYPE mska-vbeln, kalab TYPE mska-kalab, kains TYPE mska-kains,
-       END OF ty_mska.
-DATA: lt_mska TYPE TABLE OF ty_mska, ls_mska TYPE ty_mska.
-SELECT matnr werks lgort vbeln kalab kains FROM mska
-  INTO CORRESPONDING FIELDS OF TABLE lt_mska
-  WHERE sobkz = 'E'
-    AND ( kalab > 0 OR kains > 0 )   " #opt: hanya baris berstok (buang stok nol di DB)
-    AND ( ( werks = lc_w1000 AND lgort = '1D00' )
-       OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
-
-" --- Stok bebas (MARD) di SLoc dipantau ---
-TYPES: BEGIN OF ty_mard,
-         matnr TYPE mard-matnr, werks TYPE mard-werks, lgort TYPE mard-lgort,
-         labst TYPE mard-labst, insme TYPE mard-insme,
-       END OF ty_mard.
-DATA: lt_mard TYPE TABLE OF ty_mard, ls_mard TYPE ty_mard.
-SELECT matnr werks lgort labst insme FROM mard
-  INTO CORRESPONDING FIELDS OF TABLE lt_mard
-  WHERE ( labst > 0 OR insme > 0 )   " #opt: hanya baris berstok (buang stok nol di DB)
-    AND ( ( werks = lc_w1000 AND lgort = '1D00' )
-       OR ( werks = lc_w2000 AND lgort IN ( '2KCS','2261','2262','22E2','22E3','229K' ) ) ).
-
-" --- Peta SO-stock -> customer (utk buang sample) ---
-TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
-DATA: lt_vbeln_r TYPE TABLE OF vbak-vbeln,
-      lt_vbak    TYPE TABLE OF ty_vbak, ls_vbak TYPE ty_vbak.
-LOOP AT lt_mska INTO ls_mska.
-  APPEND ls_mska-vbeln TO lt_vbeln_r.
-ENDLOOP.
-SORT lt_vbeln_r. DELETE ADJACENT DUPLICATES FROM lt_vbeln_r.
-IF lt_vbeln_r IS NOT INITIAL.
-  SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
-    FOR ALL ENTRIES IN lt_vbeln_r
-    WHERE vbeln = lt_vbeln_r-table_line.
-  SORT lt_vbak BY vbeln.
-ENDIF.
-
-" --- Gabung MSKA (skip sample) + MARD ke lt_src ---
-LOOP AT lt_mska INTO ls_mska.
-  READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
-  IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
-    CONTINUE.
-  ENDIF.
-  CLEAR ls_src.
-  ls_src-matnr = ls_mska-matnr. ls_src-werks = ls_mska-werks. ls_src-lgort = ls_mska-lgort.
-  ls_src-vbeln = ls_mska-vbeln. ls_src-unr = ls_mska-kalab. ls_src-qi = ls_mska-kains.
-  APPEND ls_src TO lt_src.
-ENDLOOP.
-LOOP AT lt_mard INTO ls_mard.
-  CLEAR ls_src.
-  ls_src-matnr = ls_mard-matnr. ls_src-werks = ls_mard-werks. ls_src-lgort = ls_mard-lgort.
-  ls_src-unr = ls_mard-labst. ls_src-qi = ls_mard-insme.
-  APPEND ls_src TO lt_src.
-ENDLOOP.
-
-" --- Set distinct (col, matnr) utk material berstok > 0 ---
-TYPES: BEGIN OF ty_stk, col TYPE i, matnr TYPE matnr, END OF ty_stk.
-DATA: lt_stk TYPE TABLE OF ty_stk, ls_stk TYPE ty_stk.
-DATA: lv_ucol TYPE i, lv_qcol TYPE i.
-LOOP AT lt_src INTO ls_src.
-  CLEAR: lv_ucol, lv_qcol.
-  " kolom lokasi (unrestricted) dari (werks,lgort)
-  IF     ls_src-werks = lc_w1000 AND ls_src-lgort = '1D00'.
-    lv_ucol = 1.
-  ELSEIF ls_src-werks = lc_w2000 AND ls_src-lgort = '2KCS'.
-    lv_ucol = 2.
-  ELSEIF ls_src-werks = lc_w2000 AND ( ls_src-lgort = '2261' OR ls_src-lgort = '2262' ).
-    lv_ucol = 3.
-  ELSEIF ls_src-werks = lc_w2000 AND ( ls_src-lgort = '22E2' OR ls_src-lgort = '22E3' ).
-    lv_ucol = 4.
-  ELSEIF ls_src-werks = lc_w2000 AND ls_src-lgort = '229K'.
-    lv_ucol = 5.
-  ENDIF.
-  " kolom QI dari plant
-  IF     ls_src-werks = lc_w1000. lv_qcol = 6.
-  ELSEIF ls_src-werks = lc_w2000. lv_qcol = 7.
-  ENDIF.
-  IF ls_src-unr > 0 AND lv_ucol > 0.
-    ls_stk-col = lv_ucol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
-  ENDIF.
-  IF ls_src-qi > 0 AND lv_qcol > 0.
-    ls_stk-col = lv_qcol. ls_stk-matnr = ls_src-matnr. APPEND ls_stk TO lt_stk.
-  ENDIF.
-ENDLOOP.
-SORT lt_stk BY col matnr.
-DELETE ADJACENT DUPLICATES FROM lt_stk COMPARING ALL FIELDS.
-
 DATA: lv_tot1 TYPE i, lv_tot2 TYPE i, lv_tot3 TYPE i, lv_tot4 TYPE i,
-      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i.
-LOOP AT lt_stk INTO ls_stk.
-  CASE ls_stk-col.
-    WHEN 1. lv_tot1 = lv_tot1 + 1.
-    WHEN 2. lv_tot2 = lv_tot2 + 1.
-    WHEN 3. lv_tot3 = lv_tot3 + 1.
-    WHEN 4. lv_tot4 = lv_tot4 + 1.
-    WHEN 5. lv_tot5 = lv_tot5 + 1.
-    WHEN 6. lv_tot6 = lv_tot6 + 1.
-    WHEN 7. lv_tot7 = lv_tot7 + 1.
-  ENDCASE.
-ENDLOOP.
-
-" --- KPI bar: lebar bar proporsional thd nilai kolom terbesar ---
-DATA: lv_max TYPE i,
+      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i,
       lv_w1 TYPE i, lv_w2 TYPE i, lv_w3 TYPE i, lv_w4 TYPE i,
       lv_w5 TYPE i, lv_w6 TYPE i, lv_w7 TYPE i.
-lv_max = lv_tot1.
-IF lv_tot2 > lv_max. lv_max = lv_tot2. ENDIF.
-IF lv_tot3 > lv_max. lv_max = lv_tot3. ENDIF.
-IF lv_tot4 > lv_max. lv_max = lv_tot4. ENDIF.
-IF lv_tot5 > lv_max. lv_max = lv_tot5. ENDIF.
-IF lv_tot6 > lv_max. lv_max = lv_tot6. ENDIF.
-IF lv_tot7 > lv_max. lv_max = lv_tot7. ENDIF.
-IF lv_max = 0. lv_max = 1. ENDIF.   " hindari bagi nol
-lv_w1 = lv_tot1 * 100 / lv_max.
-lv_w2 = lv_tot2 * 100 / lv_max.
-lv_w3 = lv_tot3 * 100 / lv_max.
-lv_w4 = lv_tot4 * 100 / lv_max.
-lv_w5 = lv_tot5 * 100 / lv_max.
-lv_w6 = lv_tot6 * 100 / lv_max.
-lv_w7 = lv_tot7 * 100 / lv_max.
 
 " --- Tanggal tampil (YYYY-MM-DD) utk prefill input & teks rentang aktif ---
 DATA: lv_from_disp TYPE string,
@@ -463,6 +324,20 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     /* --- Catatan rentang jadi eyebrow tenang --- */
     .date-range-note{ color:var(--muted); }
 
+    /* --- Interaksi: klik baris Buyer -> filter panel Sales Order --- */
+    .cs-buyer tbody tr{ cursor:pointer; }
+    .cs-buyer tbody tr:hover td{ background:#F2F6FE; }
+    .cs-buyer tbody tr.is-sel td{ background:#E8F0FE; box-shadow:inset 3px 0 0 var(--primary); }
+    .cs-buyer tbody tr.is-sel td:not(.cs-rank){ color:var(--ink); font-weight:600; }
+    /* chip filter aktif di judul panel Sales Order */
+    .cs-fchip{ display:inline-flex; align-items:center; gap:6px; margin-left:8px; vertical-align:middle;
+               font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(47,111,237,.10);
+               border:1px solid rgba(47,111,237,.28); border-radius:999px; padding:1px 4px 1px 9px; max-width:100%; }
+    .cs-fchip-t{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px; }
+    .cs-fchip-x{ border:0; background:transparent; color:var(--primary); cursor:pointer; font-size:0.85rem;
+                 line-height:1; padding:2px 5px; border-radius:999px; }
+    .cs-fchip-x:hover{ background:rgba(47,111,237,.18); }
+
     /* --- Pagination (Bahan Masuk / Buyer / Sales Order / drill-down) --- */
     .cs-pager{ display:flex; align-items:center; justify-content:center; gap:10px; padding:8px 12px; border-top:1px solid var(--hair2); background:#fff; font-size:0.72rem; color:var(--muted); margin-top:auto; }
     .cs-pg-btn{ border:1px solid var(--hair); background:#fff; color:var(--ink); border-radius:6px; min-width:26px; height:24px; cursor:pointer; font-size:0.95rem; line-height:1; padding:0 6px; }
@@ -514,8 +389,8 @@ width="7" height="5"/></svg></span>Dashboard</a>
         </div>
         <div class="cs-panel cs-so">
           <div class="cs-panel-head">
-            <div class="cs-panel-title">Sales Order<span class="cs-count" id="cs-so-count"></span></div>
-            <div class="cs-panel-sub">SO yang materialnya ada di 2KCS &#8212; urut End Date</div>
+            <div class="cs-panel-title">Sales Order<span class="cs-count" id="cs-so-count"></span><span class="cs-fchip" id="cs-so-fchip" style="display:none;"></span></div>
+            <div class="cs-panel-sub">SO yang materialnya ada di 2KCS &#8212; urut End Date. Klik baris di panel Buyer untuk menyaring SO milik buyer tsb.</div>
           </div>
           <div class="cs-scroll" id="cs-so-body"></div>
         </div>
@@ -766,13 +641,20 @@ width="7" height="5"/></svg></span>Dashboard</a>
           var max = 0; tot.forEach(function(v){ if(v > max) max = v; });
           if(max === 0) max = 1;
           tot.forEach(function(v, i){
-            if(vals[i])  vals[i].textContent = v;
+            if(vals[i])  vals[i].textContent = (typeof v === 'number') ? v.toLocaleString('id-ID') : v;
             if(fills[i]) fills[i].style.width = Math.round(v * 100 / max) + '%';
           });
           setKpiStamp();
         })
         .catch(function(){ /* gagal -> biarkan _stuck */ });
     }
+    // Async KPI: tampilkan skeleton di angka kartu, lalu MUAT via dash_kpi.htm
+    // SEGERA saat load (dulu server-render yg memblokir halaman ~15 dtk).
+    document.querySelectorAll('.kpi-bar .kpi-value').forEach(function(el){
+      el.innerHTML = '<span class="skel" style="display:inline-block;width:44px;height:1.5rem;border-radius:6px;vertical-align:middle;"></span>';
+    });
+    var _kpiStamp0 = document.getElementById('kpi-stamp-txt'); if(_kpiStamp0) _kpiStamp0.textContent = 'Memuat stok…';
+    loadKpi();   // muat KPI segera (async, tak memblokir tampilan halaman)
     // interval loadKpi dipindah ke poller terpusat (startPolling) di bawah
     startProgress('kpi-ring', 60000);
 
@@ -847,7 +729,41 @@ width="7" height="5"/></svg></span>Dashboard</a>
       wirePager(el, function(){ _pgM.page--; drawCsMasuk(); }, function(){ _pgM.page++; drawCsMasuk(); });
     }
 
-    function renderCsBuyer(buyers){ _pgB.rows = buyers || []; drawCsBuyer(); }
+    /* Buyer terpilih (klik baris panel Buyer) -> panel Sales Order hanya
+       menampilkan SO milik buyer ini. Murni sisi klien: _pgS.rows tetap berisi
+       SEMUA SO, penyaringan dilakukan saat menggambar, jadi auto-refresh 180 dtk
+       tidak menghapus filter. '' = tampilkan semua (default). */
+    var _csBuyerSel = '';
+    function setCsBuyer(name){
+      var v = name || '';
+      _csBuyerSel = (v === _csBuyerSel) ? '' : v;   // klik baris yg sama = batal filter
+      _pgS.page = 0;                                 // filter berubah -> balik ke hal 1
+      drawCsBuyer(); drawCsSos();
+    }
+    function csSosRows(){
+      if(!_csBuyerSel) return _pgS.rows;
+      return _pgS.rows.filter(function(s){ return (s.buyer || '') === _csBuyerSel; });
+    }
+    function drawCsFchip(){
+      var el = document.getElementById('cs-so-fchip');
+      if(!el) return;
+      if(!_csBuyerSel){ el.style.display = 'none'; el.innerHTML = ''; return; }
+      el.innerHTML = '<span class="cs-fchip-t"></span>'
+        + '<button type="button" class="cs-fchip-x" title="Tampilkan semua buyer">&times;</button>';
+      var t = el.querySelector('.cs-fchip-t');
+      t.textContent = _csBuyerSel; t.title = _csBuyerSel;   // aman thd kutip di nama buyer
+      el.style.display = 'inline-flex';
+      el.querySelector('.cs-fchip-x').addEventListener('click', function(){ setCsBuyer(''); });
+    }
+
+    function renderCsBuyer(buyers){
+      _pgB.rows = buyers || [];
+      // buyer terpilih bisa hilang setelah refresh (stok 2KCS-nya habis) -> reset filter
+      if(_csBuyerSel && !_pgB.rows.some(function(b){ return (b.buyer || '') === _csBuyerSel; })){
+        _csBuyerSel = ''; _pgS.page = 0;
+      }
+      drawCsBuyer();
+    }
     function drawCsBuyer(){
       var el = document.getElementById('cs-buyer-body');
       if(!el) return;
@@ -862,11 +778,22 @@ width="7" height="5"/></svg></span>Dashboard</a>
         + '<th style="text-align:right;" title="Jumlah jenis material berbeda milik buyer ini yang ada di 2KCS.">Jenis Mat.</th>'
         + '</tr></thead><tbody>';
       slice.forEach(function(b, i){
-        h += '<tr><td class="cs-rank">'+(start + i + 1)+'</td><td>'+feedEsc(b.buyer)+'</td>'
+        var nm = b.buyer || '';
+        var sel = (nm && nm === _csBuyerSel);
+        // pakai INDEKS baris (bukan nama) di data-* : nama buyer bisa memuat kutip
+        h += '<tr class="cs-brow'+(sel ? ' is-sel' : '')+'" data-bidx="'+(start + i)+'"'
+          + ' title="'+(sel ? 'Klik lagi untuk menampilkan semua SO' : 'Klik untuk menyaring panel Sales Order pada buyer ini')+'">'
+          + '<td class="cs-rank">'+(start + i + 1)+'</td><td>'+feedEsc(nm)+'</td>'
           + '<td class="num">'+feedEsc(b.so_count)+'</td><td class="num">'+feedEsc(b.mat_count)+'</td></tr>';
       });
       h += '</tbody></table>' + pagerHtml(_pgB.page, CS_PP_BUYER, _pgB.rows.length);
       el.innerHTML = h;
+      el.querySelectorAll('.cs-brow').forEach(function(tr){
+        tr.addEventListener('click', function(){
+          var b = _pgB.rows[parseInt(tr.getAttribute('data-bidx'), 10)];
+          if(b) setCsBuyer(b.buyer);
+        });
+      });
       wirePager(el, function(){ _pgB.page--; drawCsBuyer(); }, function(){ _pgB.page++; drawCsBuyer(); });
     }
 
@@ -874,10 +801,18 @@ width="7" height="5"/></svg></span>Dashboard</a>
     function drawCsSos(){
       var el = document.getElementById('cs-so-body');
       if(!el) return;
-      var cnt = document.getElementById('cs-so-count'); if(cnt) cnt.textContent = _pgS.rows.length;
-      if(!_pgS.rows.length){ el.innerHTML = '<div class="loading">Belum ada SO dengan material di 2KCS.</div>'; return; }
-      clampPage(_pgS, CS_PP_SOS);
-      var start = _pgS.page * CS_PP_SOS, slice = _pgS.rows.slice(start, start + CS_PP_SOS);
+      drawCsFchip();
+      var rows = csSosRows();                       // tersaring buyer terpilih (jika ada)
+      var cnt = document.getElementById('cs-so-count'); if(cnt) cnt.textContent = rows.length;
+      if(!rows.length){
+        el.innerHTML = '<div class="loading">' + (_csBuyerSel
+          ? 'Tidak ada SO milik <b>'+feedEsc(_csBuyerSel)+'</b> dengan material di 2KCS.'
+          : 'Belum ada SO dengan material di 2KCS.') + '</div>';
+        return;
+      }
+      var _pgSf = { rows:rows, page:_pgS.page };
+      clampPage(_pgSf, CS_PP_SOS); _pgS.page = _pgSf.page;
+      var start = _pgS.page * CS_PP_SOS, slice = rows.slice(start, start + CS_PP_SOS);
       var h = '<table><thead><tr>'
         + '<th title="Nomor Sales Order yang materialnya ada di 2KCS. Klik untuk lihat progres produksi.">No.SO</th>'
         + '<th title="Nama customer / buyer SO.">Buyer</th>'
@@ -887,7 +822,7 @@ width="7" height="5"/></svg></span>Dashboard</a>
         h += '<tr><td><span class="so-link" data-so="'+feedEsc(s.so)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(s.so)+'</span></td>'
           + '<td>'+feedEsc(s.buyer)+'</td><td>'+feedEsc(s.enddate||'-')+'</td></tr>';
       });
-      h += '</tbody></table>' + pagerHtml(_pgS.page, CS_PP_SOS, _pgS.rows.length);
+      h += '</tbody></table>' + pagerHtml(_pgS.page, CS_PP_SOS, rows.length);
       el.innerHTML = h;
       el.querySelectorAll('.so-link').forEach(function(a){
         a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 2, '', '', false); });
