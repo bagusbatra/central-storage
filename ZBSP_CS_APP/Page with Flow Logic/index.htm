@@ -260,8 +260,18 @@ margin-bottom:6px; }
        (Bahan Masuk) SEJAJAR dgn dasar kolom kanan (Sales Order). Data sedikit ->
        ukuran tetap (tersisa ruang kosong, tidak menciut). */
     .cs-scroll { overflow:hidden; display:flex; flex-direction:column; }
-    .cs-masuk .cs-scroll { flex:1 1 auto; min-height:0; }   /* isi tinggi kolom kiri */
-    .cs-col-right .cs-scroll { height:290px; }               /* Buyer & Sales Order statik */
+    /* ===== TINGGI PANEL — ubah 2 angka ini saja =====
+       Tinggi baris "Bahan Masuk | (Buyer + Sales Order)" DITENTUKAN oleh kolom
+       kanan; panel kiri lalu meregang mengikutinya (align-items:stretch +
+       flex:1 1 auto), jadi DASAR Bahan Masuk & Sales Order SELALU sejajar tanpa
+       perlu menyetel tinggi kiri. Memperpanjang Sales Order otomatis
+       memperpanjang Bahan Masuk.
+       ⚠️ .cs-scroll memakai overflow:hidden -> kalau angka di bawah dikecilkan,
+          naikkan juga CS_PP_SOS / CS_PP_MASUK-nya agar baris tak terpotong. */
+    .cs-col-right { --cs-h-buyer:290px; --cs-h-so:430px; }
+    .cs-masuk .cs-scroll { flex:1 1 auto; min-height:0; }        /* ikut tinggi kolom kanan */
+    .cs-buyer .cs-scroll { height:var(--cs-h-buyer); }
+    .cs-so    .cs-scroll { height:var(--cs-h-so); }
     .cs-panel table { width:100%; border-collapse:collapse; }
     .cs-panel th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.3px; padding:8px 12px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
     .cs-panel th[title] { text-decoration:underline dotted #cbd5e1; text-underline-offset:2px; cursor:help; }
@@ -406,6 +416,7 @@ margin-bottom:6px; }
     .sm-dtab td.num, .sm-dtab th.num{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
     .sm-lok{ font-size:0.7rem; color:var(--muted); }
     .sm-dim{ color:var(--faint); }
+    .sm-hint{ font-size:0.66rem; color:var(--faint); padding:6px 8px 0; }
 
     /* ===== LEBAR KOLOM panel "Sales Order" — UBAH 3 ANGKA DI BAWAH INI SAJA =====
        Catatan: table-layout:fixed membuat lebar dipatuhi persis. Bila total ketiga
@@ -780,7 +791,12 @@ stroke="#93c5fd" stroke-width="2" stroke-dasharray="50.265" stroke-dashoffset="0
     /* --- Panel Bahan Masuk + Buyer (dash_cs.htm) — refresh 60 dtk, cadence sama KPI --- */
     function csProgClass(p){ if(p>=100) return '_g'; if(p<15) return '_r'; if(p<40) return '_y'; return ''; }
     /* --- Pagination helpers (dipakai 3 panel cs + drill-down) --- */
-    var CS_PP_MASUK = 14, CS_PP_BUYER = 6, CS_PP_SOS = 6;
+    /* Baris per halaman. HARUS selaras dgn --cs-h-so / --cs-h-buyer di CSS:
+       .cs-scroll overflow:hidden, jadi kelebihan baris TERPOTONG (bukan scroll).
+       Perkiraan: 1 baris ~34px; ruang = tinggi panel - header tabel (~27) - pager (~41).
+       Angka di bawah disisakan margin supaya deskripsi material yg membungkus
+       ke 2 baris tidak langsung memotong baris terakhir. */
+    var CS_PP_MASUK = 19, CS_PP_BUYER = 6, CS_PP_SOS = 10;
     var _pgM = { rows:[], page:0 }, _pgB = { rows:[], page:0 }, _pgS = { rows:[], page:0 };
     function clampPage(st, pp){
       var mx = Math.max(0, Math.ceil(st.rows.length / pp) - 1);
@@ -1403,16 +1419,30 @@ stroke="#93c5fd" stroke-width="2" stroke-dasharray="50.265" stroke-dashoffset="0
         mats[mk].target = ordMats[mk].target;
         mats[mk].del    = ordMats[mk].del;
       });
-      var keys = Object.keys(mats).sort();
-      if(!keys.length) return '<div class="sm-none">Tidak ada material untuk item ini.</div>';
+      // Hitung progres lebih dulu, lalu SEMBUNYIKAN material yang sudah selesai
+      // DAN stoknya tidak ada lagi (tanpa stok + progres 100%) — tak actionable.
+      // Yang hanya salah satu (mis. 100% tapi stok masih ada) TETAP tampil.
+      var keys = [], hidden = 0;
+      Object.keys(mats).sort().forEach(function(mk){
+        var m = mats[mk];
+        m._prog = null;
+        if(m.target !== null && m.target > 0){
+          var p = Math.round(m.del / m.target * 100);
+          if(p > 100) p = 100; if(p < 0) p = 0;
+          m._prog = p;
+        }
+        if(!m.lok.length && m._prog === 100){ hidden++; return; }
+        keys.push(mk);
+      });
+      if(!keys.length){
+        return '<div class="sm-none">' + (hidden
+          ? 'Semua material item ini sudah 100% dan tidak ada stok tersisa ('+hidden+' material disembunyikan).'
+          : 'Tidak ada material untuk item ini.') + '</div>';
+      }
       var h = '<table class="sm-dtab"><thead><tr><th>Material</th><th>Lokasi stok</th>'
             + '<th class="num">QTY Target</th><th class="num">QTY Del</th><th>Progres</th></tr></thead><tbody>';
       keys.forEach(function(mk){
-        var m = mats[mk], prog = null;
-        if(m.target !== null && m.target > 0){
-          prog = Math.round(m.del / m.target * 100);
-          if(prog > 100) prog = 100; if(prog < 0) prog = 0;
-        }
+        var m = mats[mk], prog = m._prog;
         h += '<tr><td>'+feedEsc(mk)+'<div class="so-mat-d">'+feedEsc(m.maktx)+'</div></td>'
           + '<td class="sm-lok">'+(m.lok.length ? feedEsc(m.lok.join(' · ')) : '<span class="sm-dim">tanpa stok</span>')+'</td>'
           + '<td class="num">'+(m.target === null ? '<span class="sm-dim">&mdash;</span>' : smFmt(m.target))+'</td>'
@@ -1422,7 +1452,10 @@ stroke="#93c5fd" stroke-width="2" stroke-dasharray="50.265" stroke-dashoffset="0
               : '<div class="so-prog"><div class="so-prog-fill" style="width:'+prog+'%"></div></div><span class="so-prog-t">'+prog+'%</span>')
           + '</td></tr>';
       });
-      return h + '</tbody></table>';
+      h += '</tbody></table>';
+      // jangan menyembunyikan data tanpa jejak — beri tahu berapa yang disaring
+      if(hidden) h += '<div class="sm-hint">'+hidden+' material sudah 100% &amp; tanpa stok — disembunyikan.</div>';
+      return h;
     }
 
     /* Mengembalikan Promise supaya pemanggil (dan uji) bisa menunggu selesainya. */
