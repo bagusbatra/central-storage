@@ -1,0 +1,1669 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Page — Dashboard Grafis Central Storage (index.htm)
+*&---------------------------------------------------------------------*
+*& Dua bagian:
+*&  (1) KPI STOK per bagian — 7 kartu; tiap kartu = COUNT DISTINCT MATNR
+*&      yang punya STOK > 0 SAAT INI (snapshot; TIDAK tergantung tanggal).
+*&      Sumber MSKA (SO-stock, sobkz='E') + MARD (stok bebas):
+*&        1 Pembahanan     1000/1D00        Unrestricted (KALAB+LABST)
+*&        2 Central Storage 2000/2KCS       Unrestricted
+*&        3 Machining       2000/2261,2262  Unrestricted
+*&        4 Banding         2000/22E2,22E3  Unrestricted
+*&        5 Sanding         2000/229K       Unrestricted
+*&        6 QI Plant 1000   1000/1D00       Quality Insp (KAINS+INSME)
+*&        7 QI Plant 2000   2000/2KCS..229K Quality Insp
+*&      Sample customer KUNNR='2000000004' dibuang dari SO-stock (via VBAK).
+*&      Kartu diklik -> drill-down daftar material (AJAX dash_detail.htm),
+*&      difilter buyer + dikelompokkan per No. SO. Angka AUTO-REFRESH 60 dtk
+*&      via dash_kpi.htm (LOGIKA HITUNG DIKEMBARKAN di sana -> ubah KEDUANYA).
+*&  (2) BAR REALTIME fixed di dasar layar — 1 pegerakan barang berganti
+*&      fade tiap ~4 dtk; data dari dash_feed.htm (refresh 15 dtk).
+*&
+*& Filter tanggal (MKPF-BUDAT) masih tampil di UI atas permintaan user, tetapi
+*& TIDAK dipakai KPI (KPI = snapshot stok saat ini).
+*& Halaman ini dulunya pelacakan SO+Item; isi lama SUDAH pindah ke monitoring.htm.
+*&---------------------------------------------------------------------*
+CONSTANTS lc_sample TYPE kna1-kunnr VALUE '2000000004'.
+DATA: lv_layout_user TYPE string.
+lv_layout_user = sy-uname.
+
+" --- Filter tanggal: default 30 hari; override dari form (input type=date
+"     mengirim 'YYYY-MM-DD') ---
+DATA: lv_from   TYPE mkpf-budat,
+      lv_to     TYPE mkpf-budat,
+      lv_s_from TYPE string,
+      lv_s_to   TYPE string.
+lv_s_from = request->get_form_field( 'date_from' ).
+lv_s_to   = request->get_form_field( 'date_to' ).
+" input type=date -> 'YYYY-MM-DD'; MKPF-BUDAT butuh 'YYYYMMDD' -> buang '-'
+REPLACE ALL OCCURRENCES OF '-' IN lv_s_from WITH ''.
+REPLACE ALL OCCURRENCES OF '-' IN lv_s_to   WITH ''.
+IF lv_s_from IS NOT INITIAL AND lv_s_to IS NOT INITIAL.
+  lv_from = lv_s_from.
+  lv_to   = lv_s_to.
+ELSE.
+  lv_to   = sy-datum.
+  lv_from = sy-datum - 30.
+ENDIF.
+
+" ============================================================
+"  KPI (7 kartu) KINI DIHITUNG ASINKRON via AJAX (dash_kpi.htm) — TIDAK lagi
+"  di server-render halaman ini. Alasan: query stok MSKA+MARD+VBAK BERAT
+"  (~15 dtk terukur) & dulu MEMBLOKIR kemunculan halaman (TTFB 15 dtk).
+"  Kini HTML shell keluar SEKETIKA; loadKpi() memanggil dash_kpi.htm lalu
+"  mengisi angka + lebar bar tiap kartu. lv_tot*/lv_w* DIBIARKAN 0 di sini
+"  (placeholder; skeleton "memuat" ditampilkan via JS sampai data tiba).
+"  ⚠️ dash_kpi.htm memuat LOGIKA HITUNG yang sama (kembar dgn versi lama di
+"     sini) — kalau perlu diubah, ubah di dash_kpi.htm.
+" ============================================================
+DATA: lv_tot1 TYPE i, lv_tot2 TYPE i, lv_tot3 TYPE i, lv_tot4 TYPE i,
+      lv_tot5 TYPE i, lv_tot6 TYPE i, lv_tot7 TYPE i,
+      lv_w1 TYPE i, lv_w2 TYPE i, lv_w3 TYPE i, lv_w4 TYPE i,
+      lv_w5 TYPE i, lv_w6 TYPE i, lv_w7 TYPE i.
+
+" --- Tanggal tampil (YYYY-MM-DD) utk prefill input & teks rentang aktif ---
+DATA: lv_from_disp TYPE string,
+      lv_to_disp   TYPE string.
+lv_from_disp = lv_from(4) && '-' && lv_from+4(2) && '-' && lv_from+6(2).
+lv_to_disp   = lv_to(4)   && '-' && lv_to+4(2)   && '-' && lv_to+6(2).
+
+" Prefill input filter: KOSONG secara default; terisi HANYA jika user submit
+" tanggal (lv_s_from/lv_s_to sudah tanpa '-'). Ini bikin filter tak terlihat
+" seolah "aktif 30 hari" padahal KPI tak tergantung tanggal.
+DATA: lv_ff_disp TYPE string, lv_ft_disp TYPE string.
+IF lv_s_from IS NOT INITIAL.
+  lv_ff_disp = lv_s_from(4) && '-' && lv_s_from+4(2) && '-' && lv_s_from+6(2).
+ENDIF.
+IF lv_s_to IS NOT INITIAL.
+  lv_ft_disp = lv_s_to(4) && '-' && lv_s_to+4(2) && '-' && lv_s_to+6(2).
+ENDIF.
+
+DATA: lv_ts_date TYPE string,
+      lv_ts_time TYPE string.
+lv_ts_date = zcl_cs_util=>fmt_date( sy-datum ).
+lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
+%>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Grafis - Central Storage KMI 2</title>
+  <link rel="stylesheet" href="css/style.css?r=13">
+  <style>
+    /* --- Ikon inline SVG (gaya Lucide, tanpa CDN) --- */
+    .ic { width:1em; height:1em; vertical-align:-0.14em; fill:none; stroke:currentColor;
+      stroke-width:2; stroke-linecap:round; stroke-linejoin:round; display:inline-block; flex-shrink:0; }
+    /* --- Skeleton loader (shimmer) --- */
+    @keyframes skel-shimmer { 0% { background-position:100% 50%; } 100% { background-position:0 50%; } }
+    .skel { background:linear-gradient(90deg,#eceff3 25%,#dfe4ea 37%,#eceff3 63%); background-size:400% 100%;
+      animation:skel-shimmer 1.4s ease infinite; border-radius:6px; }
+    .skel-dark { background:linear-gradient(90deg,#1e293b 25%,#334155 37%,#1e293b 63%); background-size:400% 100%; }
+    .skel-wrap { padding:14px 16px; }
+    .skel-row { display:flex; gap:12px; padding:11px 14px; border-bottom:1px solid #f3f4f6; }
+    .skel-row .skel { height:12px; align-self:center; }
+    /* --- KPI bar (CSS murni, tanpa library) --- */
+    .kpi-bar { display:flex; gap:12px; flex-wrap:wrap; margin:6px 0 24px; }
+    .kpi-card { flex:1 1 140px; min-width:140px; background:#fff; border:1px solid #e5e7eb;
+      border-radius:10px; padding:14px 16px; box-shadow:0 1px 3px rgba(0,0,0,0.05); }
+    .kpi-label { font-size:0.70rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; }
+    .kpi-value { font-size:1.7rem; font-weight:800; color:#0f172a; margin:4px 0 2px; line-height:1; }
+    .kpi-cap { font-size:0.66rem; color:#9ca3af; margin:0 0 8px; }
+    /* Baris kontrol auto-refresh KPI */
+    .kpi-refresh { display:flex; align-items:center; gap:10px; margin:0 2px 14px; }
+    .kpi-refresh-btn { font-size:0.76rem; padding:5px 12px; border:1px solid #d1d5db; background:#fff;
+      color:#374151; border-radius:8px; cursor:pointer; }
+    .kpi-refresh-btn:hover { background:#f3f4f6; }
+    .kpi-stamp { font-size:0.74rem; color:#6b7280; display:inline-flex; align-items:center; gap:6px; }
+    .cn-ring { flex-shrink:0; }
+    .cn-ring-fg { transition:stroke-dashoffset 1ms linear; }
+    .cn-ring-fg._stuck { stroke:#dc2626 !important; }
+    /* --- Mode TV: perbesar elemen untuk tampilan monitor/pantau --- */
+    body.tv-mode { padding-bottom:68px; }
+    body.tv-mode .kpi-card { min-width:200px; padding:20px 22px; }
+    body.tv-mode .kpi-value { font-size:2.6rem; }
+    body.tv-mode .kpi-label { font-size:0.9rem; }
+    body.tv-mode .kpi-cap { font-size:0.8rem; }
+    body.tv-mode .ticker-bar { height:60px; }
+    body.tv-mode .ticker-label { font-size:1rem; }
+    body.tv-mode #feed-list { font-size:1.05rem; }
+    .kpi-track { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; }
+    .kpi-fill  { height:100%; background:#2563eb; border-radius:4px; transition:width .3s ease; }
+    /* QI kolom diberi warna beda supaya mudah dibedakan dari tahap produksi */
+    .kpi-qi .kpi-fill { background:#7c3aed; }
+    /* --- Kartu KPI dapat diklik (drill-down) --- */
+    .kpi-card { cursor:pointer; transition:box-shadow .15s ease, transform .15s ease; }
+    .kpi-card:hover { box-shadow:0 3px 10px rgba(0,0,0,0.10); transform:translateY(-1px); }
+    .kpi-card.active { border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.25); }
+    .kpi-qi.active   { border-color:#7c3aed; box-shadow:0 0 0 2px rgba(124,58,237,0.25); }
+    .kpi-caret { font-size:0.6rem; color:#9ca3af; }
+    .kpi-card.active .kpi-caret { color:#2563eb; display:inline-block; transform:rotate(180deg); }
+    /* --- Panel detail drill-down --- */
+    .kpi-detail { background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin:0 0 24px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.05); min-height:560px; }
+    .kpi-detail-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:12px 16px; border-bottom:1px solid #f3f4f6; }
+    .kpi-detail-title { font-weight:700; color:#0f172a; }
+    .kpi-detail-sub { font-size:0.75rem; color:#6b7280; margin-top:2px; }
+    .kpi-detail-close { cursor:pointer; color:#9ca3af; font-size:1.05rem; border:none; background:none; padding:2px 6px; line-height:1; }
+    .kpi-detail-close:hover { color:#374151; }
+    .kpi-detail-scroll { height:440px; overflow:auto; }   /* tinggi tetap: ganti kartu tak mengubah ukuran */
+    .kpi-detail table { width:100%; border-collapse:collapse; }
+    .kpi-detail th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.72rem; text-transform:uppercase; padding:9px 14px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
+    .kpi-detail td { padding:9px 14px; font-size:0.84rem; border-bottom:1px solid #f3f4f6; color:#374151; }
+    .kpi-detail td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .kpi-detail tbody tr:hover td { background:#fafbfc; }
+    .kpi-detail .loading, .kpi-detail .err { padding:16px; font-size:0.85rem; color:#6b7280; }
+    .kpi-detail .err { color:#b91c1c; }
+    /* Filter buyer + grup No. SO di dalam panel detail */
+    .dd-filters { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; padding:10px 16px; border-bottom:1px solid #f3f4f6; }
+    .dd-f { display:flex; flex-direction:column; gap:3px; font-size:0.68rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.3px; }
+    .dd-f select { font-size:0.82rem; font-weight:400; text-transform:none; padding:5px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#374151; }
+    .dd-f-grow { flex:1 1 220px; min-width:180px; }
+    .dd-search { width:100%; box-sizing:border-box; font-size:0.82rem; font-weight:400; text-transform:none; padding:5px 10px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#374151; }
+    .dd-search:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.18); }
+    /* No. SO dapat diklik + panel geser kanan (progres produksi SO) */
+    .so-link { color:#2563eb; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-weight:600; }
+    .so-link:hover { color:#1e3a8a; }
+    .item-link { color:#0d9488; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-weight:600; }
+    .item-link:hover { color:#0f766e; }
+    .so-overlay { position:fixed; inset:0; background:rgba(15,23,42,0.35); opacity:0; visibility:hidden; transition:opacity .2s ease; z-index:990; }
+    .so-overlay.open { opacity:1; visibility:visible; }
+    .so-panel { position:fixed; top:0; right:0; height:100%; width:min(640px,95vw); background:#fff;
+      box-shadow:-6px 0 18px rgba(0,0,0,0.20); transform:translateX(100%); transition:transform .25s ease;
+      z-index:1000; display:flex; flex-direction:column; }
+    .so-panel.open { transform:translateX(0); }
+    .so-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid #e5e7eb; background:#f9fafb; }
+    .so-title { font-weight:800; color:#0f172a; font-size:1.05rem; }
+    .so-scope { font-size:0.75rem; color:#6b7280; margin-top:2px; }
+    .so-close { border:none; background:none; font-size:1.15rem; color:#9ca3af; cursor:pointer; line-height:1; padding:2px 6px; }
+    .so-close:hover { color:#374151; }
+    .so-body { flex:1 1 auto; overflow:auto; padding:14px 18px; }
+    .so-meta { font-size:0.82rem; color:#374151; margin-bottom:10px; }
+    .so-search-wrap { margin-bottom:12px; }
+    .so-search { width:100%; box-sizing:border-box; font-size:0.85rem; padding:8px 12px; border:1px solid #d1d5db; border-radius:8px; background:#fff; color:#374151; }
+    .so-search:focus { outline:none; border-color:#2563eb; box-shadow:0 0 0 2px rgba(37,99,235,0.18); }
+    .so-table { width:100%; border-collapse:collapse; }
+    .so-table th { text-align:left; font-size:0.68rem; text-transform:uppercase; color:#6b7280; font-weight:700; border-bottom:1px solid #e5e7eb; padding:8px; white-space:nowrap; }
+    .so-table td { font-size:0.82rem; color:#374151; border-bottom:1px solid #f3f4f6; padding:8px; vertical-align:top; }
+    .so-table td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .so-mat-d { font-size:0.72rem; color:#9ca3af; }
+    .so-table tr.so-hl td { background:#dbeafe; }   /* baris tersorot dari klik item */
+    .so-table tr.so-hl td:first-child { box-shadow:inset 3px 0 0 #2563eb; }
+    .so-prog { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; min-width:80px; }
+    .so-prog-fill { height:100%; background:#16a34a; border-radius:4px; }
+    .so-prog-t { font-size:0.7rem; color:#6b7280; }
+    .so-mon-link { display:inline-block; font-size:0.7rem; color:#2563eb; text-decoration:none; font-weight:600; white-space:nowrap; padding:2px 8px; border:1px solid #2563eb; border-radius:4px; transition:background .2s; }
+    .so-mon-link:hover { background:#2563eb; color:#fff; }
+    .so-body .loading, .so-body .err { padding:14px 4px; font-size:0.85rem; color:#6b7280; }
+    .so-body .err { color:#b91c1c; }
+    /* Sidebar MRP (Bahan Masuk): grup PNL / Moulding */
+    .mrp-group { margin-bottom:16px; }
+    .mrp-group-head { display:flex; align-items:center; gap:8px; font-size:0.74rem; font-weight:800; color:#4338ca; letter-spacing:0.4px; text-transform:uppercase; padding:6px 10px; background:#eef2ff; border:1px solid #e0e7ff; border-radius:6px; 
+margin-bottom:6px; }
+    .mrp-gc { font-weight:700; color:#6366f1; background:#fff; border-radius:999px; padding:0 7px; font-size:0.7rem; }
+    .mrp-badge { display:inline-block; font-size:0.68rem; font-weight:700; color:#3730a3; background:#e0e7ff; border-radius:5px; padding:1px 6px; font-family:monospace; }
+    /* --- Filter tanggal --- */
+    .date-filter-form { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
+    .date-filter-form .form-group { display:block; }
+    .date-filter-form label { display:block; font-size:0.72rem; font-weight:700; color:#4b5563; margin-bottom:6px; text-transform:uppercase; }
+    .date-filter-form input[type=date] { padding:9px 12px; border:1px solid #d1d5db; border-radius:8px; background:#f9fafb; font-size:0.88rem; }
+    .date-filter-form button { padding:10px 20px; background:#2563eb; color:#fff; border:none; border-radius:8px; font-weight:700; cursor:pointer; }
+    .date-range-note { font-size:0.8rem; color:#6b7280; margin:12px 2px 20px; }
+    .date-range-note b { color:#111827; }
+    .dd-daterange { display:flex; align-items:flex-end; gap:14px; flex-wrap:wrap; margin:0 2px 14px;
+      padding:12px 14px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; }
+    .dd-daterange-hint { flex:1 1 200px; align-self:center; font-size:0.74rem; color:#9ca3af; }
+    .dd-daterange-hint b { color:#6b7280; }
+    /* (CSS .dash-table & .feed-* lama dihapus — tabel per-buyer & panel feed
+       versi lama sudah tidak dipakai; ganti drill-down .kpi-detail & ticker .fd-*) */
+    /* --- Bar realtime fixed di dasar layar: 1 item, berganti fade (tak scroll) --- */
+    body { padding-bottom:52px; }   /* ruang agar konten tak tertutup bar */
+    .ticker-bar { position:fixed; left:0; right:0; bottom:0; height:44px; z-index:900;
+      background:#0f172a; color:#e5e7eb; display:flex; align-items:center; box-shadow:0 -2px 8px rgba(0,0,0,0.18); }
+    .ticker-label { flex:0 0 auto; display:flex; align-items:center; gap:8px; height:100%;
+      padding:0 14px; background:#1e3a8a; font-weight:700; font-size:0.8rem; white-space:nowrap; }
+    .ticker-status { font-weight:400; font-size:0.66rem; color:#93c5fd; }
+    .ticker-viewport { flex:1 1 auto; height:100%; overflow:hidden; display:flex; align-items:center; }
+    /* satu item ditampilkan; berganti dgn transisi opacity (fade) */
+    #feed-list { display:inline-flex; align-items:center; gap:10px; padding:0 18px;
+      font-size:0.84rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      opacity:1; transition:opacity .35s ease; }
+    #feed-list.fd-out { opacity:0; }
+    .fd-time { color:#93c5fd; font-variant-numeric:tabular-nums; }
+    .fd-mat { color:#fff; font-weight:600; }
+    .fd-move { color:#cbd5e1; }
+    .fd-gerakan { color:#fcd34d; font-size:0.72rem; }
+    .fd-qty { color:#fff; font-weight:600; }
+    .fd-buyer { color:#94a3b8; }
+    .ticker-empty { color:#94a3b8; }
+    .ticker-dots { display:flex; align-items:center; gap:4px; padding:0 14px 0 4px; height:100%; }
+    .ticker-dot { width:7px; height:7px; border-radius:50%; background:#475569; cursor:pointer; transition:background .25s,transform .2s; flex-shrink:0; }
+    .ticker-dot.active { background:#93c5fd; transform:scale(1.3); }
+    .ticker-dot:hover { background:#94a3b8; }
+    body.tv-mode .ticker-dot { width:9px; height:9px; }
+    #ticker-bar._paused .ticker-dot.active { background:#fcd34d; }
+    /* Hormati preferensi kurangi-gerak: fade dimatikan (ganti seketika) */
+    @media (prefers-reduced-motion: reduce) { #feed-list { transition:none; } }
+    /* --- Panel "Bahan Masuk" (stok 2KCS) + "Buyer" + "Sales Order", di atas KPI --- */
+    .cs-row { display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; margin:6px 0 20px; }
+    .cs-panel { background:#fff; border:1px solid #e5e7eb; border-radius:10px; box-shadow:0 1px 3px rgba(0,0,0,0.05); display:flex; flex-direction:column; overflow:hidden; }
+    .cs-masuk { flex:2 1 380px; min-width:0; }
+    /* kolom kanan: Buyer + Sales Order bertumpuk; Bahan Masuk kiri ikut memanjang */
+    .cs-col-right { flex:1 1 260px; min-width:0; display:flex; flex-direction:column; gap:12px; }
+    .cs-panel-head { padding:12px 16px; border-bottom:1px solid #f3f4f6; }
+    .cs-panel-title { font-weight:700; color:#0f172a; font-size:0.95rem; }
+    .cs-count { display:inline-block; margin-left:8px; font-size:0.7rem; font-weight:700; color:#6b7280; background:#eef1f6; border-radius:999px; padding:1px 8px; vertical-align:middle; font-variant-numeric:tabular-nums; }
+    .cs-panel-sub { font-size:0.72rem; color:#6b7280; margin-top:2px; }
+    /* Bahan Masuk & Sales Order: tinggi TETAP tanpa scroll (baris sudah dibatasi
+       pagination 13/6). align-items:stretch di .cs-row bikin dasar kolom kiri
+       (Bahan Masuk) SEJAJAR dgn dasar kolom kanan (Sales Order). Data sedikit ->
+       ukuran tetap (tersisa ruang kosong, tidak menciut). */
+    .cs-scroll { overflow:hidden; display:flex; flex-direction:column; }
+    /* ===== TINGGI PANEL — ubah 2 angka ini saja =====
+       Tinggi baris "Bahan Masuk | (Buyer + Sales Order)" DITENTUKAN oleh kolom
+       kanan; panel kiri lalu meregang mengikutinya (align-items:stretch +
+       flex:1 1 auto), jadi DASAR Bahan Masuk & Sales Order SELALU sejajar tanpa
+       perlu menyetel tinggi kiri. Memperpanjang Sales Order otomatis
+       memperpanjang Bahan Masuk.
+       ⚠️ .cs-scroll memakai overflow:hidden -> kalau angka di bawah dikecilkan,
+          naikkan juga CS_PP_SOS / CS_PP_MASUK-nya agar baris tak terpotong. */
+    .cs-col-right { --cs-h-buyer:290px; --cs-h-so:430px; }
+    .cs-masuk .cs-scroll { flex:1 1 auto; min-height:0; }        /* ikut tinggi kolom kanan */
+    .cs-buyer .cs-scroll { height:var(--cs-h-buyer); }
+    .cs-so    .cs-scroll { height:var(--cs-h-so); }
+    .cs-panel table { width:100%; border-collapse:collapse; }
+    .cs-panel th { position:sticky; top:0; background:#f9fafb; color:#4b5563; font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.3px; padding:8px 12px; border-bottom:1px solid #e5e7eb; text-align:left; white-space:nowrap; }
+    .cs-panel th[title] { text-decoration:underline dotted #cbd5e1; text-underline-offset:2px; cursor:help; }
+    .cs-panel td { padding:8px 12px; font-size:0.8rem; border-bottom:1px solid #f3f4f6; color:#374151; vertical-align:top; }
+    .cs-panel td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .cs-panel tbody tr:hover td { background:#fafbfc; }
+    .cs-panel .loading, .cs-panel .err { padding:14px 16px; font-size:0.82rem; color:#6b7280; }
+    .cs-panel .err { color:#b91c1c; }
+    .cs-panel code { font-size:0.76rem; }
+    .cs-prog { height:6px; background:#f1f5f9; border-radius:4px; overflow:hidden; min-width:70px; }
+    .cs-prog-fill { height:100%; background:#2563eb; border-radius:4px; }
+    .cs-prog-fill._g { background:#16a34a; } .cs-prog-fill._y { background:#eab308; } .cs-prog-fill._r { background:#dc2626; }
+    .cs-prog-t { font-size:0.68rem; color:#6b7280; }
+    .cs-rank { color:#94a3b8; font-weight:700; text-align:center; }
+
+    /* ================= REDESAIN "Production Pipeline" (scope: index.htm) =================
+       Ditaruh paling akhir & memakai selector >= spesifisitas aslinya supaya menang atas
+       css/style.css tanpa mengubah file bersama itu (monitoring.htm tak terpengaruh). */
+    :root{
+      --canvas:#E9EDF3; --ink:#1B2430; --muted:#6B7482; --faint:#98A2B2;
+      --hair:#E1E6EE; --hair2:#EEF1F6; --primary:#2F6FED;
+      --s-bahan:#B45309; --s-central:#0E7490; --s-machining:#2563EB;
+      --s-banding:#7C3AED; --s-sanding:#009411; --s-qi:#64748B;
+      --good:#16A34A; --warn:#D97706; --crit:#DC2626;
+      --cs-shadow:0 1px 2px rgba(20,32,54,.05),0 6px 18px -12px rgba(20,32,54,.22);
+    }
+    /* Kanvas ber-tint -> kartu putih "mengambang" (perbaikan utama monoton putih) */
+    body{ background:var(--canvas); color:var(--ink); }
+    .content{ background:transparent; }
+
+    /* --- KPI 7 kartu jadi pipeline berwarna per tahap --- */
+    .kpi-bar{ gap:14px; }
+    .kpi-card{ border:1px solid var(--hair); border-radius:12px; box-shadow:var(--cs-shadow); padding:15px 16px 16px; }
+    .kpi-card:hover{ transform:translateY(-2px); box-shadow:0 2px 4px rgba(20,32,54,.06),0 14px 26px -14px rgba(20,32,54,.30); }
+    .kpi-card .kpi-label{ display:flex; align-items:center; gap:9px; color:var(--muted); font-size:0.68rem; letter-spacing:.05em; }
+    .kpi-card .kpi-label::before{ content:""; width:22px; height:22px; border-radius:7px; background:var(--faint); flex:none; }
+    .kpi-card .kpi-caret{ margin-left:auto; }
+    .kpi-card .kpi-value{ font-size:2rem; font-weight:700; letter-spacing:-.02em; color:var(--ink); margin:11px 0 2px; }
+    .kpi-card .kpi-cap{ color:var(--faint); }
+    .kpi-card .kpi-track{ height:5px; background:#EDF1F6; }
+    .kpi-card.active{ border-color:var(--primary); box-shadow:0 0 0 2px rgba(47,111,237,.22); }
+    /* warna per tahap (chip + bar) — alur mentah -> jadi */
+    .kpi-card[data-sec="1"] .kpi-label::before{ background:var(--s-bahan); }    .kpi-card[data-sec="1"] .kpi-fill{ background:var(--s-bahan); }
+    .kpi-card[data-sec="2"] .kpi-label::before{ background:var(--s-central); }   .kpi-card[data-sec="2"] .kpi-fill{ background:var(--s-central); }
+    .kpi-card[data-sec="3"] .kpi-label::before{ background:var(--s-machining); } .kpi-card[data-sec="3"] .kpi-fill{ background:var(--s-machining); }
+    .kpi-card[data-sec="4"] .kpi-label::before{ background:var(--s-banding); }   .kpi-card[data-sec="4"] .kpi-fill{ background:var(--s-banding); }
+    .kpi-card[data-sec="5"] .kpi-label::before{ background:var(--s-sanding); }   .kpi-card[data-sec="5"] .kpi-fill{ background:var(--s-sanding); }
+    .kpi-card[data-sec="6"] .kpi-label::before,
+    .kpi-card[data-sec="7"] .kpi-label::before{ background:var(--s-qi); }
+    .kpi-card.kpi-qi .kpi-fill{ background:var(--s-qi); }
+
+    /* --- Panel cs-* : depth + header lebih tenang --- */
+    .cs-panel{ border-color:var(--hair); box-shadow:var(--cs-shadow); }
+    .cs-panel-head{ border-bottom-color:var(--hair2); }
+    .cs-panel th{ background:#F7F9FC; color:var(--muted); }
+
+    /* --- Progres bar Bahan Masuk pakai warna semantik --- */
+    .cs-prog-fill{ background:var(--s-central); }
+    .cs-prog-fill._g{ background:var(--good); } .cs-prog-fill._y{ background:var(--warn); } .cs-prog-fill._r{ background:var(--crit); }
+
+    /* --- Catatan rentang jadi eyebrow tenang --- */
+    .date-range-note{ color:var(--muted); }
+
+    /* --- Badge sisa hari pada kolom End Date (panel Sales Order) ---
+       Ambang: lewat End Date / sisa <=3 hr = merah, 4-7 hr = kuning,
+       >7 hr = hijau, tanpa End Date = abu-abu. */
+    /* Badge sejajar (satu baris) dgn tanggalnya, bukan di bawahnya. */
+    .cs-days{ display:inline-block; margin-left:6px; font-size:0.66rem; font-weight:700; border-radius:999px;
+              padding:1px 7px; white-space:nowrap; vertical-align:middle; }
+    .cs-days._late{ color:#7F1D1D; background:#FEE2E2; border:1px solid #FCA5A5; }
+    .cs-days._r   { color:#7F1D1D; background:#FEE2E2; border:1px solid #FCA5A5; }
+    .cs-days._y   { color:#78350F; background:#FEF3C7; border:1px solid #FCD34D; }
+    .cs-days._g   { color:#14532D; background:#DCFCE7; border:1px solid #86EFAC; }
+    .cs-days._n   { color:var(--muted); background:#EEF1F6; border:1px solid var(--hair); }
+    .cs-date{ display:inline-block; font-variant-numeric:tabular-nums; white-space:nowrap; vertical-align:middle; }
+    /* --- Kolom "Item": tombol pembuka modal daftar SO Item --- */
+    .cs-itembtn{ display:inline-flex; align-items:center; gap:5px; font:inherit; font-size:0.7rem; font-weight:700;
+                 color:var(--primary); background:#fff; border:1px solid rgba(47,111,237,.35); border-radius:6px;
+                 padding:3px 8px; cursor:pointer; white-space:nowrap; }
+    .cs-itembtn:hover{ background:rgba(47,111,237,.10); border-color:var(--primary); }
+    .cs-itembtn svg{ width:11px; height:11px; stroke:currentColor; fill:none; stroke-width:2.2; }
+
+    /* --- Modal daftar SO Item (dibuka dari tombol kolom Item) --- */
+    .soi-ov{ position:fixed; inset:0; background:rgba(15,23,42,.45); opacity:0; visibility:hidden;
+             transition:opacity .18s ease; z-index:1100; display:flex; align-items:center; justify-content:center; padding:24px; }
+    .soi-ov.open{ opacity:1; visibility:visible; }
+    .soi-modal{ background:#fff; border-radius:14px; width:min(860px,100%); max-height:min(80vh,720px);
+                display:flex; flex-direction:column; overflow:hidden;
+                box-shadow:0 24px 60px -18px rgba(15,23,42,.55);
+                transform:translateY(8px) scale(.985); transition:transform .18s ease; }
+    .soi-ov.open .soi-modal{ transform:none; }
+    .soi-head{ display:flex; align-items:flex-start; gap:12px; padding:16px 20px; border-bottom:1px solid var(--hair2); background:#F9FAFC; }
+    .soi-title{ font-weight:800; color:var(--ink); font-size:1rem; }
+    .soi-sub{ font-size:0.74rem; color:var(--muted); margin-top:2px; }
+    .soi-close{ margin-left:auto; border:none; background:none; color:var(--faint); cursor:pointer; line-height:1; padding:4px 6px; }
+    .soi-close:hover{ color:var(--ink); }
+    .soi-close svg{ width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:2; }
+    .soi-body{ overflow:auto; padding:14px 20px 18px; }
+    .soi-body .loading, .soi-body .err{ padding:16px 2px; font-size:0.85rem; color:var(--muted); }
+    .soi-body .err{ color:#B91C1C; }
+    .soi-st{ display:inline-block; font-size:0.66rem; font-weight:700; border-radius:999px; padding:1px 7px; }
+    .soi-st._done{ color:#14532D; background:#DCFCE7; }
+    .soi-st._run { color:#78350F; background:#FEF3C7; }
+    .soi-st._none{ color:var(--muted); background:#EEF1F6; }
+
+    /* --- Pemetaan real stock per SO Item (bar 7 tahap) di dalam modal --- */
+    .sm-wrap{ margin-top:18px; border-top:1px solid var(--hair2); padding-top:14px; }
+    .sm-head{ font-size:0.78rem; font-weight:800; color:var(--ink); }
+    .sm-sub{ font-size:0.7rem; color:var(--muted); margin:2px 0 10px; }
+    .sm-row{ display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid var(--hair2); }
+    .sm-row:first-of-type{ border-top:0; }
+    .sm-item{ flex:0 0 68px; font-size:0.74rem; font-weight:800; color:var(--ink); }
+    .sm-item span{ display:block; font-size:0.64rem; font-weight:600; color:var(--faint); }
+    .sm-track{ display:flex; gap:4px; flex:1 1 auto; min-width:0; }
+    .sm-cell{ flex:1 1 0; min-width:0; border:1px solid var(--hair); border-radius:7px; padding:4px 5px;
+              text-align:center; background:#F7F9FC; }
+    .sm-cell._on{ background:#fff; border-color:currentColor; }
+    .sm-lbl{ display:block; font-size:0.56rem; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+             color:var(--faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sm-cell._on .sm-lbl{ color:currentColor; }
+    .sm-val{ display:block; font-size:0.7rem; font-weight:800; color:var(--faint); font-variant-numeric:tabular-nums;
+             white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sm-cell._on .sm-val{ color:var(--ink); }
+    /* warna per tahap = warna kartu KPI, supaya sinyalnya konsisten se-dashboard */
+    .sm-cell._s1{ color:var(--s-bahan); }     .sm-cell._s2{ color:var(--s-central); }
+    .sm-cell._s3{ color:var(--s-machining); } .sm-cell._s4{ color:var(--s-banding); }
+    .sm-cell._s5{ color:var(--s-sanding); }   .sm-cell._s6,
+    .sm-cell._s7{ color:var(--s-qi); }
+    .sm-none{ font-size:0.72rem; color:var(--muted); padding:6px 0; }
+    .sm-warn{ font-size:0.68rem; color:#B45309; margin-top:8px; }
+    /* baris item bisa diklik -> expand rincian material */
+    .sm-row{ cursor:pointer; border-radius:8px; }
+    .sm-row:hover{ background:#F7F9FC; }
+    .sm-row:focus{ outline:2px solid rgba(47,111,237,.35); outline-offset:1px; }
+    .sm-caret{ display:inline-block; margin-right:5px; color:var(--faint); transition:transform .15s ease; }
+    .sm-row._open .sm-caret{ transform:rotate(90deg); color:var(--primary); }
+    .sm-det{ padding:2px 0 12px 78px; }
+    .sm-dtab{ width:100%; border-collapse:collapse; }
+    .sm-dtab th{ text-align:left; font-size:0.62rem; text-transform:uppercase; letter-spacing:.03em;
+                 color:var(--muted); font-weight:700; padding:6px 8px; border-bottom:1px solid var(--hair); white-space:nowrap; }
+    .sm-dtab td{ font-size:0.76rem; color:var(--ink); padding:6px 8px; border-bottom:1px solid var(--hair2); vertical-align:top; }
+    .sm-dtab td.num, .sm-dtab th.num{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .sm-lok{ font-size:0.7rem; color:var(--muted); }
+    .sm-dim{ color:var(--faint); }
+    .sm-hint{ font-size:0.66rem; color:var(--faint); padding:6px 8px 0; }
+
+    /* ===== LEBAR KOLOM panel "Sales Order" — UBAH 3 ANGKA DI BAWAH INI SAJA =====
+       Catatan: table-layout:fixed membuat lebar dipatuhi persis. Bila total ketiga
+       angka LEBIH KECIL dari lebar panel, sisa ruang dibagi proporsional — jadi
+       angka-angka ini berperilaku sbg perbandingan. Supaya benar-benar pas, buat
+       totalnya mendekati lebar panel (kolom kanan ±260-320px). */
+    .cs-so table{
+      --so-w-no:     100px;   /* No.SO    — muat nomor SO 9-10 digit */
+      --so-w-item:   190px;   /* Item     — hanya berisi tombol (butuh ±80px) */
+      --so-w-date:  184px;   /* End Date — tanggal + badge SEJAJAR dlm 1 baris */
+      table-layout:fixed;
+    }
+    /* Ketiganya dipotong rapi (bukan meluber) bila angka di atas dikecilkan. */
+    .cs-so table th, .cs-so table td{ overflow:hidden; text-overflow:ellipsis; }
+    .cs-so table th:nth-child(1),
+    .cs-so table td:nth-child(1){ width:var(--so-w-no); white-space:nowrap; }
+    .cs-so table th:nth-child(2),
+    .cs-so table td:nth-child(2){ width:var(--so-w-item); white-space:nowrap; }
+    .cs-so table th:nth-child(3),
+    .cs-so table td:nth-child(3){ width:var(--so-w-date); }
+
+    /* --- Interaksi: klik baris Buyer -> filter panel Sales Order --- */
+    .cs-buyer tbody tr{ cursor:pointer; }
+    .cs-buyer tbody tr:hover td{ background:#F2F6FE; }
+    .cs-buyer tbody tr.is-sel td{ background:#E8F0FE; box-shadow:inset 3px 0 0 var(--primary); }
+    .cs-buyer tbody tr.is-sel td:not(.cs-rank){ color:var(--ink); font-weight:600; }
+    /* chip filter aktif di judul panel Sales Order */
+    .cs-fchip{ display:inline-flex; align-items:center; gap:6px; margin-left:8px; vertical-align:middle;
+               font-size:0.68rem; font-weight:700; color:var(--primary); background:rgba(47,111,237,.10);
+               border:1px solid rgba(47,111,237,.28); border-radius:999px; padding:1px 4px 1px 9px; max-width:100%; }
+    .cs-fchip-t{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px; }
+    .cs-fchip-x{ border:0; background:transparent; color:var(--primary); cursor:pointer; font-size:0.85rem;
+                 line-height:1; padding:2px 5px; border-radius:999px; }
+    .cs-fchip-x:hover{ background:rgba(47,111,237,.18); }
+
+    /* --- Pagination (Bahan Masuk / Buyer / Sales Order / drill-down) --- */
+    .cs-pager{ display:flex; align-items:center; justify-content:center; gap:10px; padding:8px 12px; border-top:1px solid var(--hair2); background:#fff; font-size:0.72rem; color:var(--muted); margin-top:auto; }
+    .cs-pg-btn{ border:1px solid var(--hair); background:#fff; color:var(--ink); border-radius:6px; min-width:26px; height:24px; cursor:pointer; font-size:0.95rem; line-height:1; padding:0 6px; }
+    .cs-pg-btn:hover:not(:disabled){ background:#f3f6fb; }
+    .cs-pg-btn:disabled{ opacity:0.4; cursor:default; }
+    .cs-pager-info{ font-variant-numeric:tabular-nums; white-space:nowrap; }
+  </style>
+</head>
+<body>
+
+  <div class="header-bar">
+    <div class="header-title">
+      <h1>Central Storage Dashboard</h1>
+      <p>Stok material per bagian &amp; pergerakan barang realtime &#8212; Plant 1000/2000 Surabaya</p>
+    </div>
+    <div class="header-user" onclick="toggleUserDropdown(event)"><span>User SAP: <%= lv_layout_user %></span>
+      <div class="user-dropdown" id="user-dropdown">
+        <div class="dropdown-userinfo"><%= lv_layout_user %></div>
+        <div class="dropdown-divider"></div>
+        <a href="javascript:void(0)" onclick="userLogout()"><svg class="ic" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> Logout</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="navbar">
+    <a href="index.htm" class="nav-btn active"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16"
+width="7" height="5"/></svg></span>Dashboard</a>
+    <a href="monitoring.htm" class="nav-btn"><span class="nav-icon"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>Monitoring</a>
+  </div>
+
+  <div class="content">
+    <!-- Panel Bahan Masuk (stok 2KCS, logika = kartu Central Storage) + Buyer ranking.
+         Diisi via AJAX dash_cs.htm saat load + auto-refresh 60 dtk. -->
+    <div class="cs-row">
+      <div class="cs-panel cs-masuk">
+        <div class="cs-panel-head">
+          <div class="cs-panel-title">Bahan Masuk<span class="cs-count" id="cs-masuk-count"></span></div>
+          <div class="cs-panel-sub">Real stock 2KCS &#8212; hanya SO+Item yang bahannya belum lengkap dikirim dari Plant 1000</div>
+        </div>
+        <div class="cs-scroll" id="cs-masuk-body"></div>
+      </div>
+      <div class="cs-col-right">
+        <div class="cs-panel cs-buyer">
+          <div class="cs-panel-head">
+            <div class="cs-panel-title">Buyer<span class="cs-count" id="cs-buyer-count"></span></div>
+            <div class="cs-panel-sub">Buyer dengan real stock di Central Storage (2KCS)</div>
+          </div>
+          <div class="cs-scroll" id="cs-buyer-body"></div>
+        </div>
+        <div class="cs-panel cs-so">
+          <div class="cs-panel-head">
+            <div class="cs-panel-title">Sales Order<span class="cs-count" id="cs-so-count"></span><span class="cs-fchip" id="cs-so-fchip" style="display:none;"></span></div>
+          </div>
+          <div class="cs-scroll" id="cs-so-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-refresh">
+      <button type="button" class="kpi-refresh-btn" onclick="loadKpi();loadCs(true)" title="Perbarui angka stok sekarang"><svg class="ic" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 
+0 1
+14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>&nbsp;Refresh</button>
+      <%-- Tombol "Mode TV" DISEMBUNYIKAN dulu (permintaan user). CSS body.tv-mode
+           & fungsi toggleTv() sengaja dibiarkan supaya mudah dipasang lagi. --%>
+      <span class="kpi-stamp"><span id="kpi-stamp-txt">Stok per <%= lv_ts_time %></span></span>
+    </div>
+
+    <!-- KPI bar: jumlah JENIS MATERIAL berstok per bagian (hover = SLoc cakupan;
+         KLIK kartu = tampilkan daftar material-nya di panel bawah) -->
+    <div class="kpi-bar">
+      <div class="kpi-card" data-sec="1" onclick="dashDetail(1,this)" title="Stok Unrestricted &mdash; Plant 1000 &middot; SLoc 1D00">
+        <div class="kpi-label">Bahan <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-value num-fmt"><%= lv_tot1 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w1 %>%;"></div></div>
+      </div>
+      <div class="kpi-card" data-sec="2" onclick="dashDetail(2,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2KCS">
+        <div class="kpi-label">Central Storage <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-value num-fmt"><%= lv_tot2 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w2 %>%;"></div></div>
+      </div>
+      <div class="kpi-card" data-sec="3" onclick="dashDetail(3,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 2261, 2262">
+        <div class="kpi-label">Machining <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-value num-fmt"><%= lv_tot3 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w3 %>%;"></div></div>
+      </div>
+      <div class="kpi-card" data-sec="4" onclick="dashDetail(4,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 22E2, 22E3">
+        <div class="kpi-label">Banding <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-value num-fmt"><%= lv_tot4 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w4 %>%;"></div></div>
+      </div>
+      <div class="kpi-card" data-sec="5" onclick="dashDetail(5,this)" title="Stok Unrestricted &mdash; Plant 2000 &middot; SLoc 229K">
+        <div class="kpi-label">Sanding <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-value num-fmt"><%= lv_tot5 %></div>
+        <div class="kpi-cap">jenis material berstok</div>
+        <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w5 %>%;"></div></div>
+      </div>
+      <div class="kpi-card kpi-qi" data-sec="6" onclick="dashDetail(6,this)" title="Stok Quality Inspection &mdash; Plant 1000 &middot; SLoc 1D00">
+        <div class="kpi-label">QI 1000 <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-value num-fmt"><%= lv_tot6 %></div>
+        <div class="kpi-cap">material dlm QI</div>
+        <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w6 %>%;"></div></div>
+      </div>
+      <div class="kpi-card kpi-qi" data-sec="7" onclick="dashDetail(7,this)" title="Stok Quality Inspection &mdash; Plant 2000 &middot; SLoc 2KCS, 2261, 2262, 22E2, 22E3, 229K">
+        <div class="kpi-label">QI 2000 <span class="kpi-caret"><svg class="ic" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></div>
+        <div class="kpi-value num-fmt"><%= lv_tot7 %></div>
+        <div class="kpi-cap">material dlm QI</div>
+        <div class="kpi-track"><div class="kpi-fill" style="width:<%= lv_w7 %>%;"></div></div>
+      </div>
+    </div>
+
+    <!-- Panel drill-down: diisi via AJAX (dash_detail.htm?sec=N) saat kartu diklik -->
+    <div id="kpi-detail" class="kpi-detail" style="display:none;"></div>
+
+    <!-- (Tabel "Jumlah SO+Item per Buyer & Lokasi" DIHAPUS atas permintaan user;
+         KPI di atas kini memakai stok riil, panel realtime di bawah tetap.) -->
+
+    <!-- (Panel realtime dipindah ke ticker fixed di dasar layar, lihat #ticker-bar) -->
+
+  </div>
+
+  <!-- Ticker realtime: item pergerakan berjalan kanan->kiri, fixed di dasar layar -->
+  <div class="ticker-bar" id="ticker-bar" title="Arahkan kursor untuk menjeda">
+    <div class="ticker-label"><svg class="cn-ring" viewBox="0 0 20 20" width="16" height="16"><circle cx="10" cy="10" r="8" fill="none" stroke="#334155" stroke-width="2"/><circle class="cn-ring-fg" id="feed-ring" cx="10" cy="10" r="8" fill="none" 
+stroke="#93c5fd" stroke-width="2" stroke-dasharray="50.265" stroke-dashoffset="0" transform="rotate(-90 10 10)"/></svg> Pergerakan Barang <span id="feed-status" class="ticker-status">&mdash;</span></div>
+    <div class="ticker-viewport"><div id="feed-list"></div></div>
+    <div class="ticker-dots" id="ticker-dots"></div>
+  </div>
+
+  <!-- Modal daftar SO Item (dibuka dari tombol kolom "Item" panel Sales Order).
+       Shell-nya terpisah dari #so-panel supaya keduanya bisa hidup berdampingan. -->
+  <div id="soi-ov" class="soi-ov" aria-hidden="true">
+    <div class="soi-modal" role="dialog" aria-modal="true" aria-labelledby="soi-title">
+      <div class="soi-head">
+        <div><div id="soi-title" class="soi-title">SO</div><div id="soi-sub" class="soi-sub"></div></div>
+        <button type="button" class="soi-close" onclick="closeSoItems()" title="Tutup (Esc)"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+      </div>
+      <div id="soi-body" class="soi-body"></div>
+    </div>
+  </div>
+
+  <!-- Side panel kanan: progres produksi SO (dibuka dari klik No. SO di drill-down) -->
+  <div id="so-overlay" class="so-overlay" onclick="closeSo()"></div>
+  <aside id="so-panel" class="so-panel" aria-hidden="true">
+    <div class="so-head">
+      <div><div id="so-title" class="so-title">SO</div><div id="so-scope" class="so-scope"></div></div>
+      <button class="so-close" onclick="closeSo()" title="Tutup"><svg class="ic" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div id="so-body" class="so-body"></div>
+  </aside>
+
+  <script>
+    /* User dropdown (header) */
+    function toggleUserDropdown(e) {
+      e.stopPropagation();
+      var dd = document.getElementById('user-dropdown');
+      if (dd) dd.classList.toggle('open');
+    }
+    document.addEventListener('click', function(e) {
+      var dd = document.getElementById('user-dropdown');
+      var hu = document.querySelector('.header-user');
+      if (dd && hu && !hu.contains(e.target)) { dd.classList.remove('open'); }
+    });
+    function userLogout() { window.location.href = 'index.htm?~logoff'; }
+
+    /* Format angka id-ID (titik ribuan) — mandiri, tidak bergantung js.js */
+    document.querySelectorAll('.num-fmt').forEach(function(el) {
+      var v = parseFloat(el.textContent.trim());
+      if (!isNaN(v)) {
+        el.textContent = v.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+      }
+    });
+
+    /* --- Realtime feed: polling dash_feed.htm tiap 15 dtk --- */
+    function feedEsc(s){ var d=document.createElement('div'); d.textContent = (s==null?'':String(s)); return d.innerHTML; }
+    /* feedEsc TIDAK meng-escape kutip ganda -> tak aman utk isi atribut.
+       attrEsc dipakai bila nilainya masuk ke dalam attr="..." (mis. title buyer). */
+    function attrEsc(s){ return feedEsc(s).replace(/"/g, '&quot;'); }
+    /* Bar realtime: satu item, berganti fade tiap ~4 dtk (tak scroll).
+       Data (rows) di-refresh tiap 15 dtk oleh loadFeed; rotasi berjalan
+       terpisah & pakai data terbaru. Jeda saat kursor hover. */
+    var _fdRows = [], _fdIdx = 0, _fdPaused = false, _fdPausedByClick = false, _fdTimer = null, _fdDotEl = null;
+    function feedItemHtml(r){
+      return '<span class="fd-time">'+feedEsc(r.waktu)+'</span>'
+        + '<span class="fd-mat">'+feedEsc(r.matnr)+' '+feedEsc(r.maktx)+'</span>'
+        + '<span class="fd-move">'+feedEsc(r.from)+' <svg class="ic" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg> '+feedEsc(r.to)+'</span>'
+        + '<span class="fd-gerakan">'+feedEsc(r.gerakan)+'</span>'
+        + '<span class="fd-qty">'+feedEsc(r.qty)+'</span>'
+        + '<span class="fd-buyer">'+feedEsc(r.buyer)+'</span>';
+    }
+    function renderDots(){
+      _fdDotEl = document.getElementById('ticker-dots');
+      if(!_fdDotEl) return;
+      var h = '';
+      for(var i=0;i<_fdRows.length;i++){
+        h += '<span class="ticker-dot'+(i===_fdIdx?' active':'')+'" data-idx="'+i+'"></span>';
+      }
+      _fdDotEl.innerHTML = h;
+    }
+    function updateDots(){
+      if(!_fdDotEl) return;
+      var dots = _fdDotEl.children;
+      for(var i=0;i<dots.length;i++){ dots[i].classList.toggle('active',i===_fdIdx); }
+    }
+    function setFeedItem(html, noFade){
+      var el = document.getElementById('feed-list');
+      if(!el) return;
+      if(noFade){ el.classList.remove('fd-out'); el.innerHTML = html; return; }
+      el.classList.add('fd-out');            // fade-out
+      setTimeout(function(){                 // ganti isi lalu fade-in
+        el.innerHTML = html;
+        el.classList.remove('fd-out');
+      }, 350);
+    }
+    function showFeedItem(){
+      if(!_fdRows.length) return;
+      if(_fdIdx >= _fdRows.length) _fdIdx = 0;
+      setFeedItem(feedItemHtml(_fdRows[_fdIdx]));
+      updateDots();
+    }
+    function startFeedRotate(){
+      if(_fdTimer) return;                   // sudah jalan
+      _fdTimer = setInterval(function(){
+        if(_fdPaused || _fdRows.length < 2) return;
+        _fdIdx = (_fdIdx + 1) % _fdRows.length;
+        showFeedItem();
+      }, 4000);
+    }
+    function renderFeed(rows){
+      var wasEmpty = (_fdRows.length === 0);
+      _fdRows = (rows || []).slice(0, 20);
+      if(!_fdRows.length){
+        _fdIdx = 0;
+        setFeedItem('<span class="ticker-empty">Belum ada pergerakan pada window terkini.</span>', true);
+        renderDots();
+        return;
+      }
+      if(_fdIdx >= _fdRows.length) _fdIdx = 0;
+      renderDots();
+      if(wasEmpty){ showFeedItem(); }        // tampilkan segera saat pertama ada data
+      startFeedRotate();
+    }
+    function loadFeed(){
+      var ring = document.getElementById('feed-ring');
+      if(ring) ring.classList.add('_stuck');
+      fetch('dash_feed.htm', { headers: { 'Accept': 'application/json' }, cache: 'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(rows){
+          renderFeed(rows);
+          var s = document.getElementById('feed-status');
+          if(s) s.textContent = 'diperbarui ' + new Date().toLocaleTimeString('id-ID');
+          startProgress('feed-ring', 30000);
+        })
+        .catch(function(){
+          var s = document.getElementById('feed-status');
+          if(s) s.textContent = 'gagal memuat — memakai data terakhir';
+        });
+    }
+    skelTicker();   // skeleton di ticker sampai data pertama masuk
+    startProgress('feed-ring', 30000);
+    loadFeed();
+    // interval loadFeed dipindah ke poller terpusat (startPolling) di bawah
+
+    /* Jeda rotasi saat kursor di atas bar (biar bisa dibaca); klik/tap toggle manual */
+    (function(){
+      var bar = document.getElementById('ticker-bar');
+      if(!bar) return;
+      bar.addEventListener('mouseenter', function(){ if(!_fdPausedByClick) _fdPaused = true; });
+      bar.addEventListener('mouseleave', function(){ if(!_fdPausedByClick) _fdPaused = false; });
+      bar.addEventListener('click', function(e){
+        // klik dot -> lompat ke item tertentu (jangan toggle pause)
+        var dot = e.target;
+        if(dot.classList && dot.classList.contains('ticker-dot')){
+          _fdIdx = parseInt(dot.getAttribute('data-idx'), 10);
+          showFeedItem();
+          return;
+        }
+        _fdPausedByClick = !_fdPausedByClick;
+        _fdPaused = _fdPausedByClick;
+        bar.classList.toggle('_paused', _fdPausedByClick);
+        bar.title = _fdPausedByClick ? 'Klik untuk melanjutkan rotasi' : 'Arahkan kursor untuk menjeda';
+      });
+    })();
+
+    /* --- Countdown circular ring helper --- */
+    function startProgress(id, ms){
+      var ring = document.getElementById(id);
+      if(!ring) return;
+      ring.classList.remove('_stuck');
+      var r = parseFloat(ring.getAttribute('r'));
+      var c = 2 * Math.PI * r;
+      ring.setAttribute('stroke-dasharray', c);
+      ring.style.transition = 'none';
+      ring.style.strokeDashoffset = '0';
+      ring.getBoundingClientRect();
+      ring.style.transition = 'stroke-dashoffset ' + ms + 'ms linear';
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){ ring.style.strokeDashoffset = c; }); });
+    }
+    /* --- Auto-refresh angka KPI (stok) tanpa reload halaman --- */
+    function setKpiStamp(){
+      var s = document.getElementById('kpi-stamp-txt');
+      if(s) s.textContent = 'Stok per ' + new Date().toLocaleTimeString('id-ID');
+      startProgress('kpi-ring', 60000);
+    }
+    function loadKpi(){
+      var ring = document.getElementById('kpi-ring');
+      if(ring) ring.classList.add('_stuck');
+      fetch('dash_kpi.htm', { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          var tot = (d && d.mat) ? d.mat : [];   // dash_kpi balas {mat,row,so}
+          var vals  = document.querySelectorAll('.kpi-bar .kpi-value');
+          var fills = document.querySelectorAll('.kpi-bar .kpi-fill');
+          var max = 0; tot.forEach(function(v){ if(v > max) max = v; });
+          if(max === 0) max = 1;
+          tot.forEach(function(v, i){
+            if(vals[i])  vals[i].textContent = (typeof v === 'number') ? v.toLocaleString('id-ID') : v;
+            if(fills[i]) fills[i].style.width = Math.round(v * 100 / max) + '%';
+          });
+          setKpiStamp();
+        })
+        .catch(function(){ /* gagal -> biarkan _stuck */ });
+    }
+    // Async KPI: tampilkan skeleton di angka kartu, lalu MUAT via dash_kpi.htm
+    // SEGERA saat load (dulu server-render yg memblokir halaman ~15 dtk).
+    document.querySelectorAll('.kpi-bar .kpi-value').forEach(function(el){
+      el.innerHTML = '<span class="skel" style="display:inline-block;width:44px;height:1.5rem;border-radius:6px;vertical-align:middle;"></span>';
+    });
+    var _kpiStamp0 = document.getElementById('kpi-stamp-txt'); if(_kpiStamp0) _kpiStamp0.textContent = 'Memuat stok…';
+    loadKpi();   // muat KPI segera (async, tak memblokir tampilan halaman)
+    // interval loadKpi dipindah ke poller terpusat (startPolling) di bawah
+    startProgress('kpi-ring', 60000);
+
+    /* --- Panel Bahan Masuk + Buyer (dash_cs.htm) — refresh 60 dtk, cadence sama KPI --- */
+    function csProgClass(p){ if(p>=100) return '_g'; if(p<15) return '_r'; if(p<40) return '_y'; return ''; }
+    /* --- Pagination helpers (dipakai 3 panel cs + drill-down) --- */
+    /* Baris per halaman. HARUS selaras dgn --cs-h-so / --cs-h-buyer di CSS:
+       .cs-scroll overflow:hidden, jadi kelebihan baris TERPOTONG (bukan scroll).
+       Perkiraan: 1 baris ~34px; ruang = tinggi panel - header tabel (~27) - pager (~41).
+       Angka di bawah disisakan margin supaya deskripsi material yg membungkus
+       ke 2 baris tidak langsung memotong baris terakhir. */
+    var CS_PP_MASUK = 19, CS_PP_BUYER = 6, CS_PP_SOS = 10;
+    var _pgM = { rows:[], page:0 }, _pgB = { rows:[], page:0 }, _pgS = { rows:[], page:0 };
+    function clampPage(st, pp){
+      var mx = Math.max(0, Math.ceil(st.rows.length / pp) - 1);
+      if(st.page > mx) st.page = mx;
+      if(st.page < 0) st.page = 0;
+    }
+    function pagerHtml(page, pp, total){
+      if(total <= pp) return '';                 // 1 halaman -> tak perlu pager
+      var pages = Math.ceil(total / pp) || 1;
+      var start = total ? (page * pp + 1) : 0;
+      var end = Math.min((page + 1) * pp, total);
+      return '<div class="cs-pager">'
+        + '<button type="button" class="cs-pg-btn" data-pg="prev"'+(page <= 0 ? ' disabled' : '')+' title="Sebelumnya">&lsaquo;</button>'
+        + '<span class="cs-pager-info">'+start+'&ndash;'+end+' / '+total+' &middot; hal '+(page+1)+'/'+pages+'</span>'
+        + '<button type="button" class="cs-pg-btn" data-pg="next"'+(page >= pages-1 ? ' disabled' : '')+' title="Berikutnya">&rsaquo;</button>'
+        + '</div>';
+    }
+    function wirePager(scopeEl, onPrev, onNext){
+      scopeEl.querySelectorAll('.cs-pg-btn').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          if(btn.getAttribute('data-pg') === 'prev') onPrev(); else onNext();
+        });
+      });
+    }
+
+    function renderCsMasuk(rows){ _pgM.rows = rows || []; drawCsMasuk(); }
+    function drawCsMasuk(){
+      var el = document.getElementById('cs-masuk-body');
+      if(!el) return;
+      var cnt = document.getElementById('cs-masuk-count'); if(cnt) cnt.textContent = _pgM.rows.length;
+      if(!_pgM.rows.length){ el.innerHTML = '<div class="loading">Tidak ada stok di Central Storage (2KCS).</div>'; return; }
+      clampPage(_pgM, CS_PP_MASUK);
+      var start = _pgM.page * CS_PP_MASUK, slice = _pgM.rows.slice(start, start + CS_PP_MASUK);
+      var h = '<table><thead><tr>'
+        + '<th title="Nomor material (tanpa leading zero).">Material</th>'
+        + '<th title="Nama / deskripsi material.">Deskripsi</th>'
+        + '<th title="Nomor Sales Order &amp; item pemilik stok SO ini. Klik No.SO / Item untuk buka panel kanan: order yang BELUM SELESAI berdasarkan MRP (PNL: PN1/PN2, Moulding: WM1/WM2). (stok bebas = tanpa SO)">No.SO / Item</th>'
+        + '<th title="Jumlah stok di Central Storage (2KCS), status Unrestricted, dalam satuan dasar material.">Qty</th>'
+        + '<th title="Progres SO+Item ini: jumlah material yang produksinya sudah 100% dibagi total material (order MRP PNL/Moulding). Sama untuk semua baris SO+Item yang sama.">Progres</th>'
+        + '</tr></thead><tbody>';
+      slice.forEach(function(r){
+        var soCell;
+        if(r.so){
+          soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" title="Buka panel kanan: order belum selesai SO ini (PNL/Moulding)">'+feedEsc(r.so)+'</span>'
+            + (r.item ? ' / <span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" title="Buka panel kanan: order belum selesai item ini (PNL/Moulding)">'+feedEsc(r.item)+'</span>' : '');
+        } else { soCell = '<span style="color:#9ca3af;">(stok bebas)</span>'; }
+        var progCell;
+        if(r.prog === null || typeof r.prog === 'undefined'){
+          progCell = '<span style="color:#cbd5e1;">&mdash;</span>';
+        } else {
+          var p = parseInt(r.prog, 10); if(isNaN(p)) p = 0;
+          progCell = '<div class="cs-prog"><div class="cs-prog-fill '+csProgClass(p)+'" style="width:'+p+'%"></div></div><span class="cs-prog-t">'+p+'%</span>';
+        }
+        h += '<tr><td><code>'+feedEsc(r.matnr)+'</code></td><td>'+feedEsc(r.maktx)+'</td><td>'+soCell+'</td>'
+          + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+progCell+'</td></tr>';
+      });
+      h += '</tbody></table>' + pagerHtml(_pgM.page, CS_PP_MASUK, _pgM.rows.length);
+      el.innerHTML = h;
+      el.querySelectorAll('.so-link').forEach(function(a){
+        a.addEventListener('click', function(){ openMrp(a.getAttribute('data-so'), ''); });
+      });
+      el.querySelectorAll('.item-link').forEach(function(a){
+        a.addEventListener('click', function(){ openMrp(a.getAttribute('data-so'), a.getAttribute('data-item')); });
+      });
+      wirePager(el, function(){ _pgM.page--; drawCsMasuk(); }, function(){ _pgM.page++; drawCsMasuk(); });
+    }
+
+    /* Buyer terpilih (klik baris panel Buyer) -> panel Sales Order hanya
+       menampilkan SO milik buyer ini. Murni sisi klien: _pgS.rows tetap berisi
+       SEMUA SO, penyaringan dilakukan saat menggambar, jadi auto-refresh 180 dtk
+       tidak menghapus filter. '' = tampilkan semua (default). */
+    var _csBuyerSel = '';
+    function setCsBuyer(name){
+      var v = name || '';
+      _csBuyerSel = (v === _csBuyerSel) ? '' : v;   // klik baris yg sama = batal filter
+      _pgS.page = 0;                                 // filter berubah -> balik ke hal 1
+      drawCsBuyer(); drawCsSos();
+    }
+    function csSosRows(){
+      if(!_csBuyerSel) return _pgS.rows;
+      return _pgS.rows.filter(function(s){ return (s.buyer || '') === _csBuyerSel; });
+    }
+    function drawCsFchip(){
+      var el = document.getElementById('cs-so-fchip');
+      if(!el) return;
+      if(!_csBuyerSel){ el.style.display = 'none'; el.innerHTML = ''; return; }
+      el.innerHTML = '<span class="cs-fchip-t"></span>'
+        + '<button type="button" class="cs-fchip-x" title="Tampilkan semua buyer">&times;</button>';
+      var t = el.querySelector('.cs-fchip-t');
+      t.textContent = _csBuyerSel; t.title = _csBuyerSel;   // aman thd kutip di nama buyer
+      el.style.display = 'inline-flex';
+      el.querySelector('.cs-fchip-x').addEventListener('click', function(){ setCsBuyer(''); });
+    }
+
+    function renderCsBuyer(buyers){
+      _pgB.rows = buyers || [];
+      // buyer terpilih bisa hilang setelah refresh (stok 2KCS-nya habis) -> reset filter
+      if(_csBuyerSel && !_pgB.rows.some(function(b){ return (b.buyer || '') === _csBuyerSel; })){
+        _csBuyerSel = ''; _pgS.page = 0;
+      }
+      drawCsBuyer();
+    }
+    function drawCsBuyer(){
+      var el = document.getElementById('cs-buyer-body');
+      if(!el) return;
+      var cnt = document.getElementById('cs-buyer-count'); if(cnt) cnt.textContent = _pgB.rows.length;
+      if(!_pgB.rows.length){ el.innerHTML = '<div class="loading">Belum ada buyer dengan stok di 2KCS.</div>'; return; }
+      clampPage(_pgB, CS_PP_BUYER);
+      var start = _pgB.page * CS_PP_BUYER, slice = _pgB.rows.slice(start, start + CS_PP_BUYER);
+      var h = '<table><thead><tr>'
+        + '<th style="width:32px;" title="Peringkat berdasar jumlah jenis material terbanyak.">#</th>'
+        + '<th title="Nama customer / buyer.">Buyer</th>'
+        + '<th style="text-align:right;" title="Jumlah SO berbeda milik buyer ini yang punya stok di 2KCS.">Total SO</th>'
+        + '<th style="text-align:right;" title="Jumlah jenis material berbeda milik buyer ini yang ada di 2KCS.">Jenis Mat.</th>'
+        + '</tr></thead><tbody>';
+      slice.forEach(function(b, i){
+        var nm = b.buyer || '';
+        var sel = (nm && nm === _csBuyerSel);
+        // pakai INDEKS baris (bukan nama) di data-* : nama buyer bisa memuat kutip
+        h += '<tr class="cs-brow'+(sel ? ' is-sel' : '')+'" data-bidx="'+(start + i)+'"'
+          + ' title="'+(sel ? 'Klik lagi untuk menampilkan semua SO' : 'Klik untuk menyaring panel Sales Order pada buyer ini')+'">'
+          + '<td class="cs-rank">'+(start + i + 1)+'</td><td>'+feedEsc(nm)+'</td>'
+          + '<td class="num">'+feedEsc(b.so_count)+'</td><td class="num">'+feedEsc(b.mat_count)+'</td></tr>';
+      });
+      h += '</tbody></table>' + pagerHtml(_pgB.page, CS_PP_BUYER, _pgB.rows.length);
+      el.innerHTML = h;
+      el.querySelectorAll('.cs-brow').forEach(function(tr){
+        tr.addEventListener('click', function(){
+          var b = _pgB.rows[parseInt(tr.getAttribute('data-bidx'), 10)];
+          if(b) setCsBuyer(b.buyer);
+        });
+      });
+      wirePager(el, function(){ _pgB.page--; drawCsBuyer(); }, function(){ _pgB.page++; drawCsBuyer(); });
+    }
+
+    /* Sisa hari sampai End Date (enddate = 'YYYY-MM-DD' dari dash_cs.htm).
+       Dibandingkan pada tengah malam waktu lokal supaya "hari ini" selalu = 0,
+       berapa pun jam saat halaman dibuka. */
+    function daysLeft(enddate){
+      if(!enddate) return null;
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(enddate));
+      if(!m) return null;
+      var end = new Date(+m[1], +m[2] - 1, +m[3]);
+      if(isNaN(end.getTime())) return null;
+      var now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return Math.round((end - today) / 86400000);
+    }
+    function daysBadge(enddate){
+      var d = daysLeft(enddate);
+      if(d === null) return '<span class="cs-days _n" title="SO ini belum punya End Date (AFKO-GLTRP) di Plant 2000.">tanpa End Date</span>';
+      var cls, txt, tip;
+      if(d < 0)       { cls = '_late'; txt = 'telat ' + (-d) + ' hr'; tip = 'Sudah melewati End Date ' + (-d) + ' hari.'; }
+      else if(d === 0){ cls = '_r'; txt = 'hari ini'; tip = 'End Date jatuh hari ini.'; }
+      else if(d <= 3) { cls = '_r'; txt = 'sisa ' + d + ' hr'; tip = 'Mendesak: sisa ' + d + ' hari menuju End Date.'; }
+      else if(d <= 7) { cls = '_y'; txt = 'sisa ' + d + ' hr'; tip = 'Waspada: sisa ' + d + ' hari menuju End Date.'; }
+      else            { cls = '_g'; txt = 'sisa ' + d + ' hr'; tip = 'Aman: sisa ' + d + ' hari menuju End Date.'; }
+      return '<span class="cs-days ' + cls + '" title="' + tip + '">' + txt + '</span>';
+    }
+
+    function renderCsSos(sos){ _pgS.rows = sos || []; drawCsSos(); }
+    function drawCsSos(){
+      var el = document.getElementById('cs-so-body');
+      if(!el) return;
+      drawCsFchip();
+      var rows = csSosRows();                       // tersaring buyer terpilih (jika ada)
+      var cnt = document.getElementById('cs-so-count'); if(cnt) cnt.textContent = rows.length;
+      if(!rows.length){
+        el.innerHTML = '<div class="loading">' + (_csBuyerSel
+          ? 'Tidak ada SO milik <b>'+feedEsc(_csBuyerSel)+'</b> dengan material di 2KCS.'
+          : 'Belum ada SO dengan material di 2KCS.') + '</div>';
+        return;
+      }
+      var _pgSf = { rows:rows, page:_pgS.page };
+      clampPage(_pgSf, CS_PP_SOS); _pgS.page = _pgSf.page;
+      var start = _pgS.page * CS_PP_SOS, slice = rows.slice(start, start + CS_PP_SOS);
+      var h = '<table><thead><tr>'
+        + '<th title="Nomor Sales Order yang materialnya ada di 2KCS. Klik untuk lihat progres produksi.">No.SO</th>'
+        + '<th title="Klik tombolnya untuk melihat daftar SO Item milik SO ini beserta progres produksinya di Central Storage (2000/2KCS).">Item</th>'
+        + '<th title="End Date di kartu Sales Order = AFKO-GLTRP (Basic Finish Date / tanggal selesai dasar order produksi). Badge di bawahnya = sisa hari menuju tanggal tsb: merah = terlambat / <=3 hr, kuning = 4-7 hr, hijau = >7 hr.">End Date</th>'
+        + '</tr></thead><tbody>';
+      slice.forEach(function(s){
+        h += '<tr><td><span class="so-link" data-so="'+feedEsc(s.so)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(s.so)+'</span></td>'
+          + '<td><button type="button" class="cs-itembtn" data-so="'+attrEsc(s.so)+'" title="Lihat daftar item SO '+attrEsc(s.so)+(s.buyer ? ' ('+attrEsc(s.buyer)+')' : '')+'">'
+          + '<svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/>'
+          + '<line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>'
+          + 'Lihat Item</button></td>'
+          + '<td><span class="cs-date">'+feedEsc(s.enddate||'-')+'</span>'+daysBadge(s.enddate)+'</td></tr>';
+      });
+      h += '</tbody></table>' + pagerHtml(_pgS.page, CS_PP_SOS, rows.length);
+      el.innerHTML = h;
+      el.querySelectorAll('.so-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), 2, '', '', false); });
+      });
+      el.querySelectorAll('.cs-itembtn').forEach(function(b){
+        b.addEventListener('click', function(){ openSoItems(b.getAttribute('data-so')); });
+      });
+      wirePager(el, function(){ _pgS.page--; drawCsSos(); }, function(){ _pgS.page++; drawCsSos(); });
+    }
+    function loadCs(fresh){
+      // fresh=true (dari tombol Refresh) -> ?fresh=1 lewati cache server (SHARED BUFFER).
+      // auto-poll & resume-visibility panggil tanpa arg -> pakai cache (cepat).
+      fetch('dash_cs.htm' + (fresh === true ? '?fresh=1' : ''), { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          renderCsMasuk((d && d.rows)   ? d.rows   : []);
+          renderCsBuyer((d && d.buyers) ? d.buyers : []);
+          renderCsSos((d && d.sos)      ? d.sos    : []);
+        })
+        .catch(function(){
+          var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body'), s = document.getElementById('cs-so-body');
+          if(m) m.innerHTML = '<div class="err">Gagal memuat data. Coba Refresh.</div>';
+          if(b) b.innerHTML = '<div class="err">Gagal memuat data.</div>';
+          if(s) s.innerHTML = '<div class="err">Gagal memuat data.</div>';
+        });
+    }
+    (function(){   // skeleton sampai data pertama masuk
+      var m = document.getElementById('cs-masuk-body'), b = document.getElementById('cs-buyer-body'), s = document.getElementById('cs-so-body');
+      if(m) m.innerHTML = '<div class="skel-wrap">' + skelRows(6, 5) + '</div>';
+      if(b) b.innerHTML = '<div class="skel-wrap">' + skelRows(5, 3) + '</div>';
+      if(s) s.innerHTML = '<div class="skel-wrap">' + skelRows(4, 3) + '</div>';
+    })();
+    loadCs();
+
+    /* --- Poller terpusat + jeda saat tab tidak terlihat (Page Visibility) ---
+       Hemat DB: saat tab disembunyikan SEMUA polling dihentikan; saat kembali
+       terlihat, data di-refresh sekali lalu polling dilanjut. Interval dilonggarkan
+       (feed 30 dtk, KPI 60 dtk, cs 180 dtk) karena stok/produksi berubah lambat. */
+    var _poll = {};
+    function startPolling(){
+      stopPolling();
+      _poll.feed = setInterval(loadFeed, 30000);
+      _poll.kpi  = setInterval(loadKpi, 60000);
+      _poll.cs   = setInterval(loadCs, 180000);
+    }
+    function stopPolling(){
+      if(_poll.feed) clearInterval(_poll.feed);
+      if(_poll.kpi)  clearInterval(_poll.kpi);
+      if(_poll.cs)   clearInterval(_poll.cs);
+      _poll = {};
+    }
+    document.addEventListener('visibilitychange', function(){
+      if(document.hidden){ stopPolling(); }
+      else { loadFeed(); loadKpi(); loadCs(); startPolling(); }
+    });
+    startPolling();
+
+    /* --- Mode TV (layar besar) — tombol DISEMBUNYIKAN dulu (permintaan user).
+       toggleTv dibiarkan agar mudah dipasang lagi; penerapan-otomatis dari
+       localStorage DIMATIKAN supaya tak ada tampilan "nyangkut" tanpa tombol. --- */
+    function toggleTv(){
+      var on = document.body.classList.toggle('tv-mode');
+      try { localStorage.setItem('dashTvMode', on ? '1' : '0'); } catch(e){}
+    }
+
+    /* --- Drill-down KPI: klik kartu -> daftar material berstok (AJAX) --- */
+    /* --- Skeleton loader helpers (shimmer) --- */
+    function skelRows(n, cols){
+      var w = ['2','3','1','1','2'], h = '';
+      for(var i=0;i<n;i++){
+        h += '<div class="skel-row">';
+        for(var c=0;c<cols;c++){ h += '<div class="skel" style="flex:'+w[c%w.length]+';"></div>'; }
+        h += '</div>';
+      }
+      return h;
+    }
+    function skelDrilldown(){
+      return '<div class="skel-wrap">'
+        + '<div class="skel" style="width:38%;height:16px;margin-bottom:12px;"></div>'
+        + '<div class="skel" style="width:62%;height:10px;margin-bottom:16px;"></div>'
+        + '<div style="display:flex;gap:12px;margin-bottom:14px;">'
+        +   '<div class="skel" style="width:130px;height:30px;"></div>'
+        +   '<div class="skel" style="width:130px;height:30px;"></div>'
+        +   '<div class="skel" style="flex:1;height:30px;"></div></div>'
+        + skelRows(7, 5) + '</div>';
+    }
+    function skelSidePanel(){
+      return '<div class="skel-wrap">'
+        + '<div class="skel" style="width:50%;height:12px;margin-bottom:14px;"></div>'
+        + '<div class="skel" style="width:100%;height:32px;margin-bottom:14px;"></div>'
+        + skelRows(6, 5) + '</div>';
+    }
+    function skelTicker(){
+      var el = document.getElementById('feed-list');
+      if(!el) return;
+      el.innerHTML =
+          '<span class="skel skel-dark" style="display:inline-block;width:230px;height:14px;margin:0 20px;"></span>'
+        + '<span class="skel skel-dark" style="display:inline-block;width:180px;height:14px;margin:0 20px;"></span>'
+        + '<span class="skel skel-dark" style="display:inline-block;width:210px;height:14px;margin:0 20px;"></span>'
+        + '<span class="skel skel-dark" style="display:inline-block;width:160px;height:14px;margin:0 20px;"></span>';
+    }
+    function dashDetail(sec, card){
+      var panel = document.getElementById('kpi-detail');
+      var cards = document.querySelectorAll('.kpi-card');
+      // toggle: klik kartu yang sedang terbuka -> tutup
+      if (panel.getAttribute('data-open') === String(sec) && panel.style.display !== 'none') {
+        dashDetailClose(); return;
+      }
+      cards.forEach(function(c){ c.classList.remove('active'); });
+      card.classList.add('active');
+      panel.setAttribute('data-open', String(sec));
+      _ddSec = sec;
+      var label = card.querySelector('.kpi-label')
+        ? card.querySelector('.kpi-label').textContent.replace(/▾/g,'').trim()
+        : ('Bagian ' + sec);
+      var tip = card.getAttribute('title') || '';
+      panel.style.display = 'block';
+      panel.innerHTML = skelDrilldown();
+      // kirim rentang tanggal filter atas -> dipakai hitung "terakhir masuk"
+      var fEl = document.querySelector('[name="date_from"]'),
+          tEl = document.querySelector('[name="date_to"]');
+      var qs = 'sec=' + encodeURIComponent(sec);
+      if (fEl && fEl.value) qs += '&from=' + encodeURIComponent(fEl.value);
+      if (tEl && tEl.value) qs += '&to='   + encodeURIComponent(tEl.value);
+      fetch('dash_detail.htm?' + qs, { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(data){ renderDetail(panel, label, tip, data); })
+        .catch(function(){ panel.innerHTML = '<div class="err">Gagal memuat detail. Coba klik lagi.</div>'; });
+    }
+
+    /* State drill-down: disimpan agar filter bisa re-render tanpa fetch ulang */
+    var _ddPanel=null, _ddRows=[], _ddLabel='', _ddTip='', _ddCount=0, _ddSec=0,
+        _ddCust='__all__', _ddSort='new', _ddSloc='__all__',
+        _ddCustList=[], _ddSlocList=[], _ddSearch='', _ddPage=0, _ddFocusSearch=false;
+    function renderDetail(panel, label, tip, data){
+      _ddPanel = panel;
+      _ddRows  = (data && data.rows) ? data.rows : [];
+      _ddCount = (data && typeof data.matcount !== 'undefined') ? data.matcount : _ddRows.length;
+      _ddLabel = label; _ddTip = tip;
+      _ddCust='__all__'; _ddSort='new'; _ddSloc='__all__'; _ddSearch=''; _ddPage=0;
+      dashRender();
+    }
+    function dashSetCust(v){ _ddCust = (v==='-1') ? '__all__' : _ddCustList[+v]; _ddPage=0; dashRender(); }
+    function dashSetSort(v){ _ddSort = v; _ddPage=0; dashRender(); }
+    function dashSetSloc(v){ _ddSloc = (v==='-1') ? '__all__' : _ddSlocList[+v]; _ddPage=0; dashRender(); }
+    function dashRender(){
+      var panel = _ddPanel; if(!panel) return;
+      var rows = _ddRows;
+      var closeBtn = '<button class="kpi-detail-close" onclick="dashDetailClose()" title="Tutup"><svg class="ic" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+      if(!rows.length){
+        panel.innerHTML = '<div class="kpi-detail-head"><div><div class="kpi-detail-title">'+feedEsc(_ddLabel)+'</div>'
+          + '<div class="kpi-detail-sub">'+feedEsc(_ddTip)+'</div></div>'+closeBtn+'</div>'
+          + '<div class="loading">Tidak ada material berstok di bagian ini.</div>';
+        return;
+      }
+      // customer & sloc unik dari data
+      var seenC={}, custs=[], seenS={}, slocs=[];
+      rows.forEach(function(r){
+        var b=r.buyer||''; if(!seenC[b]){ seenC[b]=1; custs.push(b); }
+        var s=r.lgort||''; if(s && !seenS[s]){ seenS[s]=1; slocs.push(s); }
+      });
+      custs.sort(); slocs.sort();
+      _ddCustList = custs; _ddSlocList = slocs;
+      var showSloc = (_ddSec===3 || _ddSec===4);   // hanya Machining & Banding
+      var q = (_ddSearch||'').trim().toLowerCase();
+      // filter: customer + sloc + pencarian (search kini bagian dari fr, bukan show/hide)
+      var fr = rows.filter(function(r){
+        if(_ddCust!=='__all__' && (r.buyer||'')!==_ddCust) return false;
+        if(showSloc && _ddSloc!=='__all__' && (r.lgort||'')!==_ddSloc) return false;
+        if(q){
+          var sstr = ((r.matnr||'')+' '+(r.maktx||'')+' '+(r.so||'')+' '+(r.item||'')).toLowerCase();
+          if(sstr.indexOf(q) === -1) return false;
+        }
+        return true;
+      });
+      // urut per "terakhir masuk"; tanggal kosong ditaruh paling belakang
+      fr.sort(function(a,b){
+        var x=a.lastin||'', y=b.lastin||'';
+        if(x!==y){
+          if(x==='') return 1; if(y==='') return -1;
+          return (_ddSort==='old') ? (x<y?-1:1) : (x<y?1:-1);
+        }
+        var m=a.matnr||'', n=b.matnr||''; return m<n?-1:(m>n?1:0);
+      });
+      // header
+      var h = '<div class="kpi-detail-head"><div><div class="kpi-detail-title">'+feedEsc(_ddLabel)+'</div>'
+        + '<div class="kpi-detail-sub">'+feedEsc(_ddTip)+' &middot; <b>'+_ddCount+'</b> jenis material &middot; '+fr.length+' baris tampil</div>'
+        + '</div>'+closeBtn+'</div>';
+      // filter bar (dropdown)
+      h += '<div class="dd-filters">';
+      h += '<label class="dd-f"><span>Customer</span><select onchange="dashSetCust(this.value)"><option value="-1"'+(_ddCust==='__all__'?' selected':'')+'>Semua</option>';
+      custs.forEach(function(c,i){ h += '<option value="'+i+'"'+(_ddCust===c?' selected':'')+'>'+feedEsc(c)+'</option>'; });
+      h += '</select></label>';
+      h += '<label class="dd-f"><span>Urutan</span><select onchange="dashSetSort(this.value)">'
+        + '<option value="new"'+(_ddSort==='new'?' selected':'')+'>Terbaru masuk</option>'
+        + '<option value="old"'+(_ddSort==='old'?' selected':'')+'>Terlama masuk</option>'
+        + '</select></label>';
+      if(showSloc){
+        h += '<label class="dd-f"><span>SLoc</span><select onchange="dashSetSloc(this.value)"><option value="-1"'+(_ddSloc==='__all__'?' selected':'')+'>Semua</option>';
+        slocs.forEach(function(s,i){ h += '<option value="'+i+'"'+(_ddSloc===s?' selected':'')+'>'+feedEsc(s)+'</option>'; });
+        h += '</select></label>';
+      }
+      h += '<label class="dd-f dd-f-grow"><span>Cari</span><input type="text" id="dd-search" class="dd-search" placeholder="Material / deskripsi / No. SO&hellip;" autocomplete="off" value="'+feedEsc(_ddSearch)+'"></label>';
+      h += '</div>';
+      // paginasi: 10 baris/halaman dari fr (sudah terfilter customer+sloc+cari & terurut)
+      var DD_PP = 10;
+      var ddPages = Math.max(1, Math.ceil(fr.length / DD_PP));
+      if(_ddPage > ddPages-1) _ddPage = ddPages-1;
+      if(_ddPage < 0) _ddPage = 0;
+      var ddStart = _ddPage * DD_PP, ddSlice = fr.slice(ddStart, ddStart + DD_PP);
+      // tabel flat
+      h += '<div class="kpi-detail-scroll"><table><thead><tr>'
+        + '<th>Material</th><th>Deskripsi</th><th>SLoc</th><th>Qty</th><th>No.SO / Item</th><th>Buyer</th><th>Terakhir Masuk</th>'
+        + '</tr></thead><tbody>';
+      if(!ddSlice.length){
+        h += '<tr><td colspan="7" class="loading" style="text-align:center;">Tidak ada baris yang cocok dengan pencarian.</td></tr>';
+      } else {
+        ddSlice.forEach(function(r){
+          var soCell;
+          if(r.so && r.so!=='-'){
+            soCell = '<span class="so-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item||'')+'" data-mat="'+feedEsc(r.matnr)+'" title="Progres produksi SO (semua item, baris ini disorot)">'+feedEsc(r.so)+'</span> / '
+              + (r.item
+                  ? '<span class="item-link" data-so="'+feedEsc(r.so)+'" data-item="'+feedEsc(r.item)+'" data-mat="'+feedEsc(r.matnr)+'" title="Progres produksi item ini (disorot di panel)">'+feedEsc(r.item)+'</span>'
+                  : '-');
+          } else { soCell = '-'; }
+          h += '<tr><td>'+feedEsc(r.matnr)+'</td><td>'+feedEsc(r.maktx)+'</td><td>'+feedEsc(r.lgort)+'</td>'
+            + '<td class="num">'+feedEsc(r.qty)+'</td><td>'+soCell+'</td><td>'+feedEsc(r.buyer)+'</td>'
+            + '<td>'+feedEsc(r.lastin||'-')+'</td></tr>';
+        });
+      }
+      h += '</tbody></table></div>';
+      h += pagerHtml(_ddPage, DD_PP, fr.length);
+      panel.innerHTML = h;
+      // klik No. SO -> sidebar tampil SEMUA item, baris sumber di-highlight (tanpa filter)
+      panel.querySelectorAll('.so-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec, a.getAttribute('data-item'), a.getAttribute('data-mat'), false); });
+      });
+      // klik Item -> highlight baris sumber DAN filter sidebar ke nomor item itu
+      panel.querySelectorAll('.item-link').forEach(function(a){
+        a.addEventListener('click', function(){ openSo(a.getAttribute('data-so'), _ddSec, a.getAttribute('data-item'), a.getAttribute('data-mat'), true); });
+      });
+      // Cari: kini RE-RENDER (search jadi bagian fr + paginasi). Fokus dipulihkan.
+      var ds = document.getElementById('dd-search');
+      if(ds){ ds.addEventListener('input', function(){ _ddSearch = ds.value; _ddPage = 0; _ddFocusSearch = true; dashRender(); }); }
+      if(_ddFocusSearch){
+        var s2 = document.getElementById('dd-search');
+        if(s2){ s2.focus(); var v = s2.value; s2.value = ''; s2.value = v; }   // cursor ke akhir
+        _ddFocusSearch = false;
+      }
+      // pager prev/next
+      wirePager(panel, function(){ _ddPage--; dashRender(); }, function(){ _ddPage++; dashRender(); });
+    }
+    function dashDetailClose(){
+      var panel = document.getElementById('kpi-detail');
+      panel.style.display = 'none';
+      panel.setAttribute('data-open', '');
+      document.querySelectorAll('.kpi-card').forEach(function(c){ c.classList.remove('active'); });
+    }
+
+    /* --- Side panel kanan: progres produksi SO (dash_so.htm) --- */
+    /* State side panel SO */
+    var _soRows=[], _soBuyer='', _soNum='';
+    function openSo(so, sec, presetItem, presetMat, doFilter){
+      var panel = document.getElementById('so-panel');
+      var ov    = document.getElementById('so-overlay');
+      var body  = document.getElementById('so-body');
+      _soNum = so;
+      document.getElementById('so-title').textContent = 'SO ' + so;
+      document.getElementById('so-scope').textContent = '';
+      body.innerHTML = skelSidePanel();
+      panel.classList.add('open'); panel.setAttribute('aria-hidden','false');
+      ov.classList.add('open');
+      fetch('dash_so.htm?so='+encodeURIComponent(so)+'&sec='+encodeURIComponent(sec), { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          document.getElementById('so-scope').textContent = d.scope || '';
+          _soRows  = (d && d.rows) ? d.rows : [];
+          _soBuyer = (d && d.buyer) ? d.buyer : '';
+          soRender();
+          // sorot baris sumber yang diklik (item + material)
+          if(presetItem){ soHighlight(presetItem, presetMat); }
+          // klik dari Item -> filter sidebar ke nomor item tsb; klik dari SO -> tidak difilter
+          if(doFilter && presetItem){
+            var si = document.getElementById('so-search');
+            if(si){ si.value = presetItem; soFilter(presetItem); }
+          }
+        })
+        .catch(function(){ body.innerHTML = '<div class="err">Gagal memuat data SO.</div>'; });
+    }
+    function closeSo(){
+      var panel = document.getElementById('so-panel');
+      panel.classList.remove('open'); panel.setAttribute('aria-hidden','true');
+      document.getElementById('so-overlay').classList.remove('open');
+    }
+
+    /* --- Modal "Lihat Item" (tombol kolom Item panel Sales Order) ---
+       ISI TUNGGAL: pemetaan real stock per SO Item. Tabel order produksi 2KCS
+       sudah DIHAPUS atas permintaan user — rincian order kini muncul saat baris
+       item di-expand (Target/Del/progres per material). */
+    function openSoItems(so){
+      if(!so) return;
+      var ov = document.getElementById('soi-ov');
+      document.getElementById('soi-title').textContent = 'SO ' + so + ' — Pemetaan Real Stock';
+      document.getElementById('soi-sub').textContent = 'Memuat…';
+      ov.classList.add('open'); ov.setAttribute('aria-hidden','false');
+      soiRender(so);
+    }
+    function closeSoItems(){
+      var ov = document.getElementById('soi-ov');
+      ov.classList.remove('open'); ov.setAttribute('aria-hidden','true');
+      document.getElementById('soi-body').innerHTML = '';
+    }
+    /* ===== Pemetaan real stock per SO Item =====================================
+       Sumber: dash_detail.htm sec=1..7 (endpoint drill-down kartu KPI yg SUDAH ada
+       -> tanpa perubahan ABAP). Tiap bagian diambil sekali lalu DI-CACHE di memori
+       browser selama SM_TTL, jadi popup berikutnya tidak menembak 7 request lagi.
+       Baris dash_detail sudah memuat so + item (keduanya tanpa leading zero). */
+    var SM_SECS = [
+      { sec:1, label:'Bahan',     full:'Pembahanan — 1000/1D00' },
+      { sec:2, label:'Central',   full:'Central Storage — 2000/2KCS' },
+      { sec:3, label:'Machining', full:'Machining — 2000/2261,2262' },
+      { sec:4, label:'Banding',   full:'Banding — 2000/22E2,22E3' },
+      { sec:5, label:'Sanding',   full:'Sanding — 2000/229K' },
+      { sec:6, label:'QI 1000',   full:'Quality Inspection — 1000/1D00' },
+      { sec:7, label:'QI 2000',   full:'Quality Inspection — 2000/2KCS..229K' }
+    ];
+    var SM_TTL = 120000;                       // 2 menit; stok berubah lambat
+    var _smCache = { at:0, data:null, inflight:null };
+    function smKey(v){ return String(v == null ? '' : v).replace(/^0+/, ''); }  // samakan leading zero
+    function loadStockMap(){
+      var now = Date.now();
+      if(_smCache.data && (now - _smCache.at) < SM_TTL) return Promise.resolve(_smCache.data);
+      if(_smCache.inflight) return _smCache.inflight;                 // hindari 7 request ganda
+      _smCache.inflight = Promise.all(SM_SECS.map(function(s){
+        return fetch('dash_detail.htm?sec='+s.sec, { headers:{'Accept':'application/json'}, cache:'no-store' })
+          .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+          .then(function(d){ return { sec:s.sec, rows:(d && d.rows) ? d.rows : [], err:false }; })
+          .catch(function(){ return { sec:s.sec, rows:[], err:true }; });   // 1 bagian gagal != semua gagal
+      })).then(function(res){
+        _smCache.data = res; _smCache.at = Date.now(); _smCache.inflight = null;
+        return res;
+      }, function(e){ _smCache.inflight = null; throw e; });
+      return _smCache.inflight;
+    }
+    /* Susun: { itemKey: { sec: {num, uom, mixed, mats:[...] } } } utk satu SO. */
+    function smBuild(secData, so){
+      var soK = smKey(so), map = {};
+      secData.forEach(function(sd){
+        sd.rows.forEach(function(r){
+          if(smKey(r.so) !== soK) return;
+          var it = smKey(r.item); if(!it) return;             // stok bebas: tak punya item
+          var m = /^\s*(-?[\d.]+)\s*(.*)$/.exec(String(r.qty || ''));
+          var num = m ? parseFloat(m[1]) : NaN, uom = m ? (m[2] || '').trim() : '';
+          if(isNaN(num)) num = 0;
+          if(!map[it]) map[it] = {};
+          if(!map[it][sd.sec]) map[it][sd.sec] = { num:0, uom:null, mixed:false, mats:[] };
+          var cell = map[it][sd.sec];
+          if(cell.uom === null) cell.uom = uom;
+          else if(cell.uom !== uom) cell.mixed = true;         // beda satuan -> tak boleh dijumlah
+          cell.num += num;
+          cell.mats.push({ matnr:r.matnr, maktx:r.maktx, qty:r.qty, lgort:r.lgort });
+        });
+      });
+      return map;
+    }
+    function smFmt(n){
+      if(!isFinite(n)) return '0';
+      return (Math.round(n * 1000) / 1000).toLocaleString('id-ID', { maximumFractionDigits:3 });
+    }
+    /* "12.5 PC" -> 12.5 (UoM dibuang; angka dipakai apa adanya). */
+    function smNum(s){
+      var m = /^\s*(-?[\d.]+)/.exec(String(s == null ? '' : s));
+      var n = m ? parseFloat(m[1]) : NaN;
+      return isNaN(n) ? 0 : n;
+    }
+
+    /* ===== Order produksi SO (utk QTY Target / QTY Del saat baris di-expand) =====
+       dash_so.htm?so=X&sec=N di-scope per plant/SLoc, jadi dipanggil utk sec 1..7
+       agar cakupannya SAMA dgn bar pemetaan. Payload-nya kecil (satu SO saja).
+       Di-cache PER SO supaya buka-tutup popup yg sama tidak menembak ulang. */
+    var _soOrd = {};                                   // so -> { at, rows, buyer, err }
+    function loadSoOrders(so){
+      var c = _soOrd[so];
+      if(c && c.data && (Date.now() - c.at) < SM_TTL) return Promise.resolve(c.data);
+      if(c && c.inflight) return c.inflight;
+      var slot = _soOrd[so] = _soOrd[so] || {};
+      slot.inflight = Promise.all(SM_SECS.map(function(s){
+        return fetch('dash_so.htm?so='+encodeURIComponent(so)+'&sec='+s.sec, { headers:{'Accept':'application/json'}, cache:'no-store' })
+          .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+          .then(function(d){ return { sec:s.sec, rows:(d && d.rows) ? d.rows : [], buyer:(d && d.buyer) || '', err:false }; })
+          .catch(function(){ return { sec:s.sec, rows:[], buyer:'', err:true }; });
+      })).then(function(res){
+        var out = { rows:[], buyer:'', err:res.some(function(x){ return x.err; }) };
+        res.forEach(function(x){
+          if(!out.buyer && x.buyer) out.buyer = x.buyer;
+          x.rows.forEach(function(r){ r._sec = x.sec; out.rows.push(r); });
+        });
+        slot.data = out; slot.at = Date.now(); slot.inflight = null;
+        return out;
+      }, function(e){ slot.inflight = null; throw e; });
+      return slot.inflight;
+    }
+    /* Agregasi order -> { itemKey: { matnr: {maktx, target, del} } } (qty dijumlah
+       antar order material yg sama; satuannya pasti sama krn material sama). */
+    function smOrdBuild(ordRows){
+      var byItem = {};
+      (ordRows || []).forEach(function(r){
+        var it = smKey(r.item); if(!it) return;
+        var mk = String(r.matnr || '');
+        if(!byItem[it]) byItem[it] = {};
+        if(!byItem[it][mk]) byItem[it][mk] = { maktx:r.maktx || '', target:0, del:0 };
+        byItem[it][mk].target += smNum(r.target);
+        byItem[it][mk].del    += smNum(r.del);
+      });
+      return byItem;
+    }
+    /* Rincian satu item (muncul saat baris di-expand): per MATERIAL, gabungan
+       stok (dash_detail) + QTY Target/Del order (dash_so). Progres = Del/Target. */
+    function smDetailHtml(stokPerSec, ordMats){
+      var mats = {};                                    // matnr -> {maktx, lok[], target, del}
+      SM_SECS.forEach(function(s){
+        var c = stokPerSec[s.sec]; if(!c) return;
+        c.mats.forEach(function(m){
+          if(!mats[m.matnr]) mats[m.matnr] = { maktx:m.maktx || '', lok:[], target:null, del:null };
+          mats[m.matnr].lok.push(s.label + ' ' + m.qty);
+        });
+      });
+      Object.keys(ordMats || {}).forEach(function(mk){
+        if(!mats[mk]) mats[mk] = { maktx:ordMats[mk].maktx, lok:[], target:null, del:null };
+        mats[mk].maktx = mats[mk].maktx || ordMats[mk].maktx;
+        mats[mk].target = ordMats[mk].target;
+        mats[mk].del    = ordMats[mk].del;
+      });
+      // Hitung progres lebih dulu, lalu SEMBUNYIKAN material yang sudah selesai
+      // DAN stoknya tidak ada lagi (tanpa stok + progres 100%) — tak actionable.
+      // Yang hanya salah satu (mis. 100% tapi stok masih ada) TETAP tampil.
+      var keys = [], hidden = 0;
+      Object.keys(mats).sort().forEach(function(mk){
+        var m = mats[mk];
+        m._prog = null;
+        if(m.target !== null && m.target > 0){
+          var p = Math.round(m.del / m.target * 100);
+          if(p > 100) p = 100; if(p < 0) p = 0;
+          m._prog = p;
+        }
+        if(!m.lok.length && m._prog === 100){ hidden++; return; }
+        keys.push(mk);
+      });
+      if(!keys.length){
+        return '<div class="sm-none">' + (hidden
+          ? 'Semua material item ini sudah 100% dan tidak ada stok tersisa ('+hidden+' material disembunyikan).'
+          : 'Tidak ada material untuk item ini.') + '</div>';
+      }
+      var h = '<table class="sm-dtab"><thead><tr><th>Material</th><th>Lokasi stok</th>'
+            + '<th class="num">QTY Target</th><th class="num">QTY Del</th><th>Progres</th></tr></thead><tbody>';
+      keys.forEach(function(mk){
+        var m = mats[mk], prog = m._prog;
+        h += '<tr><td>'+feedEsc(mk)+'<div class="so-mat-d">'+feedEsc(m.maktx)+'</div></td>'
+          + '<td class="sm-lok">'+(m.lok.length ? feedEsc(m.lok.join(' · ')) : '<span class="sm-dim">tanpa stok</span>')+'</td>'
+          + '<td class="num">'+(m.target === null ? '<span class="sm-dim">&mdash;</span>' : smFmt(m.target))+'</td>'
+          + '<td class="num">'+(m.del    === null ? '<span class="sm-dim">&mdash;</span>' : smFmt(m.del))+'</td>'
+          + '<td>'+(prog === null
+              ? '<span class="sm-dim">tanpa order</span>'
+              : '<div class="so-prog"><div class="so-prog-fill" style="width:'+prog+'%"></div></div><span class="so-prog-t">'+prog+'%</span>')
+          + '</td></tr>';
+      });
+      h += '</tbody></table>';
+      // jangan menyembunyikan data tanpa jejak — beri tahu berapa yang disaring
+      if(hidden) h += '<div class="sm-hint">'+hidden+' material sudah 100% &amp; tanpa stok — disembunyikan.</div>';
+      return h;
+    }
+
+    /* Mengembalikan Promise supaya pemanggil (dan uji) bisa menunggu selesainya. */
+    function smRender(so){
+      var box = document.getElementById('soi-map');
+      if(!box) return Promise.resolve();
+      return Promise.all([loadStockMap(), loadSoOrders(so)]).then(function(res){
+        var secData = res[0], ord = res[1];
+        var map = smBuild(secData, so), ordByItem = smOrdBuild(ord.rows);
+        // item = gabungan item yang punya stok + item yang punya order
+        var keys = [];
+        Object.keys(map).forEach(function(k){ if(keys.indexOf(k) < 0) keys.push(k); });
+        Object.keys(ordByItem).forEach(function(k){ if(keys.indexOf(k) < 0) keys.push(k); });
+        keys.sort(function(a, b){ return (parseInt(a,10) || 0) - (parseInt(b,10) || 0); });
+
+        var sub = document.getElementById('soi-sub');
+        if(sub){
+          var nMat = {};
+          Object.keys(map).forEach(function(k){
+            SM_SECS.forEach(function(s){
+              var c = map[k][s.sec]; if(c) c.mats.forEach(function(m){ nMat[m.matnr] = 1; });
+            });
+          });
+          sub.textContent = (ord.buyer ? ord.buyer + ' · ' : '')
+            + keys.length + ' item · ' + Object.keys(nMat).length + ' jenis material berstok';
+        }
+        if(!keys.length){ box.innerHTML = '<div class="sm-none">Tidak ada SO Item untuk dipetakan.</div>'; return; }
+
+        var h = '';
+        keys.forEach(function(k, idx){
+          var per = map[k] || {}, hit = 0, track = '';
+          SM_SECS.forEach(function(s){
+            var c = per[s.sec], n = c ? c.mats.length : 0, on = n > 0;
+            if(on) hit++;
+            // NILAI = JUMLAH JENIS MATERIAL (tanpa UoM); qty per material ada di tooltip & expand
+            var val = on ? String(n) : '&mdash;';
+            var tip = on
+              ? s.full + ' — ' + n + ' jenis material: ' + c.mats.map(function(m){ return m.matnr + ' ' + m.qty; }).join(', ')
+              : s.full + ' — tidak ada stok untuk item ini';
+            track += '<div class="sm-cell _s'+s.sec+(on ? ' _on' : '')+'" title="'+attrEsc(tip)+'">'
+                   + '<span class="sm-lbl">'+feedEsc(s.label)+'</span><span class="sm-val">'+val+'</span></div>';
+          });
+          h += '<div class="sm-row" data-item="'+attrEsc(k)+'" role="button" tabindex="0" '
+             + 'title="Klik untuk melihat rincian material, QTY Target &amp; QTY Del">'
+             + '<div class="sm-item"><span class="sm-caret">&rsaquo;</span>Item '+feedEsc(k)
+             + '<span>'+(hit ? hit + ' lokasi' : 'tanpa stok')+'</span></div>'
+             + '<div class="sm-track">'+track+'</div></div>'
+             + '<div class="sm-det" id="sm-det-'+idx+'" hidden>'
+             + smDetailHtml(per, ordByItem[k]) + '</div>';
+        });
+        var gagal = secData.filter(function(s){ return s.err; });
+        if(gagal.length || ord.err){
+          h += '<div class="sm-warn">Sebagian data tidak termuat'
+             + (gagal.length ? ' (stok bagian ' + gagal.map(function(s){ return s.sec; }).join(', ') + ')' : '')
+             + (ord.err ? ' (data order produksi)' : '')
+             + ' — angka di atas bisa belum lengkap.</div>';
+        }
+        box.innerHTML = h;
+        box.querySelectorAll('.sm-row').forEach(function(row, i){
+          var det = document.getElementById('sm-det-' + i);
+          function toggle(){
+            var show = det.hasAttribute('hidden');
+            if(show) det.removeAttribute('hidden'); else det.setAttribute('hidden','');
+            row.classList.toggle('_open', show);
+          }
+          row.addEventListener('click', toggle);
+          row.addEventListener('keydown', function(e){
+            if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggle(); }
+          });
+        });
+      }).catch(function(){
+        box.innerHTML = '<div class="err">Gagal memuat pemetaan stok.</div>';
+      });
+    }
+
+    function soiRender(so){
+      var body = document.getElementById('soi-body');
+      body.innerHTML = '<div class="sm-wrap"><div class="sm-sub">Posisi stok material di 7 tahap alur produksi. '
+        + 'Angka pada kotak = <b>jumlah jenis material</b> yang berstok di tahap itu. '
+        + 'Klik baris item untuk rincian material, QTY Target &amp; QTY Del.</div>'
+        + '<div id="soi-map"><div class="loading">Memuat pemetaan stok&hellip;</div></div></div>';
+      return smRender(so);
+    }
+
+    /* --- Side panel kanan versi MRP (dipakai panel Bahan Masuk) ---
+       Berbasis AFKO-DISPO: order BELUM SELESAI (Del<Target) utk SO(+Item),
+       dikelompokkan PNL (PN1/PN2) & Moulding (WM1/WM2). Endpoint dash_mrp.htm.
+       Memakai shell #so-panel yang sama (closeSo/overlay/Esc tetap berlaku). */
+    var _mrpRows=[], _mrpBuyer='', _mrpNum='';
+    function openMrp(so, item){
+      var panel = document.getElementById('so-panel');
+      var ov    = document.getElementById('so-overlay');
+      var body  = document.getElementById('so-body');
+      _mrpNum = so;
+      document.getElementById('so-title').textContent = 'SO ' + so + (item ? (' · Item ' + item) : '');
+      document.getElementById('so-scope').textContent = 'Order belum selesai · (Paneling/Moulding)';
+      body.innerHTML = skelSidePanel();
+      panel.classList.add('open'); panel.setAttribute('aria-hidden','false');
+      ov.classList.add('open');
+      fetch('dash_mrp.htm?so='+encodeURIComponent(so)+'&item='+encodeURIComponent(item||''), { headers:{'Accept':'application/json'}, cache:'no-store' })
+        .then(function(r){ if(!r.ok) throw new Error('http'); return r.json(); })
+        .then(function(d){
+          _mrpRows  = (d && d.rows) ? d.rows : [];
+          _mrpBuyer = (d && d.buyer) ? d.buyer : '';
+          mrpRender();
+        })
+        .catch(function(){ body.innerHTML = '<div class="err">Gagal memuat data MRP.</div>'; });
+    }
+    function mrpRender(){
+      var body = document.getElementById('so-body');
+      var rows = _mrpRows;
+      var h = '<div class="so-meta">Buyer: <b>'+feedEsc(_mrpBuyer||'-')+'</b> &middot; hanya order <b>belum selesai</b></div>';
+      if(!rows.length){
+        body.innerHTML = h + '<div class="loading">Tidak ada order belum selesai (Paneling/Moulding) untuk SO+Item ini.</div>';
+        return;
+      }
+      var cats = [{ key:'PNL', label:'Paneling' }, { key:'MOULDING', label:'Moulding' }];
+      cats.forEach(function(c){
+        var cr = rows.filter(function(r){ return r.cat === c.key; });
+        if(!cr.length) return;
+        h += '<div class="mrp-group"><div class="mrp-group-head">'+c.label+' <span class="mrp-gc">'+cr.length+'</span></div>';
+        h += '<table class="so-table"><thead><tr><th>Item</th><th>Material</th><th>MRP</th><th title="Storage Location order (AFPO-LGORT)">SLoc</th><th>Target</th><th>Del</th><th>Progres</th><th>Aksi</th></tr></thead><tbody>';
+        cr.forEach(function(r){
+          var p = parseInt(r.prog, 10); if(isNaN(p)) p = 0;
+          h += '<tr><td>'+feedEsc(r.item)+'</td>'
+            + '<td>'+feedEsc(r.matnr)+'<div class="so-mat-d">'+feedEsc(r.maktx)+'</div></td>'
+            + '<td><span class="mrp-badge">'+feedEsc(r.dispo)+'</span></td>'
+            + '<td>'+feedEsc(r.sloc||'-')+'</td>'
+            + '<td class="num">'+feedEsc(r.target)+'</td>'
+            + '<td class="num">'+feedEsc(r.del)+'</td>'
+            + '<td><div class="so-prog"><div class="so-prog-fill" style="width:'+p+'%"></div></div><span class="so-prog-t">'+p+'%</span></td>'
+            + '<td><a href="monitoring.htm?so_num='+encodeURIComponent(_mrpNum)+'&item_num='+encodeURIComponent(r.item)+'" class="so-mon-link" title="Lihat di halaman Monitoring">Lihat</a></td></tr>';
+        });
+        h += '</tbody></table></div>';
+      });
+      body.innerHTML = h;
+    }
+    function soRender(){
+      var body = document.getElementById('so-body');
+      var rows = _soRows;
+      var h = '<div class="so-meta">Buyer: <b>'+feedEsc(_soBuyer||'-')+'</b></div>';
+      if(!rows.length){ body.innerHTML = h + '<div class="loading">Tidak ada order produksi untuk SO ini di bagian tsb.</div>'; return; }
+      // kotak pencarian filter SO item (di bawah buyer)
+      h += '<div class="so-search-wrap"><input type="text" id="so-search" class="so-search" placeholder="Cari SO item (mis. 10)&hellip;" autocomplete="off"></div>';
+      h += '<table class="so-table"><thead><tr><th>Item</th><th>Order</th><th>Material</th><th>Target</th><th>Del</th><th>Progres</th><th>Aksi</th></tr></thead><tbody id="so-tbody">';
+      rows.forEach(function(r){
+        var p = parseInt(r.prog, 10); if (isNaN(p)) p = 0;
+        h += '<tr data-item="'+feedEsc(r.item||'')+'" data-mat="'+feedEsc(r.matnr||'')+'"><td>'+feedEsc(r.item)+'</td><td>'+feedEsc(r.aufnr)+'</td>'
+          + '<td>'+feedEsc(r.matnr)+'<div class="so-mat-d">'+feedEsc(r.maktx)+'</div></td>'
+          + '<td class="num">'+feedEsc(r.target)+'</td>'
+          + '<td class="num">'+feedEsc(r.del)+'</td>'
+          + '<td><div class="so-prog"><div class="so-prog-fill" style="width:'+p+'%"></div></div>'
+          + '<span class="so-prog-t">'+p+'% &middot; '+feedEsc(r.status)+'</span></td>'
+          + '<td><a href="monitoring.htm?so_num='+encodeURIComponent(_soNum)+'&item_num='+encodeURIComponent(r.item)+'" class="so-mon-link" title="Lihat di halaman Monitoring">Lihat</a></td></tr>';
+      });
+      h += '</tbody></table><div id="so-empty" class="loading" style="display:none;">Tidak ada SO item yang cocok.</div>';
+      body.innerHTML = h;
+      // filter tanpa re-render (fokus ketik tetap terjaga)
+      var inp = document.getElementById('so-search');
+      if(inp) inp.addEventListener('input', function(){ soFilter(inp.value); });
+    }
+    function soFilter(q){
+      q = (q || '').trim().toLowerCase();
+      var tb = document.getElementById('so-tbody');
+      if(!tb) return;
+      var trs = tb.querySelectorAll('tr'), shown = 0;
+      trs.forEach(function(tr){
+        var it = (tr.getAttribute('data-item') || '').toLowerCase();
+        var ok = (q === '') || (it.indexOf(q) !== -1);
+        tr.style.display = ok ? '' : 'none';
+        if(ok) shown++;
+      });
+      var em = document.getElementById('so-empty');
+      if(em) em.style.display = shown ? 'none' : 'block';
+    }
+    /* Sorot baris sidebar yang cocok dgn item (& material) yang diklik di kpi-detail */
+    function soHighlight(item, mat){
+      var tb = document.getElementById('so-tbody');
+      if(!tb) return;
+      var first = null;
+      tb.querySelectorAll('tr').forEach(function(tr){
+        tr.classList.remove('so-hl');
+        var it = tr.getAttribute('data-item') || '';
+        var mt = tr.getAttribute('data-mat') || '';
+        if(it === item && (!mat || mt === mat)){
+          tr.classList.add('so-hl');
+          if(!first) first = tr;
+        }
+      });
+      if(first && first.scrollIntoView) first.scrollIntoView({ block:'nearest' });
+    }
+    document.addEventListener('keydown', function(e){
+      if(e.key !== 'Escape') return;
+      var ov = document.getElementById('soi-ov');
+      if(ov && ov.classList.contains('open')) closeSoItems();   // modal paling atas -> tutup dulu
+      else closeSo();
+    });
+    // klik area gelap di luar kotak modal = tutup
+    (function(){
+      var ov = document.getElementById('soi-ov');
+      if(ov) ov.addEventListener('click', function(e){ if(e.target === ov) closeSoItems(); });
+    })();
+
+    /* Optimasi load: drill-down TIDAK lagi auto-buka saat halaman dibuka —
+       dulu memanggil dashDetail(1) yang menarik dash_detail.htm?sec=1 (termasuk
+       MSEG⨝MKPF "Terakhir Masuk" 30 hari) di first paint. Sekarang drill-down
+       hanya dimuat saat kartu KPI diklik. */
+  </script>
+  <div class="page-footer">Data per: <%= lv_ts_date %> <%= lv_ts_time %> WIB &bull; User: <%= lv_layout_user %></div>
+</body>
+</html>
