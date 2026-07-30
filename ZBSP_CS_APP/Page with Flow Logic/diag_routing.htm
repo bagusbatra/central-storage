@@ -32,6 +32,15 @@
 *&   G. Kandidat sumber PENGELOMPOKAN WC (prefix ARBPL / VERWE / CRCO-KOSTL)
 *&      -> SAP tidak punya field "grup/section" spt mockup; harus dipilih
 *&   H. PLAF — apakah "PLO" di mockup = planned order yang benar-benar ada
+*&   I. MASTER WORK CENTER — SELURUH work center Plant 1000 & 2000 dari CRHD,
+*&      INDEPENDEN dari order. Dikelompokkan per cost center, ditandai mana
+*&      yang SUDAH tercakup map_sec di index2.htm, dan menghasilkan baris
+*&      map_sec siap tempel untuk yang belum.
+*&      ⚠️ Penentuan "dipakai / tidak" SENGAJA MENGABAIKAN filter SO dan batas
+*&         jumlah order: disapu dari SELURUH order belum selesai dalam scope
+*&         DISPO (sama dgn populasi index2.htm), supaya daftar yang perlu
+*&         dipetakan DEFINITIF — bukan sepotong per SO yang memaksa menebak.
+*&         Ringan karena hanya AUFPL -> AFVC-ARBID -> CRCO; tanpa AFVV/AFRU.
 *&
 *& ⚠️ Tanpa filter SO, SELECT pertama menyapu SELURUH order ber-DISPO tsb.
 *&    Ada pembatas jumlah order (default 500) supaya AFVC/AFVV/AFRU tidak
@@ -500,6 +509,190 @@ IF lv_go = '1' AND lt_opcnt IS NOT INITIAL.
   IF sy-subrc = 0. lv_sample_aufnr = ls_opcnt-aufnr. ENDIF.
 ENDIF.
 
+" ===================================================================
+"  Section I — MASTER WORK CENTER (independen dari order)
+" ===================================================================
+TYPES: BEGIN OF ty_wcm,
+         objid TYPE crhd-objid, arbpl TYPE crhd-arbpl,
+         werks TYPE crhd-werks, ktext TYPE crtx-ktext, kostl TYPE crco-kostl,
+       END OF ty_wcm.
+TYPES: BEGIN OF ty_cc,
+         kostl  TYPE crco-kostl, wcs TYPE i, w1000 TYPE i, w2000 TYPE i,
+         contoh TYPE string,          " beberapa ARBPL sebagai contoh
+         nm1    TYPE crtx-ktext,      " nama WC pertama (petunjuk isi grup)
+         mapped TYPE abap_bool,
+         inuse  TYPE abap_bool,       " dipakai order dalam scope? <- YANG PENTING
+         sortk  TYPE i,               " 1=perlu dipetakan, 2=sudah, 3=tak terpakai
+       END OF ty_cc.
+DATA: lt_wcm    TYPE TABLE OF ty_wcm, ls_wcm TYPE ty_wcm,
+      lt_cc     TYPE TABLE OF ty_cc,  ls_cc  TYPE ty_cc,
+      lt_mapped TYPE TABLE OF crco-kostl,
+      lv_kmap   TYPE crco-kostl,
+      lv_ap     TYPE string.
+FIELD-SYMBOLS <cc> TYPE ty_cc.
+DATA: lv_wc_1000 TYPE i, lv_wc_2000 TYPE i, lv_cc_all TYPE i, lv_cc_unm TYPE i,
+      lv_wc_unm  TYPE i, lv_cc_use TYPE i,
+      lv_f_ord   TYPE i,   " order belum selesai dlm scope (SELURUH populasi)
+      lv_f_pl    TYPE i,   " rute (AUFPL) berbeda
+      lv_f_arb   TYPE i,   " work center berbeda yang dipakai
+      lv_f_out   TYPE i.   " ARBID di luar Plant 1000/2000
+
+" ⚠️ SALINAN dari blok map_sec di index2.htm — HARUS DIJAGA SINKRON.
+"    Dipakai hanya untuk menandai "sudah/belum dipetakan" di section I.
+DEFINE add_mapped.
+  lv_kmap = &1. APPEND lv_kmap TO lt_mapped.
+END-OF-DEFINITION.
+add_mapped '1122200003'.   " Pembahanan
+add_mapped '1122300001'.   " Pembahanan
+add_mapped '1123200000'.   " Panel & Pressing
+add_mapped '1123300000'.   " Panel & Pressing
+add_mapped '1123300009'.   " Panel & Pressing
+add_mapped '1131100001'.   " Machining
+add_mapped '1131100002'.   " Machining
+add_mapped '1131200000'.   " Edge Banding
+add_mapped '1131400002'.   " Assembling
+add_mapped '1111071004'.   " Pembahanan  — WC051 PEMBAHANAN PANEL CNC 3
+add_mapped '1111041101'.   " Machining   — WC074 PROSES MANUAL DOOR (asumsi)
+add_mapped '1111041102'.   " Machining   — WC072 CNC ROUTER HEIAN NC-531P-FS
+add_mapped '1111041207'.   " Machining   — WC294 MANUAL (asumsi)
+add_mapped '1111061107'.   " Machining   — WC151 CNC ROUTER HEIAN NC-431PF
+add_mapped '1111061108'.   " Machining   — WC152 CNC ROUTER KIKUKAWA NCT 246
+add_mapped '1111061204'.   " Machining   — WC158 CNC ROUTER HEIAN NC.362P
+add_mapped '1111081001'.   " Machining   — WC090 CASE GOOD C1 BED MACHINING MANUAL
+SORT lt_mapped.
+
+IF lv_go = '1'.
+  " Seluruh work center Plant 1000 & 2000 — TIDAK bergantung order/filter SO.
+  SELECT objid arbpl werks FROM crhd
+    INTO CORRESPONDING FIELDS OF TABLE lt_wcm
+    WHERE objty = 'A' AND werks IN ( '1000', '2000' ).
+  " ⚠️ CRHD time-dependent (BEGDA/ENDDA): SATU MESIN bisa punya BEBERAPA baris
+  "    dengan OBJID berbeda tapi ARBPL sama. Dedupe per OBJID saja membuat
+  "    jumlah mesin ter-overcount (terlihat sebagai "WC076, WC076" di kolom
+  "    contoh). Dedupe per (WERKS, ARBPL) = jumlah MESIN yang sebenarnya.
+  SORT lt_wcm BY objid. DELETE ADJACENT DUPLICATES FROM lt_wcm COMPARING objid.
+
+  IF lt_wcm IS NOT INITIAL.
+    DATA: lt_wtx TYPE TABLE OF ty_crtx, lt_wco TYPE TABLE OF ty_crco.
+    SELECT objid ktext FROM crtx INTO CORRESPONDING FIELDS OF TABLE lt_wtx
+      FOR ALL ENTRIES IN lt_wcm
+      WHERE objty = 'A' AND objid = lt_wcm-objid AND spras = sy-langu.
+    SORT lt_wtx BY objid. DELETE ADJACENT DUPLICATES FROM lt_wtx COMPARING objid.
+    SELECT objid kostl FROM crco INTO CORRESPONDING FIELDS OF TABLE lt_wco
+      FOR ALL ENTRIES IN lt_wcm
+      WHERE objty = 'A' AND objid = lt_wcm-objid.
+    SORT lt_wco BY objid. DELETE ADJACENT DUPLICATES FROM lt_wco COMPARING objid.
+
+    DATA lv_x TYPE sy-tabix.
+    LOOP AT lt_wcm INTO ls_wcm.
+      lv_x = sy-tabix.
+      READ TABLE lt_wtx INTO ls_crtx WITH KEY objid = ls_wcm-objid BINARY SEARCH.
+      IF sy-subrc = 0. ls_wcm-ktext = ls_crtx-ktext. ENDIF.
+      READ TABLE lt_wco INTO ls_crco WITH KEY objid = ls_wcm-objid BINARY SEARCH.
+      IF sy-subrc = 0. ls_wcm-kostl = ls_crco-kostl. ENDIF.
+      MODIFY lt_wcm FROM ls_wcm INDEX lv_x.
+    ENDLOOP.
+    " buang baris kembar hasil time-dependency (mesin yang sama)
+    SORT lt_wcm BY werks arbpl kostl.
+    DELETE ADJACENT DUPLICATES FROM lt_wcm COMPARING werks arbpl.
+    SORT lt_wcm BY kostl arbpl.
+  ENDIF.
+
+  " ===== Cost center yang BENAR-BENAR dipakai — CAKUPAN PENUH =====
+  " ⚠️ SENGAJA TIDAK mengikuti filter SO maupun batas jumlah order di atas.
+  "    Kalau ikut, daftarnya sepotong-sepotong: tiap SO memunculkan cost center
+  "    berbeda, dan pemetaan jadi kerja tebak-menebak. Di sini disapu SELURUH
+  "    order belum selesai dalam scope DISPO — sama persis dengan populasi yang
+  "    akan ditampilkan index2.htm, sehingga hasilnya DEFINITIF.
+  "    Ringan karena hanya butuh AUFPL -> AFVC-ARBID -> CRCO: TANPA AFVV,
+  "    TANPA AFRU, tanpa status per operasi.
+  TYPES: BEGIN OF ty_fpl,  aufpl TYPE afko-aufpl, END OF ty_fpl.
+  TYPES: BEGIN OF ty_farb, arbid TYPE afvc-arbid, END OF ty_farb.
+  DATA: lt_fpl  TYPE TABLE OF ty_fpl,  ls_fpl  TYPE ty_fpl,
+        lt_farb TYPE TABLE OF ty_farb, ls_farb TYPE ty_farb,
+        lt_cc_used TYPE TABLE OF crco-kostl.
+  SELECT k~aufpl
+    FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+    INTO CORRESPONDING FIELDS OF TABLE lt_fpl
+    WHERE a~psmng > 0 AND a~wemng < a~psmng
+      AND ( ( a~pwerk = '1000' AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' ) )
+         OR ( a~pwerk = '2000' AND k~dispo IN ( 'GA1', 'GA2', 'EB2' ) ) ).
+  lv_f_ord = lines( lt_fpl ).
+  DELETE lt_fpl WHERE aufpl IS INITIAL.
+  SORT lt_fpl BY aufpl. DELETE ADJACENT DUPLICATES FROM lt_fpl COMPARING aufpl.
+  lv_f_pl = lines( lt_fpl ).
+  IF lt_fpl IS NOT INITIAL.
+    SELECT arbid FROM afvc INTO CORRESPONDING FIELDS OF TABLE lt_farb
+      FOR ALL ENTRIES IN lt_fpl
+      WHERE aufpl = lt_fpl-aufpl.
+    SORT lt_farb BY arbid. DELETE ADJACENT DUPLICATES FROM lt_farb COMPARING arbid.
+  ENDIF.
+  lv_f_arb = lines( lt_farb ).
+  " ARBID -> cost center (lt_wco sudah memuat SELURUH work center Plant 1000/2000)
+  LOOP AT lt_farb INTO ls_farb.
+    READ TABLE lt_wco INTO ls_crco WITH KEY objid = ls_farb-arbid BINARY SEARCH.
+    IF sy-subrc = 0.
+      APPEND ls_crco-kostl TO lt_cc_used.
+    ELSE.
+      lv_f_out = lv_f_out + 1.      " work center di luar Plant 1000/2000
+    ENDIF.
+  ENDLOOP.
+  SORT lt_cc_used. DELETE ADJACENT DUPLICATES FROM lt_cc_used.
+
+  " Agregasi per cost center
+  LOOP AT lt_wcm INTO ls_wcm.
+    IF ls_wcm-werks = '1000'. lv_wc_1000 = lv_wc_1000 + 1.
+    ELSE.                     lv_wc_2000 = lv_wc_2000 + 1. ENDIF.
+    READ TABLE lt_cc ASSIGNING <cc> WITH KEY kostl = ls_wcm-kostl.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_cc ASSIGNING <cc>.
+      <cc>-kostl = ls_wcm-kostl.
+      <cc>-nm1   = ls_wcm-ktext.
+      READ TABLE lt_mapped TRANSPORTING NO FIELDS
+        WITH KEY table_line = ls_wcm-kostl BINARY SEARCH.
+      IF sy-subrc = 0. <cc>-mapped = abap_true. ENDIF.
+      READ TABLE lt_cc_used TRANSPORTING NO FIELDS
+        WITH KEY table_line = ls_wcm-kostl BINARY SEARCH.
+      IF sy-subrc = 0. <cc>-inuse = abap_true. ENDIF.
+      " urutan tampil: yang PERLU TINDAKAN di paling atas
+      IF <cc>-inuse = abap_true AND <cc>-mapped = abap_false.
+        <cc>-sortk = 1.                      " dipakai TAPI belum dipetakan
+      ELSEIF <cc>-inuse = abap_true.
+        <cc>-sortk = 2.                      " dipakai & sudah dipetakan
+      ELSE.
+        <cc>-sortk = 3.                      " tidak dipakai di scope ini
+      ENDIF.
+    ENDIF.
+    <cc>-wcs = <cc>-wcs + 1.
+    IF ls_wcm-werks = '1000'. <cc>-w1000 = <cc>-w1000 + 1.
+    ELSE.                     <cc>-w2000 = <cc>-w2000 + 1. ENDIF.
+    IF <cc>-wcs <= 6.
+      " CONDENSE dulu: ARBPL itu CHAR8 ber-spasi ekor, kalau langsung di-&&
+      " hasilnya bisa "WC041   , WC042   ".
+      lv_ap = ls_wcm-arbpl. CONDENSE lv_ap.
+      IF <cc>-contoh IS INITIAL.
+        <cc>-contoh = lv_ap.
+      ELSE.
+        <cc>-contoh = <cc>-contoh && `, ` && lv_ap.
+      ENDIF.
+    ELSEIF <cc>-wcs = 7.
+      <cc>-contoh = <cc>-contoh && ` ...`.
+    ENDIF.
+  ENDLOOP.
+  " yang perlu tindakan dulu, lalu yang isinya paling banyak
+  SORT lt_cc BY sortk ASCENDING wcs DESCENDING kostl ASCENDING.
+  lv_cc_all = lines( lt_cc ).
+  LOOP AT lt_cc INTO ls_cc.
+    IF ls_cc-inuse = abap_true.
+      lv_cc_use = lv_cc_use + 1.
+      IF ls_cc-mapped = abap_false.
+        lv_cc_unm = lv_cc_unm + 1.           " <- HANYA ini yang perlu dipetakan
+        lv_wc_unm = lv_wc_unm + ls_cc-wcs.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+ENDIF.
+
 " ===== Format qty -> string (tanpa grouping) =====
 DATA: lv_qc TYPE c LENGTH 40, lv_qs TYPE string.
 DEFINE fmt_q.
@@ -895,6 +1088,92 @@ ENDIF.
           ke <code>PLAF-PLNUM</code>. Kalau kosong, pakai nomor order produksi.
         </p>
       </div>
+
+      <!-- ================= I ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">I. Master Work Center (CRHD) &#8212; seluruh mesin Plant 1000 &amp; 2000, TIDAK tergantung filter SO</div>
+        <div class="dg-kpi">
+          <div><span class="k-lbl">Mesin Plant 1000</span><span class="k-val"><%= lv_wc_1000 %></span></div>
+          <div><span class="k-lbl">Mesin Plant 2000</span><span class="k-val"><%= lv_wc_2000 %></span></div>
+          <div><span class="k-lbl">Cost center (seluruh pabrik)</span><span class="k-val"><%= lv_cc_all %></span></div>
+          <div><span class="k-lbl">Dipakai (SELURUH populasi)</span><span class="k-val"><%= lv_cc_use %></span></div>
+          <div><span class="k-lbl">PERLU dipetakan</span><span class="k-val" style="color:#b45309;"><%= lv_cc_unm %></span></div>
+          <div><span class="k-lbl">Mesin di dalamnya</span><span class="k-val"><%= lv_wc_unm %></span></div>
+        </div>
+        <div class="dg-vd <% IF lv_cc_unm = 0. %>dg-good<% ELSE. %>dg-warn<% ENDIF. %>">
+          <% IF lv_cc_unm = 0. %>
+            SELESAI: seluruh cost center yang dipakai sudah terpetakan. Kelompok
+            &quot;Belum dipetakan&quot; di index2.htm akan kosong.
+          <% ELSE. %>
+            Yang perlu Anda petakan HANYA <strong><%= lv_cc_unm %></strong> cost center.
+          <% ENDIF. %>
+          Angka ini <strong>TIDAK mengikuti filter SO maupun batas jumlah order</strong> di atas &#8212;
+          disapu dari <strong><%= lv_f_ord %></strong> order belum selesai (<%= lv_f_pl %> rute,
+          <%= lv_f_arb %> work center) pada SELURUH populasi scope DISPO, sama persis dengan yang akan
+          ditampilkan index2.htm. Jadi daftarnya DEFINITIF, bukan sepotong per SO.
+          Sisanya dari total <%= lv_cc_all %> cost center milik unit lain (Chair, Metal, Painting,
+          Packing, RND, Maintenance, Logistik) yang tidak tersentuh scope Wood Furniture.
+          <% IF lv_f_out > 0. %>
+            <br>Catatan: <%= lv_f_out %> work center yang dipakai berada di LUAR Plant 1000/2000 dan
+            tidak ikut dipetakan di sini.
+          <% ENDIF. %>
+        </div>
+        <table class="dg-tbl">
+          <thead><tr>
+            <th>Status</th><th>Dipakai?</th><th>Cost Center</th>
+            <th style="text-align:right;">Jml WC</th>
+            <th style="text-align:right;">P1000</th><th style="text-align:right;">P2000</th>
+            <th>Contoh work center</th><th>Nama WC pertama (petunjuk isi)</th>
+          </tr></thead>
+          <tbody>
+            <% LOOP AT lt_cc INTO ls_cc. %>
+              <tr<% IF ls_cc-sortk = 1. %> style="background:#FFFBEB;"<% ELSEIF ls_cc-sortk = 3. %> style="color:#9ca3af;"<% ENDIF. %>>
+                <td><% IF ls_cc-mapped = abap_true. %>sudah<% ELSE. %><strong>BELUM</strong><% ENDIF. %></td>
+                <td><% IF ls_cc-inuse = abap_true. %><strong>ya</strong><% ELSE. %>&#8212;<% ENDIF. %></td>
+                <td class="dg-code"><%= ls_cc-kostl %></td>
+                <td class="num"><%= ls_cc-wcs %></td>
+                <td class="num"><%= ls_cc-w1000 %></td>
+                <td class="num"><%= ls_cc-w2000 %></td>
+                <td class="dg-code" style="font-weight:400;"><%= ls_cc-contoh %></td>
+                <td><%= ls_cc-nm1 %></td>
+              </tr>
+            <% ENDLOOP. %>
+            <% IF lt_cc IS INITIAL. %>
+              <tr><td colspan="8" style="text-align:center; color:#9ca3af; padding:20px;">Tidak ada work center pada Plant 1000/2000.</td></tr>
+            <% ENDIF. %>
+          </tbody>
+        </table>
+        <p class="dg-legend">
+          <strong>Latar kuning</strong> = perlu tindakan: dipakai TAPI belum ada di <code>map_sec</code>.
+          <strong>Baris abu-abu</strong> = tidak tersentuh scope Wood Furniture (milik unit lain)
+          &#8212; abaikan saja. Kolom <strong>Dipakai?</strong> dihitung dari SELURUH populasi order
+          belum selesai, bukan dari SO yang diketik di atas.
+          Kolom <strong>Jml WC</strong> sudah di-dedupe per (plant, ARBPL): satu mesin dengan beberapa
+          periode validitas di CRHD dihitung SEKALI. Angka ini adalah mesin yang benar-benar ada,
+          berbeda dari &quot;mesin terpakai&quot; di index2.htm yang hanya menghitung mesin dengan operasi
+          pada scope terpilih.
+        </p>
+      </div>
+
+      <% IF lv_cc_unm > 0. %>
+        <div class="dg-card">
+          <div class="dg-hd">I-b. Baris map_sec siap tempel (untuk cost center yang belum dipetakan)</div>
+          <p class="dg-legend" style="padding:12px 14px 4px;">
+            Daftar ini <strong>DEFINITIF</strong>: dihitung dari seluruh populasi order belum selesai
+            (<%= lv_f_ord %> order), bukan dari SO yang diketik &#8212; jadi tidak akan bertambah
+            saat Anda mencoba SO lain. Bukan pula seluruh <%= lv_cc_all %> cost center pabrik.
+            Salin ke blok <code>map_sec</code> di bagian
+            atas <code>index2.htm</code>, lalu ganti angka <code>9</code> dan teks
+            <code>GANTI: nama grup</code>. Angka = urutan tampil kelompok (1 = paling kiri).
+            Kelompok yang sudah ada: 1 Pembahanan &middot; 2 Panel &amp; Pressing &middot; 3 Machining
+            &middot; 4 Edge Banding &middot; 5 Assembling.
+            Jangan lupa tambahkan <code>add_mapped</code> yang sama di halaman ini agar status tetap sinkron.
+          </p>
+          <pre style="margin:0; padding:12px 14px; background:#0f172a; color:#e2e8f0; font-size:0.78rem; overflow-x:auto;"><% LOOP AT lt_cc INTO ls_cc. %><% IF ls_cc-sortk = 1 AND ls_cc-kostl IS NOT INITIAL. %>
+map_sec '<%= ls_cc-kostl %>' 9 'GANTI: nama grup'.   " <%= ls_cc-wcs %> WC &#183; <%= ls_cc-nm1 %><% ENDIF. %><% ENDLOOP. %>
+</pre>
+        </div>
+      <% ENDIF. %>
 
     <% ENDIF. %>
   </div>
