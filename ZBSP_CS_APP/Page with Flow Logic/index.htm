@@ -324,6 +324,40 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     /* --- Catatan rentang jadi eyebrow tenang --- */
     .date-range-note{ color:var(--muted); }
 
+    /* --- Badge sisa hari pada kolom End Date (panel Sales Order) ---
+       Ambang: lewat End Date / sisa <=3 hr = merah, 4-7 hr = kuning,
+       >7 hr = hijau, tanpa End Date = abu-abu. */
+    /* Badge sejajar (satu baris) dgn tanggalnya, bukan di bawahnya. */
+    .cs-days{ display:inline-block; margin-left:6px; font-size:0.66rem; font-weight:700; border-radius:999px;
+              padding:1px 7px; white-space:nowrap; vertical-align:middle; }
+    .cs-days._late{ color:#7F1D1D; background:#FEE2E2; border:1px solid #FCA5A5; }
+    .cs-days._r   { color:#7F1D1D; background:#FEE2E2; border:1px solid #FCA5A5; }
+    .cs-days._y   { color:#78350F; background:#FEF3C7; border:1px solid #FCD34D; }
+    .cs-days._g   { color:#14532D; background:#DCFCE7; border:1px solid #86EFAC; }
+    .cs-days._n   { color:var(--muted); background:#EEF1F6; border:1px solid var(--hair); }
+    .cs-date{ display:inline-block; font-variant-numeric:tabular-nums; white-space:nowrap; vertical-align:middle; }
+    /* ===== LEBAR KOLOM panel "Sales Order" — UBAH 3 ANGKA DI BAWAH INI SAJA =====
+       Kolom Buyer memotong nama panjang dengan ellipsis; nama utuh tetap muncul
+       sebagai tooltip saat sel-nya di-hover, jadi aman dipersempit.
+       Catatan: table-layout:fixed membuat lebar dipatuhi persis. Bila total ketiga
+       angka LEBIH KECIL dari lebar panel, sisa ruang dibagi proporsional — jadi
+       angka-angka ini berperilaku sbg perbandingan. Supaya benar-benar pas, buat
+       totalnya mendekati lebar panel (kolom kanan ±260-320px). */
+    .cs-so table{
+      --so-w-no:     100px;   /* No.SO    — muat nomor SO 9-10 digit */
+      --so-w-buyer:  190px;   /* Buyer    — sisanya dipotong ellipsis (tooltip utuh) */
+      --so-w-date:  184px;   /* End Date — tanggal + badge SEJAJAR dlm 1 baris */
+      table-layout:fixed;
+    }
+    /* Ketiganya dipotong rapi (bukan meluber) bila angka di atas dikecilkan. */
+    .cs-so table th, .cs-so table td{ overflow:hidden; text-overflow:ellipsis; }
+    .cs-so table th:nth-child(1),
+    .cs-so table td:nth-child(1){ width:var(--so-w-no); white-space:nowrap; }
+    .cs-so table th:nth-child(2),
+    .cs-so table td:nth-child(2){ width:var(--so-w-buyer); white-space:nowrap; }
+    .cs-so table th:nth-child(3),
+    .cs-so table td:nth-child(3){ width:var(--so-w-date); }
+
     /* --- Interaksi: klik baris Buyer -> filter panel Sales Order --- */
     .cs-buyer tbody tr{ cursor:pointer; }
     .cs-buyer tbody tr:hover td{ background:#F2F6FE; }
@@ -503,6 +537,9 @@ width="7" height="5"/></svg></span>Dashboard</a>
 
     /* --- Realtime feed: polling dash_feed.htm tiap 15 dtk --- */
     function feedEsc(s){ var d=document.createElement('div'); d.textContent = (s==null?'':String(s)); return d.innerHTML; }
+    /* feedEsc TIDAK meng-escape kutip ganda -> tak aman utk isi atribut.
+       attrEsc dipakai bila nilainya masuk ke dalam attr="..." (mis. title buyer). */
+    function attrEsc(s){ return feedEsc(s).replace(/"/g, '&quot;'); }
     /* Bar realtime: satu item, berganti fade tiap ~4 dtk (tak scroll).
        Data (rows) di-refresh tiap 15 dtk oleh loadFeed; rotasi berjalan
        terpisah & pakai data terbaru. Jeda saat kursor hover. */
@@ -797,6 +834,30 @@ width="7" height="5"/></svg></span>Dashboard</a>
       wirePager(el, function(){ _pgB.page--; drawCsBuyer(); }, function(){ _pgB.page++; drawCsBuyer(); });
     }
 
+    /* Sisa hari sampai End Date (enddate = 'YYYY-MM-DD' dari dash_cs.htm).
+       Dibandingkan pada tengah malam waktu lokal supaya "hari ini" selalu = 0,
+       berapa pun jam saat halaman dibuka. */
+    function daysLeft(enddate){
+      if(!enddate) return null;
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(enddate));
+      if(!m) return null;
+      var end = new Date(+m[1], +m[2] - 1, +m[3]);
+      if(isNaN(end.getTime())) return null;
+      var now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return Math.round((end - today) / 86400000);
+    }
+    function daysBadge(enddate){
+      var d = daysLeft(enddate);
+      if(d === null) return '<span class="cs-days _n" title="SO ini belum punya End Date (AFKO-GLTRP) di Plant 2000.">tanpa End Date</span>';
+      var cls, txt, tip;
+      if(d < 0)       { cls = '_late'; txt = 'telat ' + (-d) + ' hr'; tip = 'Sudah melewati End Date ' + (-d) + ' hari.'; }
+      else if(d === 0){ cls = '_r'; txt = 'hari ini'; tip = 'End Date jatuh hari ini.'; }
+      else if(d <= 3) { cls = '_r'; txt = 'sisa ' + d + ' hr'; tip = 'Mendesak: sisa ' + d + ' hari menuju End Date.'; }
+      else if(d <= 7) { cls = '_y'; txt = 'sisa ' + d + ' hr'; tip = 'Waspada: sisa ' + d + ' hari menuju End Date.'; }
+      else            { cls = '_g'; txt = 'sisa ' + d + ' hr'; tip = 'Aman: sisa ' + d + ' hari menuju End Date.'; }
+      return '<span class="cs-days ' + cls + '" title="' + tip + '">' + txt + '</span>';
+    }
+
     function renderCsSos(sos){ _pgS.rows = sos || []; drawCsSos(); }
     function drawCsSos(){
       var el = document.getElementById('cs-so-body');
@@ -816,11 +877,12 @@ width="7" height="5"/></svg></span>Dashboard</a>
       var h = '<table><thead><tr>'
         + '<th title="Nomor Sales Order yang materialnya ada di 2KCS. Klik untuk lihat progres produksi.">No.SO</th>'
         + '<th title="Nama customer / buyer SO.">Buyer</th>'
-        + '<th title="End Date di kartu Sales Order = AFKO-GLTRP (Basic Finish Date / tanggal selesai dasar order produksi).">End Date</th>'
+        + '<th title="End Date di kartu Sales Order = AFKO-GLTRP (Basic Finish Date / tanggal selesai dasar order produksi). Badge di bawahnya = sisa hari menuju tanggal tsb: merah = terlambat / <=3 hr, kuning = 4-7 hr, hijau = >7 hr.">End Date</th>'
         + '</tr></thead><tbody>';
       slice.forEach(function(s){
         h += '<tr><td><span class="so-link" data-so="'+feedEsc(s.so)+'" title="Progres produksi SO (Central Storage)">'+feedEsc(s.so)+'</span></td>'
-          + '<td>'+feedEsc(s.buyer)+'</td><td>'+feedEsc(s.enddate||'-')+'</td></tr>';
+          + '<td title="'+attrEsc(s.buyer)+'">'+feedEsc(s.buyer)+'</td>'
+          + '<td><span class="cs-date">'+feedEsc(s.enddate||'-')+'</span>'+daysBadge(s.enddate)+'</td></tr>';
       });
       h += '</tbody></table>' + pagerHtml(_pgS.page, CS_PP_SOS, rows.length);
       el.innerHTML = h;
