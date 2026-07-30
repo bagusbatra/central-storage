@@ -1,0 +1,902 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Page — diag_routing.htm  ::  DIAGNOSTIK Fase 0 (SEKALI PAKAI, READ-ONLY)
+*&---------------------------------------------------------------------*
+*& Tujuan: MEMBUKTIKAN apakah mockup "Component Movement" (index2.htm) bisa
+*& dijadikan halaman nyata. Mockup itu berdiri di atas RUTE OPERASI +
+*& KONFIRMASI PER OPERASI — sumbu yang BELUM PERNAH dibaca aplikasi ini
+*& (AFVV & AFRU tidak muncul sama sekali di repo). Kalau pabrik hanya
+*& melakukan GR di akhir order tanpa konfirmasi per operasi, heatmap Work
+*& Center & chip routing di mockup TIDAK punya sumber data.
+*&
+*& TIDAK MENULIS APA PUN. Hanya SELECT.
+*&
+*& Scope order mengikuti konvensi yang sudah dipakai backup/index2.htm:
+*&   AFPO(a) INNER JOIN AFKO(k), di-scope MRP controller (AFKO-DISPO):
+*&     Plant 1000 -> WM1/WM2/PN1/PN2   (Pembahanan)
+*&     Plant 2000 -> GA1/GA2/EB2       (Produksi)
+*&
+*& Yang dijawab halaman ini:
+*&   A. Populasi order dalam scope + apakah AUFPL (nomor rute) terisi
+*&   B. AFVC  — apakah order punya OPERASI + DISTRIBUSI jumlah operasi per
+*&      order (1 / 2 / 3 / 4 / 5+). Distribusi inilah penentunya, BUKAN
+*&      rata-rata: rata-rata 1,39 pun masih berarti hampir semua order
+*&      hanya punya satu operasi.
+*&   C. AFVV+AFRU — apakah ada KONFIRMASI, dan status queue/active/confirmed
+*&      (rumus: Sum(AFRU-LMNGA) vs AFVV-MGVRG; baris STOKZ='X' dibuang)
+*&   D. CRHD/CRTX — DAFTAR WORK CENTER NYATA + beban operasinya
+*&      (mockup mengarang 52 WC; di sini angka sebenarnya)
+*&   E. AFVC-LTXA1 — teks operasi, kandidat "Allocation Activity" di mockup
+*&   F. Sampel rute 1 order: urutan operasi -> WC -> status
+*&   G. Kandidat sumber PENGELOMPOKAN WC (prefix ARBPL / VERWE / CRCO-KOSTL)
+*&      -> SAP tidak punya field "grup/section" spt mockup; harus dipilih
+*&   H. PLAF — apakah "PLO" di mockup = planned order yang benar-benar ada
+*&
+*& ⚠️ Tanpa filter SO, SELECT pertama menyapu SELURUH order ber-DISPO tsb.
+*&    Ada pembatas jumlah order (default 500) supaya AFVC/AFVV/AFRU tidak
+*&    ditembak dengan FOR ALL ENTRIES berukuran ekstrem.
+*&---------------------------------------------------------------------*
+DATA: lv_user TYPE string.
+lv_user = sy-uname.
+
+" ===== Input =====
+DATA: lv_in_so  TYPE string,
+      lv_in_max TYPE string,
+      lv_go     TYPE string.
+lv_in_so  = request->get_form_field( 'so' ).
+lv_in_max = request->get_form_field( 'maxord' ).
+lv_go     = request->get_form_field( 'go' ).
+
+DATA lv_max TYPE i.
+IF lv_in_max IS NOT INITIAL.
+  lv_max = lv_in_max.
+ENDIF.
+IF lv_max <= 0.
+  lv_max = 500.
+ENDIF.
+
+DATA lv_so TYPE vbak-vbeln.
+IF lv_in_so IS NOT INITIAL.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING input = lv_in_so IMPORTING output = lv_so.
+ENDIF.
+
+" ===== Tipe =====
+TYPES: BEGIN OF ty_ord,
+         aufnr TYPE afko-aufnr,
+         posnr TYPE afpo-posnr,
+         kdauf TYPE afpo-kdauf,
+         kdpos TYPE afpo-kdpos,
+         matnr TYPE afpo-matnr,
+         psmng TYPE afpo-psmng,
+         pwerk TYPE afpo-pwerk,
+         aufpl TYPE afko-aufpl,
+         dispo TYPE afko-dispo,
+       END OF ty_ord.
+TYPES: BEGIN OF ty_pd,                      " breakdown plant+dispo
+         pwerk TYPE afpo-pwerk,
+         dispo TYPE afko-dispo,
+         cnt   TYPE i,
+       END OF ty_pd.
+TYPES: BEGIN OF ty_key_aufpl, aufpl TYPE afko-aufpl, END OF ty_key_aufpl.
+TYPES: BEGIN OF ty_key_aufnr, aufnr TYPE afko-aufnr, END OF ty_key_aufnr.
+TYPES: BEGIN OF ty_key_arbid, arbid TYPE afvc-arbid, END OF ty_key_arbid.
+TYPES: BEGIN OF ty_key_soit, kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos, END OF ty_key_soit.
+TYPES: BEGIN OF ty_op,
+         aufpl TYPE afvc-aufpl,
+         aplzl TYPE afvc-aplzl,
+         vornr TYPE afvc-vornr,
+         arbid TYPE afvc-arbid,
+         ltxa1 TYPE afvc-ltxa1,
+         steus TYPE afvc-steus,
+       END OF ty_op.
+TYPES: BEGIN OF ty_vv,
+         aufpl TYPE afvv-aufpl,
+         aplzl TYPE afvv-aplzl,
+         mgvrg TYPE afvv-mgvrg,
+       END OF ty_vv.
+TYPES: BEGIN OF ty_ru,
+         aufnr TYPE afru-aufnr,
+         vornr TYPE afru-vornr,
+         lmnga TYPE afru-lmnga,
+         stokz TYPE afru-stokz,
+         aueru TYPE afru-aueru,
+       END OF ty_ru.
+TYPES: BEGIN OF ty_crhd,
+         objid TYPE crhd-objid,
+         werks TYPE crhd-werks,
+         arbpl TYPE crhd-arbpl,
+         verwe TYPE crhd-verwe,
+       END OF ty_crhd.
+TYPES: BEGIN OF ty_crtx, objid TYPE crtx-objid, ktext TYPE crtx-ktext, END OF ty_crtx.
+TYPES: BEGIN OF ty_crco, objid TYPE crco-objid, kostl TYPE crco-kostl, END OF ty_crco.
+TYPES: BEGIN OF ty_plaf,
+         plnum TYPE plaf-plnum, matnr TYPE plaf-matnr,
+         kdauf TYPE plaf-kdauf, kdpos TYPE plaf-kdpos,
+       END OF ty_plaf.
+
+" distribusi jumlah operasi per order — ANGKA PENENTU: rata-rata bisa menutupi
+" kenyataan bahwa hampir semua order hanya punya 1 operasi.
+TYPES: BEGIN OF ty_opcnt, aufnr TYPE afko-aufnr, cnt TYPE i, END OF ty_opcnt.
+TYPES: BEGIN OF ty_dist, bucket TYPE c LENGTH 12, orders TYPE i, ops TYPE i, END OF ty_dist.
+
+" baris hasil gabungan per OPERASI (dipakai semua section)
+TYPES: BEGIN OF ty_row,
+         aufnr  TYPE afko-aufnr,
+         aufpl  TYPE afvc-aufpl,
+         aplzl  TYPE afvc-aplzl,
+         vornr  TYPE afvc-vornr,
+         arbid  TYPE afvc-arbid,
+         arbpl  TYPE crhd-arbpl,
+         ktext  TYPE crtx-ktext,
+         wcwerks TYPE crhd-werks,
+         ltxa1  TYPE afvc-ltxa1,
+         mgvrg  TYPE afvv-mgvrg,
+         lmnga  TYPE afru-lmnga,
+         status TYPE string,          " queue / active / confirmed
+       END OF ty_row.
+
+DATA: lt_ord   TYPE TABLE OF ty_ord,   ls_ord   TYPE ty_ord,
+      lt_pd    TYPE TABLE OF ty_pd,    ls_pd    TYPE ty_pd,
+      lt_aufpl TYPE TABLE OF ty_key_aufpl, ls_aufpl TYPE ty_key_aufpl,
+      lt_aufnr TYPE TABLE OF ty_key_aufnr, ls_aufnr TYPE ty_key_aufnr,
+      lt_arbid TYPE TABLE OF ty_key_arbid, ls_arbid TYPE ty_key_arbid,
+      lt_soit  TYPE TABLE OF ty_key_soit,  ls_soit  TYPE ty_key_soit,
+      lt_op    TYPE TABLE OF ty_op,    ls_op    TYPE ty_op,
+      lt_vv    TYPE TABLE OF ty_vv,    ls_vv    TYPE ty_vv,
+      lt_ru    TYPE TABLE OF ty_ru,    ls_ru    TYPE ty_ru,
+      lt_crhd  TYPE TABLE OF ty_crhd,  ls_crhd  TYPE ty_crhd,
+      lt_crtx  TYPE TABLE OF ty_crtx,  ls_crtx  TYPE ty_crtx,
+      lt_crco  TYPE TABLE OF ty_crco,  ls_crco  TYPE ty_crco,
+      lt_plaf  TYPE TABLE OF ty_plaf,  ls_plaf  TYPE ty_plaf,
+      lt_row   TYPE TABLE OF ty_row,   ls_row   TYPE ty_row.
+
+" angka ringkasan
+DATA: lv_ord_all      TYPE i,   " order dalam scope SEBELUM dibatasi
+      lv_ord_used     TYPE i,   " order yang benar-benar diperiksa
+      lv_so_cnt       TYPE i,
+      lv_soit_cnt     TYPE i,
+      lv_mat_cnt      TYPE i,
+      lv_no_aufpl     TYPE i,   " order tanpa nomor rute
+      lv_op_total     TYPE i,
+      lv_ord_with_op  TYPE i,
+      lv_ord_no_op    TYPE i,
+      lv_ru_rows      TYPE i,
+      lv_ru_cancel    TYPE i,
+      lv_ord_with_ru  TYPE i,
+      lv_op_conf      TYPE i,
+      lv_op_act       TYPE i,
+      lv_op_queue     TYPE i,
+      lv_op_no_mgvrg  TYPE i,   " operasi tanpa qty rencana (AFVV kosong)
+      lv_wc_cnt       TYPE i,
+      lv_plaf_cnt     TYPE i,
+      lv_avg_op       TYPE p LENGTH 8 DECIMALS 2,
+      lv_ord_multi    TYPE i,   " order dengan >= 2 operasi
+      lv_ord_deep     TYPE i,   " order dengan >= 3 operasi  <- penentu multi-tahap
+      lv_max_ops      TYPE i,
+      lv_pct_one      TYPE p LENGTH 5 DECIMALS 1.
+DATA: lt_opcnt TYPE TABLE OF ty_opcnt, ls_opcnt TYPE ty_opcnt,
+      lt_dist  TYPE TABLE OF ty_dist,  ls_dist  TYPE ty_dist.
+
+IF lv_go = '1'.
+
+  " ===== 1. Populasi order dalam scope =====
+  IF lv_so IS INITIAL.
+    SELECT a~aufnr a~posnr a~kdauf a~kdpos a~matnr a~psmng a~pwerk k~aufpl k~dispo
+      FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+      INTO CORRESPONDING FIELDS OF TABLE lt_ord
+      WHERE ( a~pwerk = '1000' AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' ) )
+         OR ( a~pwerk = '2000' AND k~dispo IN ( 'GA1', 'GA2', 'EB2' ) ).
+  ELSE.
+    SELECT a~aufnr a~posnr a~kdauf a~kdpos a~matnr a~psmng a~pwerk k~aufpl k~dispo
+      FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+      INTO CORRESPONDING FIELDS OF TABLE lt_ord
+      WHERE a~kdauf = lv_so
+        AND ( ( a~pwerk = '1000' AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' ) )
+           OR ( a~pwerk = '2000' AND k~dispo IN ( 'GA1', 'GA2', 'EB2' ) ) ).
+  ENDIF.
+
+  lv_ord_all = lines( lt_ord ).
+  SORT lt_ord BY aufnr posnr.
+
+  " Batasi jumlah order yang diperiksa (pengaman FOR ALL ENTRIES)
+  DATA lv_cut TYPE i.
+  IF lv_ord_all > lv_max.
+    lv_cut = lv_max + 1.
+    DELETE lt_ord FROM lv_cut.
+  ENDIF.
+  lv_ord_used = lines( lt_ord ).
+
+  " breakdown plant + dispo
+  LOOP AT lt_ord INTO ls_ord.
+    CLEAR ls_pd.
+    ls_pd-pwerk = ls_ord-pwerk. ls_pd-dispo = ls_ord-dispo. ls_pd-cnt = 1.
+    COLLECT ls_pd INTO lt_pd.
+    IF ls_ord-aufpl IS INITIAL.
+      lv_no_aufpl = lv_no_aufpl + 1.
+    ELSE.
+      ls_aufpl-aufpl = ls_ord-aufpl. APPEND ls_aufpl TO lt_aufpl.
+    ENDIF.
+    ls_aufnr-aufnr = ls_ord-aufnr. APPEND ls_aufnr TO lt_aufnr.
+    IF ls_ord-kdauf IS NOT INITIAL.
+      ls_soit-kdauf = ls_ord-kdauf. ls_soit-kdpos = ls_ord-kdpos.
+      APPEND ls_soit TO lt_soit.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_pd BY pwerk dispo.
+  SORT lt_aufpl BY aufpl. DELETE ADJACENT DUPLICATES FROM lt_aufpl COMPARING aufpl.
+  SORT lt_aufnr BY aufnr. DELETE ADJACENT DUPLICATES FROM lt_aufnr COMPARING aufnr.
+  SORT lt_soit BY kdauf kdpos. DELETE ADJACENT DUPLICATES FROM lt_soit COMPARING kdauf kdpos.
+
+  " hitung distinct SO / SO-item / material
+  DATA: lt_so_u TYPE TABLE OF vbak-vbeln, lt_mat_u TYPE TABLE OF matnr.
+  LOOP AT lt_ord INTO ls_ord.
+    IF ls_ord-kdauf IS NOT INITIAL. APPEND ls_ord-kdauf TO lt_so_u. ENDIF.
+    APPEND ls_ord-matnr TO lt_mat_u.
+  ENDLOOP.
+  SORT lt_so_u. DELETE ADJACENT DUPLICATES FROM lt_so_u.
+  SORT lt_mat_u. DELETE ADJACENT DUPLICATES FROM lt_mat_u.
+  lv_so_cnt   = lines( lt_so_u ).
+  lv_soit_cnt = lines( lt_soit ).
+  lv_mat_cnt  = lines( lt_mat_u ).
+
+  " ===== 2. AFVC — operasi =====
+  IF lt_aufpl IS NOT INITIAL.
+    SELECT aufpl aplzl vornr arbid ltxa1 steus
+      FROM afvc INTO CORRESPONDING FIELDS OF TABLE lt_op
+      FOR ALL ENTRIES IN lt_aufpl
+      WHERE aufpl = lt_aufpl-aufpl.
+  ENDIF.
+  lv_op_total = lines( lt_op ).
+  SORT lt_op BY aufpl aplzl.
+
+  " ===== 3. AFVV — qty rencana per operasi =====
+  IF lt_op IS NOT INITIAL.
+    SELECT aufpl aplzl mgvrg
+      FROM afvv INTO CORRESPONDING FIELDS OF TABLE lt_vv
+      FOR ALL ENTRIES IN lt_op
+      WHERE aufpl = lt_op-aufpl AND aplzl = lt_op-aplzl.
+    SORT lt_vv BY aufpl aplzl.
+  ENDIF.
+
+  " ===== 4. AFRU — konfirmasi =====
+  IF lt_aufnr IS NOT INITIAL.
+    SELECT aufnr vornr lmnga stokz aueru
+      FROM afru INTO CORRESPONDING FIELDS OF TABLE lt_ru
+      FOR ALL ENTRIES IN lt_aufnr
+      WHERE aufnr = lt_aufnr-aufnr.
+  ENDIF.
+  lv_ru_rows = lines( lt_ru ).
+  " buang baris yang DIBATALKAN (STOKZ='X') — kalau tidak, qty dihitung ganda
+  DELETE lt_ru WHERE stokz = 'X'.
+  lv_ru_cancel = lv_ru_rows - lines( lt_ru ).
+  SORT lt_ru BY aufnr vornr.
+
+  " order yang punya minimal 1 konfirmasi hidup
+  DATA lt_ru_ord TYPE TABLE OF ty_key_aufnr.
+  LOOP AT lt_ru INTO ls_ru.
+    ls_aufnr-aufnr = ls_ru-aufnr. APPEND ls_aufnr TO lt_ru_ord.
+  ENDLOOP.
+  SORT lt_ru_ord BY aufnr. DELETE ADJACENT DUPLICATES FROM lt_ru_ord COMPARING aufnr.
+  lv_ord_with_ru = lines( lt_ru_ord ).
+
+  " ===== 5. Master work center =====
+  LOOP AT lt_op INTO ls_op.
+    IF ls_op-arbid IS NOT INITIAL.
+      ls_arbid-arbid = ls_op-arbid. APPEND ls_arbid TO lt_arbid.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_arbid BY arbid. DELETE ADJACENT DUPLICATES FROM lt_arbid COMPARING arbid.
+  IF lt_arbid IS NOT INITIAL.
+    SELECT objid werks arbpl verwe
+      FROM crhd INTO CORRESPONDING FIELDS OF TABLE lt_crhd
+      FOR ALL ENTRIES IN lt_arbid
+      WHERE objty = 'A' AND objid = lt_arbid-arbid.
+    " CRHD bisa punya >1 baris per objid (time-dependent) -> ambil satu
+    SORT lt_crhd BY objid. DELETE ADJACENT DUPLICATES FROM lt_crhd COMPARING objid.
+
+    SELECT objid ktext
+      FROM crtx INTO CORRESPONDING FIELDS OF TABLE lt_crtx
+      FOR ALL ENTRIES IN lt_arbid
+      WHERE objty = 'A' AND objid = lt_arbid-arbid AND spras = sy-langu.
+    SORT lt_crtx BY objid. DELETE ADJACENT DUPLICATES FROM lt_crtx COMPARING objid.
+
+    SELECT objid kostl
+      FROM crco INTO CORRESPONDING FIELDS OF TABLE lt_crco
+      FOR ALL ENTRIES IN lt_arbid
+      WHERE objty = 'A' AND objid = lt_arbid-arbid.
+    SORT lt_crco BY objid. DELETE ADJACENT DUPLICATES FROM lt_crco COMPARING objid.
+  ENDIF.
+  lv_wc_cnt = lines( lt_arbid ).
+
+  " ===== 6. Rakit baris per OPERASI + tentukan status =====
+  " peta aufpl -> aufnr (1 order = 1 aufpl; kalau ada >1 item, ambil yg pertama)
+  TYPES: BEGIN OF ty_pl2nr, aufpl TYPE afko-aufpl, aufnr TYPE afko-aufnr, END OF ty_pl2nr.
+  DATA: lt_pl2nr TYPE TABLE OF ty_pl2nr, ls_pl2nr TYPE ty_pl2nr.
+  LOOP AT lt_ord INTO ls_ord.
+    IF ls_ord-aufpl IS INITIAL. CONTINUE. ENDIF.
+    ls_pl2nr-aufpl = ls_ord-aufpl. ls_pl2nr-aufnr = ls_ord-aufnr.
+    APPEND ls_pl2nr TO lt_pl2nr.
+  ENDLOOP.
+  SORT lt_pl2nr BY aufpl. DELETE ADJACENT DUPLICATES FROM lt_pl2nr COMPARING aufpl.
+
+  DATA: lv_sum_lmnga TYPE afru-lmnga,
+        lv_has_aueru TYPE abap_bool.
+  LOOP AT lt_op INTO ls_op.
+    CLEAR ls_row.
+    ls_row-aufpl = ls_op-aufpl. ls_row-aplzl = ls_op-aplzl.
+    ls_row-vornr = ls_op-vornr. ls_row-arbid = ls_op-arbid.
+    ls_row-ltxa1 = ls_op-ltxa1.
+    READ TABLE lt_pl2nr INTO ls_pl2nr WITH KEY aufpl = ls_op-aufpl BINARY SEARCH.
+    IF sy-subrc = 0. ls_row-aufnr = ls_pl2nr-aufnr. ENDIF.
+    READ TABLE lt_crhd INTO ls_crhd WITH KEY objid = ls_op-arbid BINARY SEARCH.
+    IF sy-subrc = 0. ls_row-arbpl = ls_crhd-arbpl. ls_row-wcwerks = ls_crhd-werks. ENDIF.
+    READ TABLE lt_crtx INTO ls_crtx WITH KEY objid = ls_op-arbid BINARY SEARCH.
+    IF sy-subrc = 0. ls_row-ktext = ls_crtx-ktext. ENDIF.
+    READ TABLE lt_vv INTO ls_vv WITH KEY aufpl = ls_op-aufpl aplzl = ls_op-aplzl BINARY SEARCH.
+    IF sy-subrc = 0.
+      ls_row-mgvrg = ls_vv-mgvrg.
+    ELSE.
+      lv_op_no_mgvrg = lv_op_no_mgvrg + 1.
+    ENDIF.
+    " Sum(LMNGA) per (order, operasi) — AFRU dicocokkan lewat AUFNR + VORNR
+    CLEAR: lv_sum_lmnga, lv_has_aueru.
+    LOOP AT lt_ru INTO ls_ru WHERE aufnr = ls_row-aufnr AND vornr = ls_op-vornr.
+      lv_sum_lmnga = lv_sum_lmnga + ls_ru-lmnga.
+      IF ls_ru-aueru = 'X'. lv_has_aueru = abap_true. ENDIF.
+    ENDLOOP.
+    ls_row-lmnga = lv_sum_lmnga.
+    IF lv_has_aueru = abap_true
+       OR ( ls_row-mgvrg > 0 AND lv_sum_lmnga >= ls_row-mgvrg ).
+      ls_row-status = 'confirmed'.
+      lv_op_conf = lv_op_conf + 1.
+    ELSEIF lv_sum_lmnga > 0.
+      ls_row-status = 'active'.
+      lv_op_act = lv_op_act + 1.
+    ELSE.
+      ls_row-status = 'queue'.
+      lv_op_queue = lv_op_queue + 1.
+    ENDIF.
+    APPEND ls_row TO lt_row.
+  ENDLOOP.
+  SORT lt_row BY aufnr aplzl.
+
+  " order punya operasi / tidak
+  DATA lt_op_ord TYPE TABLE OF ty_key_aufnr.
+  LOOP AT lt_row INTO ls_row.
+    ls_aufnr-aufnr = ls_row-aufnr. APPEND ls_aufnr TO lt_op_ord.
+  ENDLOOP.
+  SORT lt_op_ord BY aufnr. DELETE ADJACENT DUPLICATES FROM lt_op_ord COMPARING aufnr.
+  lv_ord_with_op = lines( lt_op_ord ).
+  lv_ord_no_op   = lv_ord_used - lv_ord_with_op.
+  IF lv_ord_with_op > 0.
+    lv_avg_op = lv_op_total / lv_ord_with_op.
+  ENDIF.
+
+  " ===== Distribusi jumlah operasi per order =====
+  LOOP AT lt_row INTO ls_row.
+    CLEAR ls_opcnt.
+    ls_opcnt-aufnr = ls_row-aufnr. ls_opcnt-cnt = 1.
+    COLLECT ls_opcnt INTO lt_opcnt.
+  ENDLOOP.
+  SORT lt_opcnt BY cnt DESCENDING.
+  LOOP AT lt_opcnt INTO ls_opcnt.
+    CLEAR ls_dist.
+    IF     ls_opcnt-cnt >= 5. ls_dist-bucket = '5+ operasi'.
+    ELSEIF ls_opcnt-cnt  = 4. ls_dist-bucket = '4 operasi'.
+    ELSEIF ls_opcnt-cnt  = 3. ls_dist-bucket = '3 operasi'.
+    ELSEIF ls_opcnt-cnt  = 2. ls_dist-bucket = '2 operasi'.
+    ELSE.                     ls_dist-bucket = '1 operasi'.
+    ENDIF.
+    ls_dist-orders = 1.
+    ls_dist-ops    = ls_opcnt-cnt.
+    COLLECT ls_dist INTO lt_dist.        " orders & ops sama-sama dijumlah
+    IF ls_opcnt-cnt >= 2. lv_ord_multi = lv_ord_multi + 1. ENDIF.
+    IF ls_opcnt-cnt >= 3. lv_ord_deep  = lv_ord_deep + 1.  ENDIF.
+    IF ls_opcnt-cnt > lv_max_ops. lv_max_ops = ls_opcnt-cnt. ENDIF.
+  ENDLOOP.
+  SORT lt_dist BY bucket.
+  IF lv_ord_with_op > 0.
+    lv_pct_one = ( lv_ord_with_op - lv_ord_multi ) * 100 / lv_ord_with_op.
+  ENDIF.
+
+  " ===== 7. PLAF — apakah "PLO" (planned order) ada utk SO+Item ini =====
+  IF lt_soit IS NOT INITIAL.
+    SELECT plnum matnr kdauf kdpos
+      FROM plaf INTO CORRESPONDING FIELDS OF TABLE lt_plaf
+      FOR ALL ENTRIES IN lt_soit
+      WHERE kdauf = lt_soit-kdauf AND kdpos = lt_soit-kdpos.
+  ENDIF.
+  lv_plaf_cnt = lines( lt_plaf ).
+
+ENDIF.
+
+" ===== Agregat per WORK CENTER (section D) =====
+TYPES: BEGIN OF ty_wc,
+         arbid  TYPE afvc-arbid,
+         arbpl  TYPE crhd-arbpl,
+         ktext  TYPE crtx-ktext,
+         werks  TYPE crhd-werks,
+         verwe  TYPE crhd-verwe,
+         kostl  TYPE crco-kostl,
+         ops    TYPE i,
+         conf   TYPE i,
+         act    TYPE i,
+         queue  TYPE i,
+       END OF ty_wc.
+DATA: lt_wc TYPE TABLE OF ty_wc, ls_wc TYPE ty_wc.
+FIELD-SYMBOLS <wc> TYPE ty_wc.
+IF lv_go = '1'.
+  LOOP AT lt_row INTO ls_row.
+    READ TABLE lt_wc ASSIGNING <wc> WITH KEY arbid = ls_row-arbid.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_wc ASSIGNING <wc>.
+      <wc>-arbid = ls_row-arbid.
+      <wc>-arbpl = ls_row-arbpl.
+      <wc>-ktext = ls_row-ktext.
+      <wc>-werks = ls_row-wcwerks.
+      READ TABLE lt_crhd INTO ls_crhd WITH KEY objid = ls_row-arbid BINARY SEARCH.
+      IF sy-subrc = 0. <wc>-verwe = ls_crhd-verwe. ENDIF.
+      READ TABLE lt_crco INTO ls_crco WITH KEY objid = ls_row-arbid BINARY SEARCH.
+      IF sy-subrc = 0. <wc>-kostl = ls_crco-kostl. ENDIF.
+    ENDIF.
+    <wc>-ops = <wc>-ops + 1.
+    CASE ls_row-status.
+      WHEN 'confirmed'. <wc>-conf  = <wc>-conf + 1.
+      WHEN 'active'.    <wc>-act   = <wc>-act + 1.
+      WHEN OTHERS.      <wc>-queue = <wc>-queue + 1.
+    ENDCASE.
+  ENDLOOP.
+  SORT lt_wc BY ops DESCENDING arbpl ASCENDING.
+ENDIF.
+
+" ===== Frekuensi teks operasi (section E) =====
+TYPES: BEGIN OF ty_tx, ltxa1 TYPE afvc-ltxa1, cnt TYPE i, END OF ty_tx.
+DATA: lt_tx TYPE TABLE OF ty_tx, ls_tx TYPE ty_tx.
+IF lv_go = '1'.
+  LOOP AT lt_row INTO ls_row.
+    CLEAR ls_tx. ls_tx-ltxa1 = ls_row-ltxa1. ls_tx-cnt = 1.
+    COLLECT ls_tx INTO lt_tx.
+  ENDLOOP.
+  SORT lt_tx BY cnt DESCENDING.
+ENDIF.
+
+" ===== Kandidat pengelompokan (section G) =====
+" ⚠️ key HARUS flat (CHAR), bukan STRING: COLLECT tidak boleh dipakai pada
+"    tabel dengan tipe baris deep (STRING termasuk deep).
+TYPES: BEGIN OF ty_grp, key TYPE c LENGTH 30, cnt TYPE i, END OF ty_grp.
+DATA: lt_gpre TYPE TABLE OF ty_grp, ls_gpre TYPE ty_grp,   " prefix ARBPL (3 huruf)
+      lt_gkos TYPE TABLE OF ty_grp,                        " cost center
+      lt_gvrw TYPE TABLE OF ty_grp.                        " CRHD-VERWE
+IF lv_go = '1'.
+  LOOP AT lt_wc INTO ls_wc.
+    CLEAR ls_gpre.
+    ls_gpre-key = ls_wc-arbpl(3). ls_gpre-cnt = 1.
+    COLLECT ls_gpre INTO lt_gpre.
+    CLEAR ls_gpre.
+    IF ls_wc-kostl IS INITIAL.
+      ls_gpre-key = '(tanpa cost center)'.
+    ELSE.
+      ls_gpre-key = ls_wc-kostl.
+    ENDIF.
+    ls_gpre-cnt = 1.
+    COLLECT ls_gpre INTO lt_gkos.
+    CLEAR ls_gpre.
+    ls_gpre-key = ls_wc-verwe. ls_gpre-cnt = 1.
+    COLLECT ls_gpre INTO lt_gvrw.
+  ENDLOOP.
+  SORT lt_gpre BY cnt DESCENDING.
+  SORT lt_gkos BY cnt DESCENDING.
+  SORT lt_gvrw BY cnt DESCENDING.
+ENDIF.
+
+" ===== Sampel rute 1 order (section F) =====
+DATA: lv_sample_aufnr TYPE afko-aufnr.
+IF lv_go = '1' AND lt_opcnt IS NOT INITIAL.
+  " lt_opcnt sudah diurut cnt DESCENDING -> baris pertama = order dengan
+  " operasi TERBANYAK, supaya rutenya terlihat sepanjang mungkin.
+  READ TABLE lt_opcnt INTO ls_opcnt INDEX 1.
+  IF sy-subrc = 0. lv_sample_aufnr = ls_opcnt-aufnr. ENDIF.
+ENDIF.
+
+" ===== Format qty -> string (tanpa grouping) =====
+DATA: lv_qc TYPE c LENGTH 40, lv_qs TYPE string.
+DEFINE fmt_q.
+  CLEAR: lv_qc, lv_qs.
+  WRITE &1 TO lv_qc NO-GROUPING.
+  lv_qs = lv_qc. CONDENSE lv_qs.
+  &2 = lv_qs.
+END-OF-DEFINITION.
+
+" ===== VONIS =====
+DATA: lv_v_op TYPE string, lv_v_op_c TYPE string,
+      lv_v_ru TYPE string, lv_v_ru_c TYPE string,
+      lv_v_wc TYPE string, lv_v_wc_c TYPE string.
+IF lv_go = '1'.
+  " B. routing
+  " ⚠️ Vonis SENGAJA TIDAK memakai rata-rata. Rata-rata 1,39 pun masih berarti
+  "    "hampir semua order 1 operasi" — penentunya adalah berapa order yang
+  "    benar-benar punya >= 3 operasi, dan berapa persen yang cuma 1.
+  IF lv_ord_with_op = 0.
+    lv_v_op_c = 'dg-bad'.
+    lv_v_op = 'TIDAK ADA ORDER YANG PUNYA OPERASI (AFVC kosong). Heatmap Work Center & chip routing di mockup TIDAK punya sumber data. Desain index2.htm harus diubah.'.
+  ELSEIF lv_ord_deep = 0.
+    lv_v_op_c = 'dg-bad'.
+    lv_v_op = |TIDAK ADA SATU PUN order dengan >= 3 operasi (maksimum { lv_max_ops } operasi; | &&
+              |{ lv_pct_one }% order hanya 1 operasi). Rute multi-tahap CNC -> Edge Banding -> Assembly | &&
+              |TIDAK ADA di level operasi: alur antar tahap pasti diekspresikan sebagai RANGKAIAN ORDER | &&
+              |TERPISAH (satu order per komponen per tahap), bukan routing. Chip routing di mockup akan | &&
+              |berisi 1-2 kotak saja — desainnya harus direinterpretasi.|.
+  ELSEIF lv_pct_one >= '60.0'.
+    lv_v_op_c = 'dg-warn'.
+    lv_v_op = |Ada { lv_ord_deep } order dengan >= 3 operasi, TAPI { lv_pct_one }% order hanya punya | &&
+              |1 operasi (maksimum { lv_max_ops }). Rute multi-tahap adalah PENGECUALIAN, bukan pola umum. | &&
+              |Chip routing akan berisi 1 kotak untuk mayoritas baris.|.
+  ELSE.
+    lv_v_op_c = 'dg-good'.
+    lv_v_op = |Rute operasi TERSEDIA & benar-benar multi-tahap: { lv_ord_deep } order punya >= 3 operasi, | &&
+              |hanya { lv_pct_one }% yang 1 operasi (maksimum { lv_max_ops }). Chip routing dan urutan | &&
+              |section di mockup bisa dibangun dari AFVC.|.
+  ENDIF.
+  " C. konfirmasi
+  IF lv_ord_with_ru = 0.
+    lv_v_ru_c = 'dg-bad'.
+    lv_v_ru = 'TIDAK ADA KONFIRMASI OPERASI (AFRU kosong utk order ini). Status confirmed/active/queue, angka WIP, dan "sudah lewat" TIDAK bisa dihitung. Ini pembunuh utama desain mockup.'.
+  ELSEIF lv_op_conf = 0 AND lv_op_act = 0.
+    lv_v_ru_c = 'dg-bad'.
+    lv_v_ru = 'Ada baris AFRU, tetapi TIDAK SATU PUN operasi mencapai status active/confirmed. Periksa apakah LMNGA terisi atau konfirmasi dilakukan di level lain.'.
+  ELSEIF lv_op_no_mgvrg > 0.
+    lv_v_ru_c = 'dg-warn'.
+    lv_v_ru = 'Konfirmasi tersedia, TAPI sebagian operasi tidak punya qty rencana (AFVV-MGVRG kosong) sehingga status "confirmed" untuk operasi tsb hanya bisa ditentukan dari flag AUERU, bukan perbandingan qty.'.
+  ELSE.
+    lv_v_ru_c = 'dg-good'.
+    lv_v_ru = 'Konfirmasi per operasi TERSEDIA. Status queue/active/confirmed, WIP per WC, dan persen Confirmed bisa dihitung persis seperti mockup.'.
+  ENDIF.
+  " D. work center
+  IF lv_wc_cnt = 0.
+    lv_v_wc_c = 'dg-bad'.
+    lv_v_wc = 'Tidak ada work center terpakai (AFVC-ARBID kosong).'.
+  ELSE.
+    lv_v_wc_c = 'dg-warn'.
+    " ⚠️ CONCATENATE tidak menerima operand bertipe i -> pakai string template.
+    lv_v_wc = |Mockup mengarang 52 WC. Angka NYATA pada scope ini: { lv_wc_cnt } work center. | &&
+              |Bandingkan daftar di bawah dengan grup mockup (CNC Router 30 / Edge Banding 10 / | &&
+              |Sanding 2 / Bending 4 / Manual Sanding 2 / Assembly 4) sebelum struktur section dikunci.|.
+  ENDIF.
+ENDIF.
+%>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnostik Routing &amp; Konfirmasi (Fase 0)</title>
+  <link rel="stylesheet" href="css/style.css?r=13">
+  <style>
+    .dg-wrap { max-width:1240px; margin:0 auto; padding:20px; }
+    .dg-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; overflow:hidden; margin-bottom:20px; }
+    .dg-hd { background:#1e3a8a; color:#fff; padding:10px 14px; font-weight:700; font-size:0.9rem; }
+    .dg-tbl { width:100%; border-collapse:collapse; font-size:0.8rem; background:#fff; }
+    .dg-tbl th { background:#f9fafb; text-align:left; padding:8px 10px; border-bottom:2px solid #e5e7eb; color:#374151; white-space:nowrap; }
+    .dg-tbl td { padding:7px 10px; border-bottom:1px solid #f3f4f6; vertical-align:top; }
+    .dg-tbl td.num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .dg-code { font-family:monospace; font-weight:700; }
+    .dg-legend { font-size:0.75rem; color:#6b7280; padding:8px 14px 12px; margin:0; }
+    .dg-vd { padding:12px 14px; font-size:0.85rem; font-weight:700; line-height:1.5; }
+    .dg-good{ background:#ecfdf5; color:#065f46; border-left:5px solid #10b981; }
+    .dg-bad { background:#fef2f2; color:#991b1b; border-left:5px solid #ef4444; }
+    .dg-warn{ background:#fffbeb; color:#92400e; border-left:5px solid #f59e0b; }
+    .dg-kpi { display:flex; gap:14px; flex-wrap:wrap; padding:12px 14px; }
+    .dg-kpi div { background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:8px 12px; min-width:150px; }
+    .dg-kpi .k-lbl { font-size:0.7rem; color:#6b7280; display:block; }
+    .dg-kpi .k-val { font-size:1.05rem; font-weight:700; color:#1e3a8a; }
+    .st-c { color:#065f46; font-weight:700; }
+    .st-a { color:#0369a1; font-weight:700; }
+    .st-q { color:#6b7280; }
+  </style>
+</head>
+<body>
+  <div class="header-bar">
+    <div class="header-title">
+      <h1>Diagnostik Routing &amp; Konfirmasi &#8212; Fase 0</h1>
+      <p>Membuktikan apakah mockup Component Movement (index2.htm) punya sumber data di SAP &#8212; read-only, tidak menulis apa pun</p>
+    </div>
+    <div class="header-user"><span>User SAP: <%= lv_user %></span></div>
+  </div>
+
+  <div class="dg-wrap">
+
+    <div class="dg-card">
+      <div class="dg-hd">Parameter</div>
+      <form method="get" action="diag_routing.htm" style="padding:14px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+        <input type="hidden" name="go" value="1">
+        <div class="form-group" style="width:230px;">
+          <label>No. Sales Order (opsional)</label>
+          <input type="text" name="so" value="<%= lv_in_so %>" placeholder="kosong = seluruh populasi">
+        </div>
+        <div class="form-group" style="width:170px;">
+          <label>Batas jumlah order</label>
+          <input type="text" name="maxord" value="<%= lv_max %>">
+        </div>
+        <div class="btn-submit"><button type="submit">JALANKAN</button></div>
+      </form>
+      <p class="dg-legend">
+        Scope order = <strong>AFPO &#8904; AFKO</strong>, di-scope MRP controller (AFKO-DISPO) mengikuti konvensi
+        <code>backup/index2.htm</code>: Plant 1000 &rarr; WM1/WM2/PN1/PN2, Plant 2000 &rarr; GA1/GA2/EB2.
+        Tanpa filter SO, seluruh populasi order ber-DISPO tersebut disapu &#8212; karena itu ada pembatas jumlah order
+        agar AFVC/AFVV/AFRU tidak ditembak dengan FOR ALL ENTRIES berukuran ekstrem. Naikkan bertahap.
+      </p>
+    </div>
+
+    <% IF lv_go <> '1'. %>
+      <div class="dg-card">
+        <div style="padding:28px; text-align:center; color:#9ca3af;">
+          Klik <strong>JALANKAN</strong> untuk memulai.<br>
+          <span style="font-size:0.8rem;">Isi No. SO dulu kalau ingin uji cepat pada satu order yang Anda kenal.</span>
+        </div>
+      </div>
+    <% ELSE. %>
+
+      <!-- ================= A ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">A. Populasi order dalam scope</div>
+        <div class="dg-kpi">
+          <div><span class="k-lbl">Order dalam scope</span><span class="k-val"><%= lv_ord_all %></span></div>
+          <div><span class="k-lbl">Diperiksa (dibatasi)</span><span class="k-val"><%= lv_ord_used %></span></div>
+          <div><span class="k-lbl">Sales Order berbeda</span><span class="k-val"><%= lv_so_cnt %></span></div>
+          <div><span class="k-lbl">SO + Item berbeda</span><span class="k-val"><%= lv_soit_cnt %></span></div>
+          <div><span class="k-lbl">Material berbeda</span><span class="k-val"><%= lv_mat_cnt %></span></div>
+          <div><span class="k-lbl">Order TANPA AUFPL</span><span class="k-val"><%= lv_no_aufpl %></span></div>
+        </div>
+        <table class="dg-tbl">
+          <thead><tr><th>Plant</th><th>MRP Controller (DISPO)</th><th style="text-align:right;">Jumlah order item</th></tr></thead>
+          <tbody>
+            <% LOOP AT lt_pd INTO ls_pd. %>
+              <tr>
+                <td class="dg-code"><%= ls_pd-pwerk %></td>
+                <td class="dg-code"><%= ls_pd-dispo %></td>
+                <td class="num"><%= ls_pd-cnt %></td>
+              </tr>
+            <% ENDLOOP. %>
+            <% IF lt_pd IS INITIAL. %>
+              <tr><td colspan="3" style="text-align:center; color:#9ca3af; padding:20px;">Tidak ada order pada scope ini.</td></tr>
+            <% ENDIF. %>
+          </tbody>
+        </table>
+        <p class="dg-legend">
+          <strong>AUFPL</strong> = nomor rute order. Kalau kolom &quot;Order TANPA AUFPL&quot; besar, order tersebut
+          tidak punya rute operasi sama sekali &#8212; tidak akan muncul di section B ke bawah.
+        </p>
+      </div>
+
+      <!-- ================= B ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">B. AFVC &#8212; apakah order punya OPERASI?</div>
+        <div class="dg-kpi">
+          <div><span class="k-lbl">Total operasi</span><span class="k-val"><%= lv_op_total %></span></div>
+          <div><span class="k-lbl">Order punya operasi</span><span class="k-val"><%= lv_ord_with_op %></span></div>
+          <div><span class="k-lbl">Order tanpa operasi</span><span class="k-val"><%= lv_ord_no_op %></span></div>
+          <div><span class="k-lbl">Rata-rata operasi/order</span><span class="k-val"><%= lv_avg_op %></span></div>
+          <div><span class="k-lbl">Order &ge; 2 operasi</span><span class="k-val"><%= lv_ord_multi %></span></div>
+          <div><span class="k-lbl">Order &ge; 3 operasi</span><span class="k-val"><%= lv_ord_deep %></span></div>
+          <div><span class="k-lbl">Operasi terbanyak/order</span><span class="k-val"><%= lv_max_ops %></span></div>
+          <div><span class="k-lbl">Work center terpakai</span><span class="k-val"><%= lv_wc_cnt %></span></div>
+        </div>
+        <table class="dg-tbl">
+          <thead><tr>
+            <th>Jumlah operasi per order</th>
+            <th style="text-align:right;">Order</th>
+            <th style="text-align:right;">% order</th>
+            <th style="text-align:right;">Total operasi</th>
+          </tr></thead>
+          <tbody>
+            <% DATA lv_d_pct TYPE p LENGTH 5 DECIMALS 1. %>
+            <% LOOP AT lt_dist INTO ls_dist. %>
+              <% CLEAR lv_d_pct. %>
+              <% IF lv_ord_with_op > 0. %>
+                <% lv_d_pct = ls_dist-orders * 100 / lv_ord_with_op. %>
+              <% ENDIF. %>
+              <tr>
+                <td class="dg-code"><%= ls_dist-bucket %></td>
+                <td class="num"><%= ls_dist-orders %></td>
+                <td class="num"><%= lv_d_pct %></td>
+                <td class="num"><%= ls_dist-ops %></td>
+              </tr>
+            <% ENDLOOP. %>
+            <% IF lt_dist IS INITIAL. %>
+              <tr><td colspan="4" style="text-align:center; color:#9ca3af; padding:20px;">Tidak ada order dengan operasi.</td></tr>
+            <% ENDIF. %>
+          </tbody>
+        </table>
+        <div class="dg-vd <%= lv_v_op_c %>">VONIS: <%= lv_v_op %></div>
+        <p class="dg-legend">
+          <strong>Ini angka penentunya.</strong> Rata-rata bisa menutupi kenyataan: rata-rata 1,39 pun tetap berarti
+          hampir semua order hanya punya satu operasi. Kalau baris &quot;1 operasi&quot; mendominasi dan
+          &quot;3 operasi&quot; ke atas nyaris nol, berarti alur antar tahap TIDAK ada di level operasi &#8212;
+          melainkan berupa rangkaian order terpisah (satu order per komponen per tahap).
+        </p>
+      </div>
+
+      <!-- ================= C ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">C. AFVV + AFRU &#8212; apakah ada KONFIRMASI per operasi?</div>
+        <div class="dg-kpi">
+          <div><span class="k-lbl">Baris AFRU (mentah)</span><span class="k-val"><%= lv_ru_rows %></span></div>
+          <div><span class="k-lbl">Dibatalkan (STOKZ=X)</span><span class="k-val"><%= lv_ru_cancel %></span></div>
+          <div><span class="k-lbl">Order punya konfirmasi</span><span class="k-val"><%= lv_ord_with_ru %></span></div>
+          <div><span class="k-lbl">Operasi confirmed</span><span class="k-val"><%= lv_op_conf %></span></div>
+          <div><span class="k-lbl">Operasi active</span><span class="k-val"><%= lv_op_act %></span></div>
+          <div><span class="k-lbl">Operasi queue</span><span class="k-val"><%= lv_op_queue %></span></div>
+          <div><span class="k-lbl">Operasi tanpa MGVRG</span><span class="k-val"><%= lv_op_no_mgvrg %></span></div>
+        </div>
+        <div class="dg-vd <%= lv_v_ru_c %>">VONIS: <%= lv_v_ru %></div>
+        <p class="dg-legend">
+          Rumus status (sama dengan yang akan dipakai halaman nyata):
+          <code>&Sigma;AFRU-LMNGA = 0</code> &rarr; queue &middot;
+          <code>0 &lt; &Sigma;LMNGA &lt; AFVV-MGVRG</code> &rarr; active &middot;
+          <code>&Sigma;LMNGA &ge; MGVRG</code> atau <code>AUERU='X'</code> &rarr; confirmed.
+          Baris AFRU berstatus dibatalkan (STOKZ='X') dibuang lebih dulu &#8212; kalau tidak, qty terhitung ganda.
+          AFRU dicocokkan ke operasi lewat <code>AUFNR + VORNR</code>.
+        </p>
+      </div>
+
+      <!-- ================= D ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">D. Work Center NYATA (CRHD/CRTX) &#8212; berapa banyak, dan sesibuk apa?</div>
+        <div class="dg-vd <%= lv_v_wc_c %>">VONIS: <%= lv_v_wc %></div>
+        <table class="dg-tbl">
+          <thead><tr>
+            <th>ARBPL</th><th>Nama (CRTX-KTEXT)</th><th>Plant</th><th>VERWE</th><th>Cost Center</th>
+            <th style="text-align:right;">Operasi</th><th style="text-align:right;">Confirmed</th>
+            <th style="text-align:right;">Active</th><th style="text-align:right;">Queue</th>
+          </tr></thead>
+          <tbody>
+            <% LOOP AT lt_wc INTO ls_wc. %>
+              <tr>
+                <td class="dg-code"><%= ls_wc-arbpl %></td>
+                <td><%= ls_wc-ktext %></td>
+                <td class="dg-code"><%= ls_wc-werks %></td>
+                <td class="dg-code"><%= ls_wc-verwe %></td>
+                <td class="dg-code"><%= ls_wc-kostl %></td>
+                <td class="num"><%= ls_wc-ops %></td>
+                <td class="num st-c"><%= ls_wc-conf %></td>
+                <td class="num st-a"><%= ls_wc-act %></td>
+                <td class="num st-q"><%= ls_wc-queue %></td>
+              </tr>
+            <% ENDLOOP. %>
+            <% IF lt_wc IS INITIAL. %>
+              <tr><td colspan="9" style="text-align:center; color:#9ca3af; padding:20px;">Tidak ada work center terpakai.</td></tr>
+            <% ENDIF. %>
+          </tbody>
+        </table>
+        <p class="dg-legend">
+          Kolom <strong>Active</strong> di sini = operasi yang sedang dikerjakan; inilah angka yang akan menjadi
+          <em>WIP</em> pada kotak heatmap. <strong>Confirmed</strong> = angka &quot;&#10003; sudah lewat&quot;.
+        </p>
+      </div>
+
+      <!-- ================= E ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">E. Teks operasi (AFVC-LTXA1) &#8212; kandidat &quot;Allocation Activity&quot;</div>
+        <table class="dg-tbl">
+          <thead><tr><th>Teks operasi</th><th style="text-align:right;">Frekuensi</th></tr></thead>
+          <tbody>
+            <% DATA lv_tx_i TYPE i. %>
+            <% CLEAR lv_tx_i. %>
+            <% LOOP AT lt_tx INTO ls_tx. %>
+              <% lv_tx_i = lv_tx_i + 1. %>
+              <% IF lv_tx_i > 40. EXIT. ENDIF. %>
+              <tr><td><%= ls_tx-ltxa1 %></td><td class="num"><%= ls_tx-cnt %></td></tr>
+            <% ENDLOOP. %>
+            <% IF lt_tx IS INITIAL. %>
+              <tr><td colspan="2" style="text-align:center; color:#9ca3af; padding:20px;">Tidak ada teks operasi.</td></tr>
+            <% ENDIF. %>
+          </tbody>
+        </table>
+        <p class="dg-legend">
+          Di mockup, &quot;Allocation Activity&quot; berisi Dowelling / Glue-up / Fitting Hardware / Sub-Assembly /
+          Final QC. Bandingkan dengan daftar di atas: kalau bentuknya serupa, sumbernya memang LTXA1.
+          Maksimum 40 teks teratas ditampilkan.
+        </p>
+      </div>
+
+      <!-- ================= F ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">F. Sampel rute satu order (operasi terbanyak) &#8212; <%= lv_sample_aufnr %></div>
+        <table class="dg-tbl">
+          <thead><tr>
+            <th>VORNR</th><th>Work Center</th><th>Nama WC</th><th>Teks operasi</th>
+            <th style="text-align:right;">MGVRG</th><th style="text-align:right;">&Sigma; LMNGA</th><th>Status</th>
+          </tr></thead>
+          <tbody>
+            <% DATA: lv_s_mg TYPE string, lv_s_lm TYPE string, lv_s_cls TYPE string. %>
+            <% LOOP AT lt_row INTO ls_row WHERE aufnr = lv_sample_aufnr. %>
+              <% fmt_q ls_row-mgvrg lv_s_mg. %>
+              <% fmt_q ls_row-lmnga lv_s_lm. %>
+              <% CASE ls_row-status.
+                   WHEN 'confirmed'. lv_s_cls = 'st-c'.
+                   WHEN 'active'.    lv_s_cls = 'st-a'.
+                   WHEN OTHERS.      lv_s_cls = 'st-q'.
+                 ENDCASE. %>
+              <tr>
+                <td class="dg-code"><%= ls_row-vornr %></td>
+                <td class="dg-code"><%= ls_row-arbpl %></td>
+                <td><%= ls_row-ktext %></td>
+                <td><%= ls_row-ltxa1 %></td>
+                <td class="num"><%= lv_s_mg %></td>
+                <td class="num"><%= lv_s_lm %></td>
+                <td class="<%= lv_s_cls %>"><%= ls_row-status %></td>
+              </tr>
+            <% ENDLOOP. %>
+            <% IF lv_sample_aufnr IS INITIAL. %>
+              <tr><td colspan="7" style="text-align:center; color:#9ca3af; padding:20px;">Tidak ada order dengan operasi.</td></tr>
+            <% ENDIF. %>
+          </tbody>
+        </table>
+        <p class="dg-legend">
+          Inilah bentuk mentah dari chip routing di mockup: satu baris = satu kotak chip, urut VORNR,
+          dengan warna dari kolom Status.
+        </p>
+      </div>
+
+      <!-- ================= G ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">G. Kandidat sumber PENGELOMPOKAN work center</div>
+        <p class="dg-legend" style="padding:12px 14px 4px;">
+          SAP tidak punya field &quot;grup/section&quot; seperti mockup (CNC Router &rarr; Machining Center).
+          Tiga kandidat di bawah; pilih yang paling rapi memisahkan work center, atau putuskan memakai
+          tabel pemetaan sendiri.
+        </p>
+        <table class="dg-tbl">
+          <thead><tr><th>Kandidat</th><th>Nilai</th><th style="text-align:right;">Jumlah WC</th></tr></thead>
+          <tbody>
+            <% LOOP AT lt_gpre INTO ls_gpre. %>
+              <tr><td>Prefix ARBPL (3 huruf)</td><td class="dg-code"><%= ls_gpre-key %></td><td class="num"><%= ls_gpre-cnt %></td></tr>
+            <% ENDLOOP. %>
+            <% LOOP AT lt_gkos INTO ls_gpre. %>
+              <tr><td>Cost center (CRCO-KOSTL)</td><td class="dg-code"><%= ls_gpre-key %></td><td class="num"><%= ls_gpre-cnt %></td></tr>
+            <% ENDLOOP. %>
+            <% LOOP AT lt_gvrw INTO ls_gpre. %>
+              <tr><td>Usage (CRHD-VERWE)</td><td class="dg-code"><%= ls_gpre-key %></td><td class="num"><%= ls_gpre-cnt %></td></tr>
+            <% ENDLOOP. %>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ================= H ================= -->
+      <div class="dg-card">
+        <div class="dg-hd">H. PLAF &#8212; apakah &quot;PLO&quot; di mockup benar planned order?</div>
+        <div class="dg-kpi">
+          <div><span class="k-lbl">Baris PLAF utk SO+Item ini</span><span class="k-val"><%= lv_plaf_cnt %></span></div>
+        </div>
+        <table class="dg-tbl">
+          <thead><tr><th>PLNUM</th><th>Material</th><th>SO</th><th>Item</th></tr></thead>
+          <tbody>
+            <% DATA lv_pl_i TYPE i. %>
+            <% CLEAR lv_pl_i. %>
+            <% LOOP AT lt_plaf INTO ls_plaf. %>
+              <% lv_pl_i = lv_pl_i + 1. %>
+              <% IF lv_pl_i > 25. EXIT. ENDIF. %>
+              <tr>
+                <td class="dg-code"><%= ls_plaf-plnum %></td>
+                <td class="dg-code"><%= ls_plaf-matnr %></td>
+                <td class="dg-code"><%= ls_plaf-kdauf %></td>
+                <td class="dg-code"><%= ls_plaf-kdpos %></td>
+              </tr>
+            <% ENDLOOP. %>
+            <% IF lt_plaf IS INITIAL. %>
+              <tr><td colspan="4" style="text-align:center; color:#9ca3af; padding:20px;">Tidak ada planned order (PLAF) untuk SO+Item pada scope ini &#8212; berarti &quot;PLO&quot; di mockup kemungkinan merujuk order produksi (AUFNR), bukan planned order.</td></tr>
+            <% ENDIF. %>
+          </tbody>
+        </table>
+        <p class="dg-legend">
+          Maksimum 25 baris ditampilkan. Kalau tabel ini terisi, &quot;PLO-24-0117&quot; di mockup wajar dipetakan
+          ke <code>PLAF-PLNUM</code>. Kalau kosong, pakai nomor order produksi.
+        </p>
+      </div>
+
+    <% ENDIF. %>
+  </div>
+</body>
+</html>
