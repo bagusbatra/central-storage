@@ -23,7 +23,8 @@ CLASS ltc_peg DEFINITION FOR TESTING
                  RETURNING VALUE(rs) TYPE zcl_cs_peg=>ty_res.
 
     METHODS: stasiun_dari_plant_dispo FOR TESTING,
-             rumus_status_operasi FOR TESTING.
+             rumus_status_operasi FOR TESTING,
+             pohon_konvergensi FOR TESTING.
 ENDCLASS.
 
 CLASS ltc_peg IMPLEMENTATION.
@@ -95,6 +96,40 @@ CLASS ltc_peg IMPLEMENTATION.
                               IMPORTING ev_seq = lv_seq ev_in_scope = lv_in ).
     cl_abap_unit_assert=>assert_equals( act = lv_seq exp = 9 msg = 'DISPO asing -> Lainnya' ).
     cl_abap_unit_assert=>assert_equals( act = lv_in  exp = abap_false ).
+  ENDMETHOD.
+
+  METHOD pohon_konvergensi.
+    " PANEL (order O2, output 4) memakan 20 KAKI (order O1) -> rasio 5:1
+    DATA: lt_ord TYPE zcl_cs_peg=>tt_ord,
+          lt_res TYPE zcl_cs_peg=>tt_res,
+          lt_stk TYPE zcl_cs_peg=>tt_stk,
+          lt_mkt TYPE zcl_cs_peg=>tt_makt,
+          lt_nod TYPE zcl_cs_peg=>tt_node.
+
+    APPEND ord( iv_aufnr = 'O1' iv_matnr = 'KAKI'  iv_psmng = 20
+                iv_pwerk = '1000' iv_dispo = 'PN1' ) TO lt_ord.
+    APPEND ord( iv_aufnr = 'O2' iv_matnr = 'PANEL' iv_psmng = 4 ) TO lt_ord.
+    APPEND res( iv_aufnr = 'O2' iv_matnr = 'KAKI' iv_bdmng = 20 ) TO lt_res.
+
+    lt_nod = zcl_cs_peg=>assemble( it_ord = lt_ord it_res = lt_res
+                                   it_stk = lt_stk it_makt = lt_mkt ).
+
+    cl_abap_unit_assert=>assert_equals(
+      act = lines( lt_nod ) exp = 2 msg = 'akar PANEL + anak KAKI' ).
+
+    " baris pertama = akar (PANEL), tidak punya induk
+    READ TABLE lt_nod INDEX 1 INTO DATA(ls_root).
+    cl_abap_unit_assert=>assert_equals( act = ls_root-matnr exp = 'PANEL' ).
+    cl_abap_unit_assert=>assert_initial( act = ls_root-parent_key ).
+    cl_abap_unit_assert=>assert_equals( act = ls_root-stn_seq exp = 3 ).
+
+    READ TABLE lt_nod INDEX 2 INTO DATA(ls_kid).
+    cl_abap_unit_assert=>assert_equals( act = ls_kid-matnr exp = 'KAKI' ).
+    cl_abap_unit_assert=>assert_equals( act = ls_kid-parent_key exp = ls_root-node_key ).
+    cl_abap_unit_assert=>assert_equals( act = ls_kid-bdmng exp = 20 ).
+    cl_abap_unit_assert=>assert_equals( act = ls_kid-qty_out exp = 20
+      msg = 'qty_out anak = PSMNG order pembuatnya' ).
+    cl_abap_unit_assert=>assert_equals( act = ls_kid-stn_seq exp = 1 ).
   ENDMETHOD.
 
 ENDCLASS.
