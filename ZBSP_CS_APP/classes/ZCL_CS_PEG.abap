@@ -162,6 +162,17 @@ CLASS zcl_cs_peg DEFINITION PUBLIC FINAL CREATE PUBLIC.
            END OF ty_prod,
            tt_prod TYPE STANDARD TABLE OF ty_prod WITH DEFAULT KEY.
 
+    " Telusuri satu cabang ke bawah. it_path = daftar matnr leluhur, dipakai
+    " sebagai penjaga siklus. ct_seen = matnr yang sudah pernah muncul di
+    " pohon (untuk dup_of).
+    CLASS-METHODS descend
+      IMPORTING is_parent  TYPE ty_node
+                it_prod    TYPE tt_prod
+                it_res_agg TYPE tt_res
+                it_path    TYPE string_table
+      CHANGING  ct_node    TYPE tt_node
+                ct_seen    TYPE string_table.
+
 ENDCLASS.
 
 CLASS zcl_cs_peg IMPLEMENTATION.
@@ -211,11 +222,93 @@ CLASS zcl_cs_peg IMPLEMENTATION.
     ev_seq = 9. ev_txt = 'Lainnya'. ev_in_scope = abap_false.
   ENDMETHOD.
 
+  METHOD descend.
+    DATA: ls_res  TYPE ty_res,
+          ls_node TYPE ty_node,
+          lt_path TYPE string_table,
+          lv_key  TYPE string.
+    FIELD-SYMBOLS <par> TYPE ty_node.
+
+    IF is_parent-level >= c_max_depth.
+      READ TABLE ct_node ASSIGNING <par> WITH KEY node_key = is_parent-node_key.
+      IF sy-subrc = 0.
+        <par>-note = 'batas kedalaman'.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
+    LOOP AT it_res_agg INTO ls_res WHERE aufnr = is_parent-aufnr.
+
+      " kdpos ikut jadi kunci — lihat alasannya di assemble( ).
+      READ TABLE it_prod ASSIGNING FIELD-SYMBOL(<c>)
+        WITH KEY matnr = ls_res-matnr kdpos = is_parent-kdpos.
+      IF sy-subrc <> 0.
+        CONTINUE.                       " barang beli -> dibuang (K4)
+      ENDIF.
+
+      " penjaga siklus: material ini sudah ada di jalur leluhurnya?
+      READ TABLE it_path TRANSPORTING NO FIELDS
+        WITH KEY table_line = <c>-matnr.
+      IF sy-subrc = 0.
+        READ TABLE ct_node ASSIGNING <par> WITH KEY node_key = is_parent-node_key.
+        IF sy-subrc = 0.
+          <par>-note = 'rekursi dihentikan'.
+        ENDIF.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR ls_node.
+      lv_key = <c>-kdpos && '/' && <c>-matnr && '/' && is_parent-node_key.
+      ls_node-node_key   = lv_key.
+      ls_node-parent_key = is_parent-node_key.
+      ls_node-level      = is_parent-level + 1.
+      ls_node-kdpos      = <c>-kdpos.
+      ls_node-matnr      = <c>-matnr.
+      ls_node-aufnr      = <c>-aufnr.
+      ls_node-qty_out    = <c>-psmng.
+      ls_node-bdmng      = ls_res-bdmng.
+      ls_node-enmng      = ls_res-enmng.
+      ls_node-dispo      = <c>-dispo.
+      stn_of_order( EXPORTING iv_pwerk = <c>-pwerk iv_dispo = <c>-dispo
+                    IMPORTING ev_seq   = ls_node-stn_seq
+                              ev_txt   = ls_node-stn_txt
+                              ev_in_scope = ls_node-in_scope ).
+
+      " sudah pernah muncul di cabang lain? -> tandai dup_of
+      READ TABLE ct_seen TRANSPORTING NO FIELDS
+        WITH KEY table_line = <c>-matnr.
+      IF sy-subrc = 0.
+        ls_node-dup_of = <c>-matnr.
+      ELSE.
+        APPEND <c>-matnr TO ct_seen.
+      ENDIF.
+
+      " induk terbukti punya anak
+      READ TABLE ct_node ASSIGNING <par> WITH KEY node_key = is_parent-node_key.
+      IF sy-subrc = 0.
+        <par>-has_child = abap_true.
+      ENDIF.
+
+      APPEND ls_node TO ct_node.
+
+      lt_path = it_path.
+      APPEND <c>-matnr TO lt_path.
+      descend( EXPORTING is_parent  = ls_node
+                         it_prod    = it_prod
+                         it_res_agg = it_res_agg
+                         it_path    = lt_path
+               CHANGING  ct_node    = ct_node
+                         ct_seen    = ct_seen ).
+    ENDLOOP.
+  ENDMETHOD.
+
   METHOD assemble.
     DATA: lt_res_agg TYPE tt_res,
           ls_res     TYPE ty_res,
           ls_ord     TYPE ty_ord,
-          ls_node    TYPE ty_node.
+          ls_node    TYPE ty_node,
+          lt_path    TYPE string_table,
+          lt_seen    TYPE string_table.
     FIELD-SYMBOLS <r> TYPE ty_res.
 
     " --- 1. Agregasi RESB per (aufnr, matnr) ---
@@ -256,20 +349,38 @@ CLASS zcl_cs_peg IMPLEMENTATION.
     ENDLOOP.
 
     " --- 3. Material yang DIPAKAI order lain (utk menentukan akar) ---
-    DATA: lt_used TYPE STANDARD TABLE OF matnr WITH DEFAULT KEY.
+    "     Kunci HARUS (matnr, kdpos) milik order YANG MENGONSUMSI komponen
+    "     itu — bukan kdpos komponennya sendiri. Kalau hanya matnr, material
+    "     yang jadi AKAR di satu item SO tapi jadi KOMPONEN di item SO lain
+    "     akan salah dikira "terpakai" di kedua tempat, sehingga item
+    "     pertama kehilangan akarnya (lihat tes
+    "     akar_di_satu_item_komponen_di_lain).
+    TYPES: BEGIN OF ty_used,
+             matnr TYPE matnr,
+             kdpos TYPE afpo-kdpos,
+           END OF ty_used.
+    DATA: lt_used TYPE STANDARD TABLE OF ty_used WITH DEFAULT KEY,
+          ls_used TYPE ty_used.
     LOOP AT lt_res_agg INTO ls_res.
       READ TABLE lt_prod TRANSPORTING NO FIELDS WITH KEY matnr = ls_res-matnr.
       IF sy-subrc = 0.        " hanya yg punya order pembuat (spec K4)
-        APPEND ls_res-matnr TO lt_used.
+        READ TABLE it_ord INTO ls_ord WITH KEY aufnr = ls_res-aufnr.
+        IF sy-subrc = 0.
+          CLEAR ls_used.
+          ls_used-matnr = ls_res-matnr.
+          ls_used-kdpos = ls_ord-kdpos.   " kdpos order PENGONSUMSI
+          APPEND ls_used TO lt_used.
+        ENDIF.
       ENDIF.
     ENDLOOP.
-    SORT lt_used. DELETE ADJACENT DUPLICATES FROM lt_used.
+    SORT lt_used BY matnr kdpos.
+    DELETE ADJACENT DUPLICATES FROM lt_used COMPARING matnr kdpos.
 
     " --- 4. Akar = order yang materialnya tidak dipakai order lain ---
     DATA: lv_key TYPE string.
     LOOP AT lt_prod ASSIGNING <p>.
       READ TABLE lt_used TRANSPORTING NO FIELDS
-        WITH KEY table_line = <p>-matnr BINARY SEARCH.
+        WITH KEY matnr = <p>-matnr kdpos = <p>-kdpos BINARY SEARCH.
       IF sy-subrc = 0.
         CONTINUE.             " bukan akar, dia dipakai order lain
       ENDIF.
@@ -286,34 +397,15 @@ CLASS zcl_cs_peg IMPLEMENTATION.
                               ev_txt   = ls_node-stn_txt
                               ev_in_scope = ls_node-in_scope ).
       APPEND ls_node TO rt_node.
-
-      " anak-anaknya ditelusuri di Task 3 (DFS). Sementara: satu tingkat.
-      LOOP AT lt_res_agg INTO ls_res WHERE aufnr = <p>-aufnr.
-        " kdpos WAJIB ikut jadi kunci: lt_prod berkunci (matnr, kdpos), dan
-        " assemble( ) bisa dipanggil utk SELURUH item SO sekaligus (iv_posnr
-        " opsional). Tanpa kdpos, anak bisa nyantol ke order induk milik item
-        " lain yang kebetulan memakai material sama.
-        READ TABLE lt_prod ASSIGNING FIELD-SYMBOL(<c>)
-          WITH KEY matnr = ls_res-matnr kdpos = <p>-kdpos.
-        IF sy-subrc <> 0.
-          CONTINUE.           " barang beli -> dibuang (spec K4)
-        ENDIF.
-        CLEAR ls_node.
-        ls_node-node_key   = <c>-kdpos && '/' && <c>-matnr.
-        ls_node-parent_key = lv_key.
-        ls_node-kdpos      = <c>-kdpos.
-        ls_node-matnr      = <c>-matnr.
-        ls_node-aufnr      = <c>-aufnr.
-        ls_node-qty_out    = <c>-psmng.
-        ls_node-bdmng      = ls_res-bdmng.
-        ls_node-enmng      = ls_res-enmng.
-        ls_node-dispo      = <c>-dispo.
-        stn_of_order( EXPORTING iv_pwerk = <c>-pwerk iv_dispo = <c>-dispo
-                      IMPORTING ev_seq   = ls_node-stn_seq
-                                ev_txt   = ls_node-stn_txt
-                                ev_in_scope = ls_node-in_scope ).
-        APPEND ls_node TO rt_node.
-      ENDLOOP.
+      APPEND <p>-matnr TO lt_seen.
+      CLEAR lt_path.
+      APPEND <p>-matnr TO lt_path.
+      descend( EXPORTING is_parent  = ls_node
+                         it_prod    = lt_prod
+                         it_res_agg = lt_res_agg
+                         it_path    = lt_path
+               CHANGING  ct_node    = rt_node
+                         ct_seen    = lt_seen ).
     ENDLOOP.
   ENDMETHOD.
 
