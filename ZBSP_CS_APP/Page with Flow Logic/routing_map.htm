@@ -1,0 +1,1127 @@
+<%@ page language="abap" %>
+<%
+*&---------------------------------------------------------------------*
+*& BSP Page — routing_map.htm :: PETA PERJALANAN SO (dot map + stok real)
+*&---------------------------------------------------------------------*
+*& Ketik No. Sales Order (+ Item opsional) -> tampil DOT MAP perjalanan tiap
+*& komponen: satu titik = satu proses (operasi), disambung tanda panah,
+*& tiap titik punya keterangan singkat + tooltip rinci saat di-hover.
+*& Di bawah tiap komponen ditampilkan STOK REAL LENGKAP-nya.
+*& READ-ONLY, tidak menulis apa pun.
+*&
+*& ===== KENAPA SUMBUNYA "TAHAP", BUKAN "OPERASI" =====
+*& diag_routing.htm bagian B (dijalankan 2026-07-30, SO 10446) membuktikan:
+*&   maksimum 2 operasi per order; 86,1% order hanya punya 1 operasi;
+*&   TIDAK ADA order dengan >= 3 operasi.
+*& Alur CNC -> Edge Banding -> Assembly TIDAK diekspresikan sebagai routing
+*& multi-operasi dalam satu order, melainkan sebagai RANGKAIAN ORDER TERPISAH
+*& (satu order per komponen per tahap). Karena itu titik-titik dot map
+*& dikelompokkan per TAHAP (dari plant + AFKO-DISPO), bukan per VORNR.
+*&
+*& ===== RANTAI STASIUN =====
+*& Peta = rantai stasiun kiri->kanan. Definisi lengkapnya ada di lt_stg
+*& (master tunggal). Ringkasnya:
+*&
+*&   [1] Pembahanan  ->  (Central Storage)  ->  [2] Machining  ->
+*&   [3] Edge Banding  ->  [4] Sanding      ->  (Lokasi lain, bila ada)
+*&
+*& Stasiun PROSES bernomor & diisi order/operasi; TITIK STOK tidak bernomor
+*& & hanya menampung barang yang singgah. Dua sumbu pengisi:
+*&   order -> stasiun : plant + AFKO-DISPO (plant SELALU dipasangkan dgn
+*&                      DISPO, konvensi diag_routing.htm & backup/index2.htm)
+*&                      Plant 1000 SEMUA DISPO (WM1/WM2/PN1/PN2) -> [1]
+*&                      Plant 2000 GA1/GA2 -> [2],  EB2 -> [3]
+*&   stok  -> stasiun : plant + SLoc (definisi bagian yg dipakai index.htm)
+*&                      1000 -> [1] | 2KCS -> CS | 2261,2262 -> [2]
+*&                      22E2,22E3 -> [3] | 229K -> [4] | lainnya -> Lokasi lain
+*&
+*& ⚠️ Urutan rantai ini ASUMSI URUTAN PROSES. SAP tidak menyimpan urutan
+*&    antar order; kalau urutan sebenarnya beda, ubah seq di lt_stg.
+*& ⚠️ Rantai BERHENTI di Sanding karena hanya sampai situ ada penanda yang
+*&    bisa dipakai (DISPO utk order, SLoc utk stok). Assembling/Finishing/
+*&    Packing tidak punya DISPO maupun SLoc sendiri -> tidak bisa diturunkan
+*&    dari data yang ada; perlu pemetaan COST CENTER work center (map_sec)
+*&    spt rekomendasi diag_routing.htm bagian G & I.
+*& ⚠️ Sanding [4] saat ini HANYA punya stok (tidak ada DISPO yang memetakan
+*&    order ke sana), jadi lapis prosesnya akan bertulis "tidak ada order".
+*&
+*& ===== RUMUS STATUS OPERASI =====
+*& Disalin PERSIS dari diag_routing.htm:355-365 (dipakai juga index2.htm).
+*& Kalau rumus berubah, ubah di KETIGA file.
+*&   Sigma AFRU-LMNGA = 0                        -> queue
+*&   0 < Sigma LMNGA < AFVV-MGVRG                -> active
+*&   Sigma LMNGA >= MGVRG  atau  AFRU-AUERU='X'  -> confirmed
+*& Baris AFRU STOKZ='X' (dibatalkan) DIBUANG dulu; kalau tidak, qty ganda.
+*& AFRU dicocokkan ke operasi lewat AUFNR + VORNR.
+*&
+*& ===== STOK REAL (blok stok di bawah tiap komponen) =====
+*& LENGKAP = semua jenis stok & semua SLoc tempat material itu berada:
+*&   MSKA (SO-stock, SOBKZ='E', discope ke SO+Item yg sedang dilihat)
+*&        KALAB = Unrestricted, KAINS = Quality Insp, KASPE = Blocked
+*&   MARD (stok bebas, TIDAK terikat SO — ditandai terpisah di UI)
+*&        LABST = Unrestricted, INSME = Quality Insp, SPEME = Blocked
+*& Nama SLoc diambil dari T001L-LGOBE.
+*& ⚠️ Baris MARD sengaja diberi label "bebas (tanpa SO)": stok itu milik
+*&    material, BUKAN milik SO ini. Jangan dijumlahkan sbg "stok SO".
+*&    Karena itu total di kepala komponen HANYA menjumlahkan SO-stock.
+*&
+*& ⚠️ Halaman ini SENGAJA TIDAK memakai aturan "hanya SO ber-real-stock"
+*&    milik index2.htm — di sini SO diketik manual, jadi SO apa pun boleh.
+*& ⚠️ Form GET WAJIB action="routing_map.htm" eksplisit (bug lama aplikasi:
+*&    action kosong membuat filter mengembalikan SELURUH data).
+*&---------------------------------------------------------------------*
+DATA: lv_user TYPE string.
+lv_user = sy-uname.
+
+" ===== Input =====
+DATA: lv_in_so   TYPE string,
+      lv_in_item TYPE string,
+      lv_so      TYPE vbak-vbeln,
+      lv_pos     TYPE afpo-kdpos,
+      lv_has_pos TYPE abap_bool.
+
+lv_in_so   = request->get_form_field( 'so' ).
+lv_in_item = request->get_form_field( 'item' ).
+
+IF lv_in_so IS NOT INITIAL.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING input = lv_in_so IMPORTING output = lv_so.
+ENDIF.
+IF lv_in_item IS NOT INITIAL.
+  lv_pos     = lv_in_item.     " NUMC -> otomatis rata kanan + nol di depan
+  lv_has_pos = abap_true.
+ENDIF.
+
+" ===== Node dot map: SATU BARIS = SATU TITIK (operasi) =====
+"   Order tanpa rute tetap dapat 1 titik, status 'norout'.
+TYPES: BEGIN OF ty_node,
+         kdpos    TYPE afpo-kdpos,   " item SO IKUT jadi kunci komponen:
+                                     " 2 item bisa pakai material SAMA dan
+                                     " itu DUA perjalanan berbeda
+         matnr    TYPE matnr,
+         maktx    TYPE string,
+         stage_no TYPE i,          " = seq stasiun (lihat lt_stg)
+         stage_tx TYPE string,
+         stage_lb TYPE string,     " nomor yg TAMPIL ('' utk titik stok)
+         aufnr    TYPE afko-aufnr,
+         ord_qty  TYPE string,       " '48 / 48'
+         ord_pct  TYPE i,
+         vornr    TYPE string,
+         arbpl    TYPE string,
+         ktext    TYPE string,
+         op_qty   TYPE string,       " 'konfirmasi 48 / 48'
+         status   TYPE string,       " confirmed | active | queue | norout
+         stat_tx  TYPE string,       " label Indonesia utk tooltip
+         plant    TYPE afpo-pwerk,
+         dispo    TYPE afko-dispo,
+         stk_txt  TYPE string,       " ringkasan stok komponen (utk tooltip)
+       END OF ty_node.
+DATA: lt_node TYPE STANDARD TABLE OF ty_node WITH DEFAULT KEY,
+      ls_node TYPE ty_node.
+
+" ===== Stok real per komponen =====
+TYPES: BEGIN OF ty_stk,
+         kdpos TYPE afpo-kdpos,
+         matnr TYPE matnr,
+         sotyp TYPE c LENGTH 1,      " 'E' = SO-stock (MSKA), 'F' = bebas (MARD)
+         werks TYPE werks_d,
+         lgort TYPE lgort_d,
+         unres TYPE p LENGTH 15 DECIMALS 3,
+         qi    TYPE p LENGTH 15 DECIMALS 3,
+         blk   TYPE p LENGTH 15 DECIMALS 3,
+       END OF ty_stk.
+DATA: lt_stk TYPE STANDARD TABLE OF ty_stk WITH DEFAULT KEY,
+      ls_stk TYPE ty_stk.
+
+" Versi SIAP TAMPIL dari lt_stk. Dipisah karena lt_stk dijumlahkan pakai
+" COLLECT (semua field non-numerik jadi kunci), jadi field teks TIDAK BOLEH
+" ikut di sana. Qty MSKA/MARD bertipe QUAN 3 desimal -> tanpa format akan
+" tercetak '48.000'; di sini dibulatkan ke 0 desimal. Field teks dikosongkan
+" bila qty-nya 0, supaya badge-nya tidak usah dirender.
+TYPES: BEGIN OF ty_stkd,
+         kdpos TYPE afpo-kdpos,
+         matnr TYPE matnr,
+         seq   TYPE i,               " stasiun tempat stok ini berada
+         sotyp TYPE c LENGTH 1,
+         werks TYPE werks_d,
+         lgort TYPE lgort_d,
+         lgobe TYPE string,
+         u_txt TYPE string,
+         q_txt TYPE string,
+         b_txt TYPE string,
+       END OF ty_stkd.
+DATA: lt_stkd TYPE STANDARD TABLE OF ty_stkd WITH DEFAULT KEY,
+      ls_stkd TYPE ty_stkd.
+
+TYPES: BEGIN OF ty_lgobe, werks TYPE werks_d, lgort TYPE lgort_d,
+         lgobe TYPE t001l-lgobe, END OF ty_lgobe.
+DATA: lt_lgobe TYPE STANDARD TABLE OF ty_lgobe WITH DEFAULT KEY,
+      ls_lgobe TYPE ty_lgobe.
+
+" ===== MASTER STASIUN — SATU-SATUNYA sumber urutan, nomor & nama =====
+"   Peta digambar sebagai RANTAI STASIUN kiri->kanan. Dua jenis stasiun:
+"     kind='P' STASIUN PROSES  -> BERNOMOR (1,2,3,4). Punya order+operasi.
+"     kind='S' TITIK STOK      -> TANPA NOMOR. Bukan proses, hanya tempat
+"                                 barang singgah (mis. Central Storage).
+"   seq = urutan gambar (internal, selalu naik). no = nomor yang TAMPIL.
+"   Keduanya sengaja dipisah supaya titik stok bisa disisipkan di tengah
+"   rantai tanpa mengacaukan penomoran proses.
+"
+"   RANTAI: 1 Pembahanan -> (Central Storage) -> 2 Machining ->
+"           3 Edge Banding -> 4 Sanding
+"   Plant 1000 DIGABUNG jadi SATU stasiun (Pembahanan) — WM1/WM2 (pembahanan)
+"   & PN1/PN2 (panel/pressing) tidak lagi dipisah, sesuai permintaan user.
+"
+"   ⚠️ BATAS DATA: rantai berhenti di Sanding karena hanya sampai situ SAP
+"      punya penanda yang bisa dipakai (DISPO utk order, SLoc utk stok).
+"      Tahap sesudahnya (Assembling / Finishing / Packing) TIDAK punya DISPO
+"      maupun SLoc sendiri -> tidak bisa diturunkan dari data yang ada.
+"      Untuk memunculkannya perlu pemetaan COST CENTER work center (map_sec)
+"      spt rekomendasi diag_routing.htm bagian G & I.
+"   ⚠️ Stasiun Sanding (229K) saat ini HANYA punya stok: tidak ada nilai
+"      DISPO yang memetakan order ke sana, jadi kolom dot-nya akan kosong.
+TYPES: BEGIN OF ty_stg,
+         seq  TYPE i,
+         no   TYPE string,      " '' = titik stok (tanpa nomor)
+         tx   TYPE string,
+         kind TYPE c LENGTH 1,  " P = proses, S = titik stok
+         loc  TYPE string,      " keterangan lokasi utk sub-judul kartu
+       END OF ty_stg.
+DATA: lt_stg TYPE STANDARD TABLE OF ty_stg WITH DEFAULT KEY,
+      ls_stg TYPE ty_stg.
+lt_stg = VALUE #(
+  ( seq = 1 no = '1' tx = 'Pembahanan'      kind = 'P' loc = 'Plant 1000' )
+  ( seq = 2 no = ''  tx = 'Central Storage' kind = 'S' loc = '2000 / 2KCS' )
+  ( seq = 3 no = '2' tx = 'Machining'       kind = 'P' loc = '2261, 2262' )
+  ( seq = 4 no = '3' tx = 'Edge Banding'    kind = 'P' loc = '22E2, 22E3' )
+  ( seq = 5 no = '4' tx = 'Sanding'         kind = 'P' loc = '229K' )
+  ( seq = 9 no = ''  tx = 'Lokasi lain'     kind = 'S' loc = 'di luar jalur' ) ).
+
+" ===== Ringkasan halaman =====
+DATA: lv_komp_cnt TYPE i,
+      lv_ord_cnt  TYPE i,
+      lv_op_cnt   TYPE i,
+      lv_conf     TYPE i,
+      lv_act      TYPE i,
+      lv_queue    TYPE i,
+      lv_pct      TYPE i,
+      lv_buyer    TYPE string,
+      lv_kunnr    TYPE kna1-kunnr,
+      lv_msg      TYPE string.
+
+IF lv_so IS NOT INITIAL.
+
+  " ===== 1. Order dalam scope (plant DIPASANGKAN dgn DISPO) =====
+  TYPES: BEGIN OF ty_ord,
+           aufnr TYPE afko-aufnr, aufpl TYPE afko-aufpl, dispo TYPE afko-dispo,
+           pwerk TYPE afpo-pwerk, matnr TYPE afpo-matnr,
+           kdauf TYPE afpo-kdauf, kdpos TYPE afpo-kdpos,
+           psmng TYPE afpo-psmng, wemng TYPE afpo-wemng,
+         END OF ty_ord.
+  DATA: lt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY, ls_ord TYPE ty_ord.
+
+  IF lv_has_pos = abap_true.
+    SELECT a~aufnr k~aufpl k~dispo a~pwerk a~matnr a~kdauf a~kdpos a~psmng a~wemng
+      FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+      INTO CORRESPONDING FIELDS OF TABLE lt_ord
+      WHERE a~kdauf = lv_so
+        AND a~kdpos = lv_pos
+        AND (    ( a~pwerk = '1000' AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' ) )
+              OR ( a~pwerk = '2000' AND k~dispo IN ( 'GA1', 'GA2', 'EB2' ) ) ).
+  ELSE.
+    SELECT a~aufnr k~aufpl k~dispo a~pwerk a~matnr a~kdauf a~kdpos a~psmng a~wemng
+      FROM afpo AS a INNER JOIN afko AS k ON a~aufnr = k~aufnr
+      INTO CORRESPONDING FIELDS OF TABLE lt_ord
+      WHERE a~kdauf = lv_so
+        AND (    ( a~pwerk = '1000' AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' ) )
+              OR ( a~pwerk = '2000' AND k~dispo IN ( 'GA1', 'GA2', 'EB2' ) ) ).
+  ENDIF.
+
+  lv_ord_cnt = lines( lt_ord ).
+
+  IF lt_ord IS INITIAL.
+    lv_msg = 'Tidak ada order produksi untuk SO ini dalam scope MRP controller (Plant 1000 WM/PN, Plant 2000 GA/EB).'.
+  ELSE.
+
+    " ===== 2. Nama buyer (VBAK -> KNA1) =====
+    SELECT SINGLE kunnr FROM vbak INTO lv_kunnr WHERE vbeln = lv_so.
+    IF lv_kunnr IS NOT INITIAL.
+      SELECT SINGLE name1 FROM kna1 INTO lv_buyer WHERE kunnr = lv_kunnr.
+    ENDIF.
+
+    " ===== 3. Daftar komponen (item SO + material) =====
+    TYPES: BEGIN OF ty_mu, kdpos TYPE afpo-kdpos, matnr TYPE matnr, END OF ty_mu.
+    DATA: lt_mu TYPE STANDARD TABLE OF ty_mu WITH DEFAULT KEY, ls_mu TYPE ty_mu.
+    LOOP AT lt_ord INTO ls_ord.
+      ls_mu-kdpos = ls_ord-kdpos.
+      ls_mu-matnr = ls_ord-matnr.
+      APPEND ls_mu TO lt_mu.
+    ENDLOOP.
+    SORT lt_mu BY kdpos matnr.
+    DELETE ADJACENT DUPLICATES FROM lt_mu COMPARING kdpos matnr.
+    lv_komp_cnt = lines( lt_mu ).
+
+    " ===== 4. Teks material (MAKT) =====
+    TYPES: BEGIN OF ty_makt, matnr TYPE matnr, maktx TYPE makt-maktx, END OF ty_makt.
+    DATA: lt_makt TYPE STANDARD TABLE OF ty_makt WITH DEFAULT KEY, ls_makt TYPE ty_makt.
+    SELECT matnr maktx FROM makt INTO TABLE lt_makt
+      FOR ALL ENTRIES IN lt_mu
+      WHERE matnr = lt_mu-matnr AND spras = sy-langu.
+    SORT lt_makt BY matnr.
+
+    " ===== 5. STOK REAL — MSKA (SO-stock) =====
+    "   Discope ke SO (+Item) yg sedang dilihat. Semua jenis stok diambil.
+    TYPES: BEGIN OF ty_mska, matnr TYPE mska-matnr, posnr TYPE mska-posnr,
+             werks TYPE mska-werks, lgort TYPE mska-lgort,
+             kalab TYPE mska-kalab, kains TYPE mska-kains, kaspe TYPE mska-kaspe,
+           END OF ty_mska.
+    DATA: lt_mska TYPE STANDARD TABLE OF ty_mska WITH DEFAULT KEY, ls_mska TYPE ty_mska.
+    IF lv_has_pos = abap_true.
+      SELECT matnr posnr werks lgort kalab kains kaspe FROM mska
+        INTO CORRESPONDING FIELDS OF TABLE lt_mska
+        WHERE vbeln = lv_so AND posnr = lv_pos AND sobkz = 'E'
+          AND ( kalab > 0 OR kains > 0 OR kaspe > 0 ).
+    ELSE.
+      SELECT matnr posnr werks lgort kalab kains kaspe FROM mska
+        INTO CORRESPONDING FIELDS OF TABLE lt_mska
+        WHERE vbeln = lv_so AND sobkz = 'E'
+          AND ( kalab > 0 OR kains > 0 OR kaspe > 0 ).
+    ENDIF.
+
+    " Hanya material yang memang jadi komponen di peta (buang material lain
+    " milik SO yg tidak punya order dalam scope).
+    LOOP AT lt_mska INTO ls_mska.
+      READ TABLE lt_mu TRANSPORTING NO FIELDS
+        WITH KEY kdpos = ls_mska-posnr matnr = ls_mska-matnr BINARY SEARCH.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
+      CLEAR ls_stk.
+      ls_stk-kdpos = ls_mska-posnr.
+      ls_stk-matnr = ls_mska-matnr.
+      ls_stk-sotyp = 'E'.
+      ls_stk-werks = ls_mska-werks.
+      ls_stk-lgort = ls_mska-lgort.
+      ls_stk-unres = ls_mska-kalab.
+      ls_stk-qi    = ls_mska-kains.
+      ls_stk-blk   = ls_mska-kaspe.
+      COLLECT ls_stk INTO lt_stk.
+    ENDLOOP.
+
+    " ===== 6. STOK REAL — MARD (stok bebas, TIDAK terikat SO) =====
+    TYPES: BEGIN OF ty_mard, matnr TYPE mard-matnr, werks TYPE mard-werks,
+             lgort TYPE mard-lgort, labst TYPE mard-labst,
+             insme TYPE mard-insme, speme TYPE mard-speme,
+           END OF ty_mard.
+    DATA: lt_mard TYPE STANDARD TABLE OF ty_mard WITH DEFAULT KEY, ls_mard TYPE ty_mard.
+    SELECT matnr werks lgort labst insme speme FROM mard
+      INTO CORRESPONDING FIELDS OF TABLE lt_mard
+      FOR ALL ENTRIES IN lt_mu
+      WHERE matnr = lt_mu-matnr
+        AND ( labst > 0 OR insme > 0 OR speme > 0 ).
+
+    " Stok bebas melekat ke MATERIAL, bukan ke item SO -> disalin ke tiap
+    " komponen yang memakai material tsb, dan DILABELI terpisah di UI.
+    LOOP AT lt_mard INTO ls_mard.
+      LOOP AT lt_mu INTO ls_mu WHERE matnr = ls_mard-matnr.
+        CLEAR ls_stk.
+        ls_stk-kdpos = ls_mu-kdpos.
+        ls_stk-matnr = ls_mard-matnr.
+        ls_stk-sotyp = 'F'.
+        ls_stk-werks = ls_mard-werks.
+        ls_stk-lgort = ls_mard-lgort.
+        ls_stk-unres = ls_mard-labst.
+        ls_stk-qi    = ls_mard-insme.
+        ls_stk-blk   = ls_mard-speme.
+        COLLECT ls_stk INTO lt_stk.
+      ENDLOOP.
+    ENDLOOP.
+    SORT lt_stk BY kdpos matnr sotyp werks lgort.
+
+    " ===== 7. Nama storage location (T001L) =====
+    IF lt_stk IS NOT INITIAL.
+      SELECT werks lgort lgobe FROM t001l INTO CORRESPONDING FIELDS OF TABLE lt_lgobe
+        FOR ALL ENTRIES IN lt_stk
+        WHERE werks = lt_stk-werks AND lgort = lt_stk-lgort.
+      SORT lt_lgobe BY werks lgort.
+      DELETE ADJACENT DUPLICATES FROM lt_lgobe COMPARING werks lgort.
+    ENDIF.
+
+    " ===== 7b. Bentuk versi siap tampil (angka sudah diformat) =====
+    LOOP AT lt_stk INTO ls_stk.
+      CLEAR ls_stkd.
+      ls_stkd-kdpos = ls_stk-kdpos.
+      ls_stkd-matnr = ls_stk-matnr.
+      ls_stkd-sotyp = ls_stk-sotyp.
+
+      " --- STOK -> STASIUN (dari plant + SLoc) ---
+      "     Pemetaan SLoc mengikuti definisi bagian yang sudah dipakai
+      "     index.htm (kartu KPI stok): 2KCS Central Storage, 2261/2262
+      "     Machining, 22E2/22E3 Banding, 229K Sanding.
+      "     SLoc di luar daftar -> stasiun 9 'Lokasi lain' supaya stok TIDAK
+      "     hilang dari tampilan (halaman ini menjanjikan stok LENGKAP).
+      IF ls_stk-werks = '1000'.
+        ls_stkd-seq = 1.
+      ELSEIF ls_stk-werks = '2000'.
+        CASE ls_stk-lgort.
+          WHEN '2KCS'.           ls_stkd-seq = 2.
+          WHEN '2261' OR '2262'. ls_stkd-seq = 3.
+          WHEN '22E2' OR '22E3'. ls_stkd-seq = 4.
+          WHEN '229K'.           ls_stkd-seq = 5.
+          WHEN OTHERS.           ls_stkd-seq = 9.
+        ENDCASE.
+      ELSE.
+        ls_stkd-seq = 9.
+      ENDIF.
+
+      ls_stkd-werks = ls_stk-werks.
+      ls_stkd-lgort = ls_stk-lgort.
+      CLEAR ls_lgobe.
+      READ TABLE lt_lgobe INTO ls_lgobe
+        WITH KEY werks = ls_stk-werks lgort = ls_stk-lgort BINARY SEARCH.
+      ls_stkd-lgobe = ls_lgobe-lgobe.
+      IF ls_stk-unres > 0.
+        ls_stkd-u_txt = |{ ls_stk-unres DECIMALS = 0 }|.
+      ENDIF.
+      IF ls_stk-qi > 0.
+        ls_stkd-q_txt = |{ ls_stk-qi DECIMALS = 0 }|.
+      ENDIF.
+      IF ls_stk-blk > 0.
+        ls_stkd-b_txt = |{ ls_stk-blk DECIMALS = 0 }|.
+      ENDIF.
+      APPEND ls_stkd TO lt_stkd.
+    ENDLOOP.
+    SORT lt_stkd BY kdpos matnr seq sotyp werks lgort.
+
+    " ===== 8. Ringkasan stok per komponen (utk kepala kartu & tooltip) =====
+    "   HANYA SO-stock yang dijumlahkan (stok bebas bukan milik SO ini).
+    TYPES: BEGIN OF ty_sksum, kdpos TYPE afpo-kdpos, matnr TYPE matnr,
+             qty TYPE p LENGTH 15 DECIMALS 3, loc TYPE i, txt TYPE string,
+           END OF ty_sksum.
+    DATA: lt_sksum TYPE STANDARD TABLE OF ty_sksum WITH DEFAULT KEY,
+          ls_sksum TYPE ty_sksum.
+    FIELD-SYMBOLS <sm> TYPE ty_sksum.
+    LOOP AT lt_stk INTO ls_stk WHERE sotyp = 'E'.
+      READ TABLE lt_sksum ASSIGNING <sm>
+        WITH KEY kdpos = ls_stk-kdpos matnr = ls_stk-matnr.
+      IF sy-subrc <> 0.
+        APPEND INITIAL LINE TO lt_sksum ASSIGNING <sm>.
+        <sm>-kdpos = ls_stk-kdpos.
+        <sm>-matnr = ls_stk-matnr.
+      ENDIF.
+      <sm>-qty = <sm>-qty + ls_stk-unres + ls_stk-qi + ls_stk-blk.
+      <sm>-loc = <sm>-loc + 1.
+    ENDLOOP.
+    LOOP AT lt_sksum ASSIGNING <sm>.
+      <sm>-txt = |{ <sm>-qty DECIMALS = 0 } di { <sm>-loc } lokasi|.
+    ENDLOOP.
+    SORT lt_sksum BY kdpos matnr.
+
+    " ===== 9. Operasi (AFVC) =====
+    TYPES: BEGIN OF ty_op, aufpl TYPE afvc-aufpl, aplzl TYPE afvc-aplzl,
+             vornr TYPE afvc-vornr, arbid TYPE afvc-arbid, ltxa1 TYPE afvc-ltxa1,
+           END OF ty_op.
+    DATA: lt_op TYPE STANDARD TABLE OF ty_op WITH DEFAULT KEY, ls_op TYPE ty_op.
+    TYPES: BEGIN OF ty_kpl, aufpl TYPE afko-aufpl, END OF ty_kpl.
+    DATA: lt_kpl TYPE STANDARD TABLE OF ty_kpl WITH DEFAULT KEY, ls_kpl TYPE ty_kpl.
+    LOOP AT lt_ord INTO ls_ord.
+      IF ls_ord-aufpl IS NOT INITIAL.
+        ls_kpl-aufpl = ls_ord-aufpl.
+        APPEND ls_kpl TO lt_kpl.
+      ENDIF.
+    ENDLOOP.
+    SORT lt_kpl BY aufpl.
+    DELETE ADJACENT DUPLICATES FROM lt_kpl COMPARING aufpl.
+
+    IF lt_kpl IS NOT INITIAL.
+      SELECT aufpl aplzl vornr arbid ltxa1 FROM afvc
+        INTO CORRESPONDING FIELDS OF TABLE lt_op
+        FOR ALL ENTRIES IN lt_kpl
+        WHERE aufpl = lt_kpl-aufpl.
+      SORT lt_op BY aufpl aplzl.
+    ENDIF.
+
+    " ===== 10. Qty rencana per operasi (AFVV) =====
+    TYPES: BEGIN OF ty_vv, aufpl TYPE afvv-aufpl, aplzl TYPE afvv-aplzl,
+             mgvrg TYPE afvv-mgvrg, END OF ty_vv.
+    DATA: lt_vv TYPE STANDARD TABLE OF ty_vv WITH DEFAULT KEY, ls_vv TYPE ty_vv.
+    IF lt_op IS NOT INITIAL.
+      SELECT aufpl aplzl mgvrg FROM afvv INTO CORRESPONDING FIELDS OF TABLE lt_vv
+        FOR ALL ENTRIES IN lt_op
+        WHERE aufpl = lt_op-aufpl AND aplzl = lt_op-aplzl.
+      SORT lt_vv BY aufpl aplzl.
+    ENDIF.
+
+    " ===== 11. Konfirmasi (AFRU) — baris dibatalkan dibuang dulu =====
+    TYPES: BEGIN OF ty_ru, aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
+             lmnga TYPE afru-lmnga, stokz TYPE afru-stokz, aueru TYPE afru-aueru,
+           END OF ty_ru.
+    DATA: lt_ru TYPE STANDARD TABLE OF ty_ru WITH DEFAULT KEY, ls_ru TYPE ty_ru.
+    SELECT aufnr vornr lmnga stokz aueru FROM afru
+      INTO CORRESPONDING FIELDS OF TABLE lt_ru
+      FOR ALL ENTRIES IN lt_ord
+      WHERE aufnr = lt_ord-aufnr.
+    DELETE lt_ru WHERE stokz = 'X'.
+
+    TYPES: BEGIN OF ty_ruagg, aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
+             lmnga TYPE p LENGTH 15 DECIMALS 3, aueru TYPE c LENGTH 1,
+           END OF ty_ruagg.
+    DATA: lt_ruagg TYPE STANDARD TABLE OF ty_ruagg WITH DEFAULT KEY,
+          ls_ruagg TYPE ty_ruagg.
+    FIELD-SYMBOLS <ra> TYPE ty_ruagg.
+    LOOP AT lt_ru INTO ls_ru.
+      READ TABLE lt_ruagg ASSIGNING <ra>
+        WITH KEY aufnr = ls_ru-aufnr vornr = ls_ru-vornr.
+      IF sy-subrc <> 0.
+        APPEND INITIAL LINE TO lt_ruagg ASSIGNING <ra>.
+        <ra>-aufnr = ls_ru-aufnr.
+        <ra>-vornr = ls_ru-vornr.
+      ENDIF.
+      <ra>-lmnga = <ra>-lmnga + ls_ru-lmnga.
+      IF ls_ru-aueru = 'X'.
+        <ra>-aueru = 'X'.
+      ENDIF.
+    ENDLOOP.
+    SORT lt_ruagg BY aufnr vornr.
+
+    " ===== 12. Master work center (CRHD kode, CRTX nama) =====
+    TYPES: BEGIN OF ty_arbid, arbid TYPE afvc-arbid, END OF ty_arbid.
+    DATA: lt_arbid TYPE STANDARD TABLE OF ty_arbid WITH DEFAULT KEY, ls_arbid TYPE ty_arbid.
+    TYPES: BEGIN OF ty_crhd, objid TYPE crhd-objid, arbpl TYPE crhd-arbpl, END OF ty_crhd.
+    DATA: lt_crhd TYPE STANDARD TABLE OF ty_crhd WITH DEFAULT KEY, ls_crhd TYPE ty_crhd.
+    TYPES: BEGIN OF ty_crtx, objid TYPE crtx-objid, ktext TYPE crtx-ktext, END OF ty_crtx.
+    DATA: lt_crtx TYPE STANDARD TABLE OF ty_crtx WITH DEFAULT KEY, ls_crtx TYPE ty_crtx.
+
+    LOOP AT lt_op INTO ls_op.
+      IF ls_op-arbid IS NOT INITIAL.
+        ls_arbid-arbid = ls_op-arbid.
+        APPEND ls_arbid TO lt_arbid.
+      ENDIF.
+    ENDLOOP.
+    SORT lt_arbid BY arbid.
+    DELETE ADJACENT DUPLICATES FROM lt_arbid COMPARING arbid.
+
+    IF lt_arbid IS NOT INITIAL.
+      " CRHD/CRTX bisa punya >1 baris per objid (time-dependent) -> ambil satu
+      SELECT objid arbpl FROM crhd INTO CORRESPONDING FIELDS OF TABLE lt_crhd
+        FOR ALL ENTRIES IN lt_arbid
+        WHERE objty = 'A' AND objid = lt_arbid-arbid.
+      SORT lt_crhd BY objid.
+      DELETE ADJACENT DUPLICATES FROM lt_crhd COMPARING objid.
+
+      SELECT objid ktext FROM crtx INTO CORRESPONDING FIELDS OF TABLE lt_crtx
+        FOR ALL ENTRIES IN lt_arbid
+        WHERE objty = 'A' AND objid = lt_arbid-arbid AND spras = sy-langu.
+      SORT lt_crtx BY objid.
+      DELETE ADJACENT DUPLICATES FROM lt_crtx COMPARING objid.
+    ENDIF.
+
+    " ===== 13. Rakit titik-titik dot map =====
+    DATA: lv_stage_no TYPE i,
+          lv_stage_tx TYPE string,
+          lv_stage_lb TYPE string,
+          lv_mgvrg    TYPE afvv-mgvrg,
+          lv_ordpct   TYPE i,
+          lv_ordqty   TYPE string,
+          lv_stktxt   TYPE string,
+          lv_hit      TYPE i.
+
+    LOOP AT lt_ord INTO ls_ord.
+
+      " --- ORDER -> STASIUN (dari plant + DISPO) ---
+      "     Yang ditentukan di sini hanya SEQ; nomor tampil & nama diambil
+      "     dari lt_stg supaya tidak ada dua tempat menyimpannya.
+      "     Plant 1000 (WM1/WM2/PN1/PN2) SEMUA -> satu stasiun Pembahanan.
+      CLEAR: lv_stage_no, lv_stage_tx, lv_stage_lb.
+      IF ls_ord-pwerk = '1000'.
+        lv_stage_no = 1.                       " Pembahanan (digabung)
+      ELSEIF ls_ord-dispo = 'EB2'.
+        lv_stage_no = 4.                       " Edge Banding
+      ELSE.
+        lv_stage_no = 3.                       " Machining (GA1/GA2)
+      ENDIF.
+      READ TABLE lt_stg INTO ls_stg WITH KEY seq = lv_stage_no.
+      IF sy-subrc = 0.
+        lv_stage_tx = ls_stg-tx.
+        lv_stage_lb = ls_stg-no.
+      ENDIF.
+
+      " --- progres order (GR vs rencana) ---
+      lv_ordpct = 0.
+      IF ls_ord-psmng > 0.
+        lv_ordpct = ls_ord-wemng * 100 / ls_ord-psmng.
+      ENDIF.
+      IF lv_ordpct > 100.
+        lv_ordpct = 100.
+      ENDIF.
+      lv_ordqty = |{ ls_ord-wemng DECIMALS = 0 } / { ls_ord-psmng DECIMALS = 0 }|.
+
+      " --- ringkasan stok komponen (dipakai di tooltip tiap titik) ---
+      CLEAR lv_stktxt.
+      READ TABLE lt_sksum INTO ls_sksum
+        WITH KEY kdpos = ls_ord-kdpos matnr = ls_ord-matnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        lv_stktxt = ls_sksum-txt.
+      ELSE.
+        lv_stktxt = 'belum ada stok'.
+      ENDIF.
+
+      CLEAR ls_node.
+      ls_node-kdpos    = ls_ord-kdpos.
+      ls_node-matnr    = ls_ord-matnr.
+      READ TABLE lt_makt INTO ls_makt WITH KEY matnr = ls_ord-matnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        ls_node-maktx = ls_makt-maktx.
+      ENDIF.
+      ls_node-stage_no = lv_stage_no.
+      ls_node-stage_tx = lv_stage_tx.
+      ls_node-stage_lb = lv_stage_lb.
+      ls_node-aufnr    = ls_ord-aufnr.
+      ls_node-ord_qty  = lv_ordqty.
+      ls_node-ord_pct  = lv_ordpct.
+      ls_node-plant    = ls_ord-pwerk.
+      ls_node-dispo    = ls_ord-dispo.
+      ls_node-stk_txt  = lv_stktxt.
+
+      " --- operasi milik order ini ---
+      lv_hit = 0.
+      LOOP AT lt_op INTO ls_op WHERE aufpl = ls_ord-aufpl.
+        lv_hit = lv_hit + 1.
+
+        CLEAR lv_mgvrg.
+        READ TABLE lt_vv INTO ls_vv
+          WITH KEY aufpl = ls_op-aufpl aplzl = ls_op-aplzl BINARY SEARCH.
+        IF sy-subrc = 0.
+          lv_mgvrg = ls_vv-mgvrg.
+        ENDIF.
+
+        CLEAR ls_ruagg.
+        READ TABLE lt_ruagg INTO ls_ruagg
+          WITH KEY aufnr = ls_ord-aufnr vornr = ls_op-vornr BINARY SEARCH.
+
+        ls_node-vornr = ls_op-vornr.
+        CLEAR: ls_node-arbpl, ls_node-ktext.
+        READ TABLE lt_crhd INTO ls_crhd WITH KEY objid = ls_op-arbid BINARY SEARCH.
+        IF sy-subrc = 0.
+          ls_node-arbpl = ls_crhd-arbpl.
+        ENDIF.
+        READ TABLE lt_crtx INTO ls_crtx WITH KEY objid = ls_op-arbid BINARY SEARCH.
+        IF sy-subrc = 0.
+          ls_node-ktext = ls_crtx-ktext.
+        ELSE.
+          ls_node-ktext = ls_op-ltxa1.
+        ENDIF.
+        ls_node-op_qty = |{ ls_ruagg-lmnga DECIMALS = 0 } / { lv_mgvrg DECIMALS = 0 }|.
+
+        " RUMUS STATUS — salinan diag_routing.htm:355-365
+        IF ls_ruagg-aueru = 'X'
+           OR ( lv_mgvrg > 0 AND ls_ruagg-lmnga >= lv_mgvrg ).
+          ls_node-status = 'confirmed'. ls_node-stat_tx = 'Selesai dikonfirmasi'.
+          lv_conf  = lv_conf  + 1.
+        ELSEIF ls_ruagg-lmnga > 0.
+          ls_node-status = 'active'.    ls_node-stat_tx = 'Sedang dikerjakan'.
+          lv_act   = lv_act   + 1.
+        ELSE.
+          ls_node-status = 'queue'.     ls_node-stat_tx = 'Antre / belum mulai'.
+          lv_queue = lv_queue + 1.
+        ENDIF.
+        lv_op_cnt = lv_op_cnt + 1.
+        APPEND ls_node TO lt_node.
+      ENDLOOP.
+
+      " --- order tanpa rute/operasi: tetap dapat satu titik ---
+      IF lv_hit = 0.
+        ls_node-vornr   = '--'.
+        ls_node-arbpl   = 'n/a'.
+        ls_node-ktext   = 'Order tanpa rute operasi'.
+        ls_node-op_qty  = ''.
+        ls_node-status  = 'norout'.
+        ls_node-stat_tx = 'Tidak punya operasi'.
+        APPEND ls_node TO lt_node.
+      ENDIF.
+
+    ENDLOOP.
+
+    " urutan dot map: item SO + komponen, lalu tahap, order, operasi
+    SORT lt_node BY kdpos matnr stage_no aufnr vornr.
+
+    IF lv_op_cnt > 0.
+      lv_pct = lv_conf * 100 / lv_op_cnt.
+    ENDIF.
+
+  ENDIF.
+ENDIF.
+%>
+<html>
+<head>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Peta Perjalanan SO - Central Storage</title>
+  <style type="text/css">
+    :root{
+      --bg:#ebebeb; --surface:#FFFFFF; --surface2:#F0F1F5;
+      --border:#E2E4EB; --border2:#D0D2DC;
+      --text:#1A1D26; --sub:#5E6678; --faint:#919AAD;
+      --amber:#D69A4C; --green:#16A34A; --blue:#2563EB; --slate:#6B7B8F;
+      --red:#DC2626; --purple:#7C6FD4;
+      --ink:#161A23;
+      --shadow:0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
+      --shadow-md:0 4px 16px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.03);
+      --shadow-lg:0 12px 34px rgba(0,0,0,0.18), 0 4px 10px rgba(0,0,0,0.10);
+      --radius:10px; --radius-sm:8px; --radius-lg:14px;
+      --mono: ui-monospace,'SF Mono',Consolas,'Courier New',monospace;
+    }
+    *{ margin:0; padding:0; box-sizing:border-box; }
+    body{ font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
+          background-color:var(--bg); color:var(--text); line-height:1.5;
+          padding:24px; -webkit-font-smoothing:antialiased; }
+    .container{ max-width:1400px; margin:0 auto; }
+
+    .header{ display:flex; flex-wrap:wrap; align-items:flex-end;
+             justify-content:space-between; gap:20px; margin-bottom:20px; }
+    .header-left{ display:flex; align-items:center; gap:14px; }
+    .header-icon{ display:flex; align-items:center; justify-content:center;
+                  width:40px; height:40px; color:#fff; border-radius:var(--radius-sm);
+                  background:linear-gradient(135deg,var(--amber),#C8883A);
+                  box-shadow:0 2px 8px rgba(214,154,76,0.3); }
+    .header-title h1{ font-size:22px; font-weight:700; letter-spacing:-0.02em; }
+    .header-subtitle{ font-size:10px; letter-spacing:0.2em; color:var(--faint);
+                      text-transform:uppercase; font-weight:500; }
+    .header-right{ text-align:right; font-size:11.5px; color:var(--sub); }
+    .backlink{ font-size:11.5px; color:var(--blue); text-decoration:none; }
+    .backlink:hover{ text-decoration:underline; }
+
+    /* ---------- form ---------- */
+    .panel{ background-color:var(--surface); border-radius:var(--radius-lg);
+            padding:18px 20px; margin-bottom:18px; box-shadow:var(--shadow); }
+    .panel-title{ font-size:14px; font-weight:600; display:flex; align-items:center;
+                  gap:8px; margin-bottom:14px; }
+    .form-row{ display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; }
+    .fld label{ display:block; font-size:9.5px; font-weight:600; letter-spacing:0.12em;
+                text-transform:uppercase; color:var(--faint); margin-bottom:5px; }
+    .fld input{ font-family:inherit; font-size:13px; color:var(--text);
+                background-color:var(--surface2); border:1px solid var(--border);
+                border-radius:var(--radius-sm); padding:8px 12px; outline:none; }
+    .fld input:focus{ border-color:var(--blue); box-shadow:0 0 0 3px rgba(37,99,235,0.10); }
+    .btn{ font-family:inherit; font-size:12px; font-weight:600; letter-spacing:0.04em;
+          color:#fff; background-color:var(--amber); border:none; cursor:pointer;
+          border-radius:var(--radius-sm); padding:9px 20px; }
+    .btn:hover{ background-color:#C8883A; }
+    .form-hint{ font-size:11px; color:var(--sub); margin-top:10px; }
+
+    /* ---------- ringkasan ---------- */
+    .sum-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+               gap:12px; margin-bottom:18px; }
+    .sum{ background-color:var(--surface); border-radius:var(--radius);
+          padding:14px 16px; box-shadow:var(--shadow); }
+    .sum-label{ font-size:9.5px; font-weight:600; letter-spacing:0.14em;
+                text-transform:uppercase; color:var(--faint); margin-bottom:6px; }
+    .sum-value{ font-size:24px; font-weight:700; line-height:1; letter-spacing:-0.03em; }
+    .sum-sub{ font-size:11px; color:var(--sub); margin-top:4px; }
+
+    .legend{ display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:16px; }
+    .legend-item{ display:flex; align-items:center; gap:6px; }
+    .legend-dot{ width:11px; height:11px; border-radius:50%; }
+    .legend-text{ font-size:10.5px; color:var(--sub); }
+
+    /* ---------- kartu komponen ---------- */
+    .komp{ background-color:var(--surface); border-radius:var(--radius-lg);
+           padding:16px 18px; margin-bottom:14px; box-shadow:var(--shadow);
+           position:relative; }
+    .komp:hover{ z-index:20; }          /* tooltip kartu ini menang atas kartu bawahnya */
+    .komp-head{ display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
+                margin-bottom:12px; padding-bottom:10px;
+                border-bottom:1px solid var(--border); }
+    .komp-matnr{ font-family:var(--mono); font-size:13px; font-weight:700; color:var(--purple); }
+    .komp-maktx{ font-size:12.5px; }
+    .komp-item{ font-family:var(--mono); font-size:9.5px; color:var(--faint);
+                background-color:var(--surface2); border:1px solid var(--border);
+                border-radius:5px; padding:1px 7px; }
+    .komp-stock{ margin-left:auto; font-size:10.5px; font-weight:600; color:var(--green); }
+    .komp-stock.zero{ color:var(--faint); font-weight:500; }
+
+    /* ---------- DOT MAP ---------- */
+    /* Rantai stasiun: semua stasiun SELALU dirender -> lebar dibagi rata
+       (flex:1 1 0) supaya kartu SEJAJAR antar komponen. */
+    .chain{ display:flex; align-items:stretch; gap:0; padding:10px 0 2px; }
+    .stn{ flex:1 1 0; min-width:0; background-color:var(--surface2);
+          border:1px solid var(--border); border-radius:var(--radius);
+          padding:9px 10px; display:flex; flex-direction:column; }
+    /* titik stok (Central Storage dll) dibedakan: bukan stasiun proses */
+    .stn.is-store{ background-color:rgba(214,154,76,0.07);
+                   border-color:rgba(214,154,76,0.30); }
+    .stn.is-skip{ background-color:transparent; border-style:dashed; opacity:0.45; }
+    .stn-head{ display:flex; align-items:center; gap:6px; }
+    .stn-no{ display:inline-flex; align-items:center; justify-content:center;
+             width:18px; height:18px; border-radius:50%; flex:0 0 auto;
+             background-color:var(--slate); color:#fff; font-size:10px; font-weight:700; }
+    /* titik stok tidak bernomor -> lingkaran kecil berongga */
+    .stn-no-store{ width:10px; height:10px; margin:0 4px;
+                   background-color:transparent; border:2px solid var(--amber); }
+    .stn-name{ font-size:11px; font-weight:700; letter-spacing:0.03em;
+               text-transform:uppercase; color:var(--sub); }
+    .stn-loc{ font-family:var(--mono); font-size:8.5px; color:var(--faint);
+              margin:3px 0 8px 24px; }
+    .stn-ops{ display:flex; flex-wrap:wrap; align-items:flex-start; gap:2px;
+              min-height:58px; }
+    .stn-stk{ margin-top:auto; padding-top:8px; border-top:1px dashed var(--border);
+              display:flex; flex-direction:column; gap:3px; }
+    .stn-nostk{ font-size:9px; color:var(--faint); font-style:italic; }
+    .stk-line{ display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
+    .stk-code{ font-family:var(--mono); font-size:9.5px; font-weight:700; color:var(--sub); }
+    .stk-free{ font-size:8px; text-transform:uppercase; letter-spacing:0.06em;
+               color:var(--faint); }
+    .slot-empty{ align-self:center; font-size:9.5px; font-style:italic; color:var(--faint); }
+    .ord-chip{ align-self:center; font-family:var(--mono); font-size:9px;
+               color:var(--faint); border:1px dashed var(--border2);
+               border-radius:5px; padding:1px 6px; margin:0 3px; white-space:nowrap; }
+    /* panah antar KOLOM tahap; .arrow-sm = panah antar proses dalam 1 order */
+    .arrow{ align-self:center; display:flex; align-items:center; color:var(--border2);
+            flex:0 0 auto; padding:0 3px; }
+    .arrow svg{ width:24px; height:14px; }
+    .arrow-sm{ align-self:flex-start; margin-top:12px; padding:0; }
+    .arrow-sm svg{ width:15px; height:12px; }
+
+    .node{ position:relative; display:flex; flex-direction:column; align-items:center;
+           width:78px; padding:2px 2px 0; cursor:default; }
+    /* Isi .node & .tip sengaja memakai <span> (nesting valid di dalam span),
+       jadi SETIAP elemen yg butuh tinggi/margin vertikal WAJIB diberi
+       display:block / flex — elemen inline mengabaikan keduanya. */
+    .dot{ display:block; width:20px; height:20px; border-radius:50%;
+          border:3px solid var(--surface);
+          box-shadow:0 0 0 2px currentColor; transition:transform .15s; }
+    .node:hover .dot{ transform:scale(1.22); }
+    .node.confirmed{ color:var(--green); }
+    .node.active{    color:var(--blue); }
+    .node.queue{     color:var(--slate); }
+    .node.norout{    color:var(--border2); }
+    .node.confirmed .dot{ background-color:var(--green); }
+    .node.active .dot{    background-color:var(--blue); }
+    .node.queue .dot{     background-color:#fff; }
+    .node.norout .dot{    background-color:#fff; border-style:dashed; }
+    .node-wc{ display:block; margin-top:6px; font-family:var(--mono); font-size:10px; font-weight:700;
+              color:var(--text); }
+    .node-cap{ font-size:9px; color:var(--faint); line-height:1.25; text-align:center;
+               max-width:84px; overflow:hidden; text-overflow:ellipsis;
+               display:block; white-space:nowrap; }
+
+    /* ---------- tooltip ---------- */
+    .tip{ position:absolute; bottom:100%; left:50%; transform:translateX(-50%) translateY(-6px);
+          width:262px; background-color:var(--ink); color:#fff; border-radius:12px;
+          padding:12px 13px; box-shadow:var(--shadow-lg); z-index:60;
+          opacity:0; visibility:hidden; transition:opacity .14s, transform .14s;
+          pointer-events:none; text-align:left; }
+    .node:hover .tip{ opacity:1; visibility:visible; transform:translateX(-50%) translateY(-10px); }
+    .tip:after{ content:''; position:absolute; top:100%; left:50%; margin-left:-6px;
+                border:6px solid transparent; border-top-color:var(--ink); }
+    .tip-head{ display:flex; align-items:center; gap:7px; margin-bottom:9px;
+               padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.12); }
+    .tip-pill{ display:inline-block; font-size:9px; font-weight:700; text-transform:uppercase;
+               letter-spacing:0.04em; border-radius:5px; padding:2px 7px; }
+    .tip-pill.confirmed{ background-color:rgba(22,163,74,0.22);  color:#7BE3A2; }
+    .tip-pill.active{    background-color:rgba(37,99,235,0.25);  color:#93B8FF; }
+    .tip-pill.queue{     background-color:rgba(255,255,255,0.12); color:#C8CEDA; }
+    .tip-pill.norout{    background-color:rgba(255,255,255,0.08); color:#9AA3B2; }
+    .tip-stage{ font-size:10px; color:#AEB6C4; }
+    .tip-title{ display:block; font-size:12px; font-weight:600; margin-bottom:9px; line-height:1.35; }
+    .tip-row{ display:flex; justify-content:space-between; gap:10px; font-size:10.5px;
+              padding:2px 0; }
+    .tip-key{ color:#98A1B0; white-space:nowrap; }
+    .tip-val{ font-family:var(--mono); text-align:right; }
+    .tip-bar{ display:block; height:4px; background-color:rgba(255,255,255,0.14); border-radius:3px;
+              overflow:hidden; margin:8px 0 2px; }
+    .tip-fill{ display:block; height:100%; background-color:#4B8BEF; }
+    .tip-foot{ display:block; margin-top:9px; padding-top:8px; font-size:10px; color:#AEB6C4;
+               border-top:1px solid rgba(255,255,255,0.12); }
+    .tip-foot b{ color:#fff; font-weight:600; }
+
+    /* badge qty stok — dipakai di dalam kartu stasiun */
+    .stk-badge{ font-family:var(--mono); font-size:9px; font-weight:700;
+                border-radius:4px; padding:1px 5px; }
+    .stk-badge.u{ background-color:rgba(22,163,74,0.12);  color:var(--green); }
+    .stk-badge.q{ background-color:rgba(214,154,76,0.16); color:#9A6B25; }
+    .stk-badge.b{ background-color:rgba(220,38,38,0.10);  color:var(--red); }
+
+    .empty{ background-color:var(--surface); border-radius:var(--radius-lg);
+            padding:36px 20px; text-align:center; color:var(--sub); font-size:12.5px;
+            box-shadow:var(--shadow); }
+    .footer{ font-size:11px; color:var(--faint); display:flex; flex-wrap:wrap;
+             justify-content:space-between; gap:12px; margin-top:22px; padding-top:14px;
+             border-top:1px solid var(--border); }
+
+    .icon{ width:18px; height:18px; display:inline-block; vertical-align:middle;
+           fill:none; stroke:currentColor; stroke-width:1.8;
+           stroke-linecap:round; stroke-linejoin:round; }
+    .icon-lg{ width:22px; height:22px; }
+
+    /* Layar sempit: kolom tahap dibungkus 2x2 (bukan digulung horizontal —
+       gulungan akan MEMOTONG tooltip karena overflow). */
+    @media (max-width:980px){
+      .chain{ flex-wrap:wrap; gap:6px; }
+      .stn{ flex:1 1 44%; }
+      .arrow{ display:none; }
+    }
+    @media (max-width:768px){
+      body{ padding:16px; }
+      .sum-grid{ grid-template-columns:repeat(2,1fr); }
+      .header{ flex-direction:column; align-items:flex-start; }
+      .header-right{ text-align:left; }
+      .stn{ flex:1 1 100%; }
+    }
+  </style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><circle cx="18" cy="5" r="3"/><path d="M9 19h6a4 4 0 0 0 0-8H9a4 4 0 0 1 0-8h3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 32 16"><line x1="2" y1="8" x2="24" y2="8"/><polyline points="19 3 25 8 19 13"/></symbol>
+</svg>
+
+<div class="container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="header-icon"><svg class="icon icon-lg"><use xlink:href="#i-route"></use></svg></div>
+      <div class="header-title">
+        <h1>Peta Perjalanan SO</h1>
+        <div class="header-subtitle">Dot map routing &middot; hover titik untuk rincian &middot; stok real per komponen</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div>USER SAP : <%= lv_user %></div>
+      <div><a class="backlink" href="index2.htm">&larr; kembali ke Lintasan Routing</a></div>
+    </div>
+  </div>
+
+  <!-- ===== FORM: action WAJIB eksplisit ===== -->
+  <div class="panel">
+    <div class="panel-title"><svg class="icon"><use xlink:href="#i-search"></use></svg> Cari Sales Order</div>
+    <form method="get" action="routing_map.htm">
+      <div class="form-row">
+        <div class="fld">
+          <label for="so">No. Sales Order</label>
+          <input type="text" id="so" name="so" value="<%= lv_in_so %>" size="16" autofocus>
+        </div>
+        <div class="fld">
+          <label for="item">Item (opsional)</label>
+          <input type="text" id="item" name="item" value="<%= lv_in_item %>" size="8">
+        </div>
+        <div class="fld"><button type="submit" class="btn">TAMPILKAN PETA</button></div>
+      </div>
+      <div class="form-hint">
+        Item dikosongkan = seluruh item SO ditampilkan. Scope order mengikuti MRP controller:
+        Plant 1000 &rarr; WM1/WM2/PN1/PN2, Plant 2000 &rarr; GA1/GA2/EB2.
+      </div>
+    </form>
+  </div>
+
+<% IF lv_so IS INITIAL. %>
+  <div class="empty">Masukkan No. Sales Order di atas untuk melihat peta perjalanan komponennya.</div>
+<% ELSEIF lt_node IS INITIAL. %>
+  <div class="empty">
+    <%= lv_msg %>
+    <% IF lv_msg IS INITIAL. %>Tidak ada data untuk SO <%= lv_in_so %>.<% ENDIF. %>
+  </div>
+<% ELSE. %>
+
+  <div class="sum-grid">
+    <div class="sum">
+      <div class="sum-label">Sales Order</div>
+      <div class="sum-value" style="font-size:17px;"><%= lv_so %></div>
+      <div class="sum-sub"><%= lv_buyer %></div>
+    </div>
+    <div class="sum">
+      <div class="sum-label">Komponen</div>
+      <div class="sum-value"><%= lv_komp_cnt %></div>
+      <div class="sum-sub"><%= lv_ord_cnt %> order produksi</div>
+    </div>
+    <div class="sum">
+      <div class="sum-label">Proses (operasi)</div>
+      <div class="sum-value"><%= lv_op_cnt %></div>
+      <div class="sum-sub">titik di seluruh peta</div>
+    </div>
+    <div class="sum">
+      <div class="sum-label">Confirmed</div>
+      <div class="sum-value" style="color:var(--green);"><%= lv_pct %>%</div>
+      <div class="sum-sub"><%= lv_conf %> proses selesai</div>
+    </div>
+    <div class="sum">
+      <div class="sum-label">Dikerjakan</div>
+      <div class="sum-value" style="color:var(--blue);"><%= lv_act %></div>
+      <div class="sum-sub"><%= lv_queue %> masih antre</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background-color:var(--green)"></div><span class="legend-text">Selesai dikonfirmasi</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background-color:var(--blue)"></div><span class="legend-text">Sedang dikerjakan</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background-color:#fff; box-shadow:0 0 0 2px var(--slate)"></div><span class="legend-text">Antre</span></div>
+    <div class="legend-item"><div class="legend-dot" style="background-color:#fff; box-shadow:0 0 0 2px var(--border2)"></div><span class="legend-text">Tanpa rute operasi</span></div>
+    <div class="legend-item"><span class="stn-no" style="width:15px;height:15px;font-size:9px;">1</span><span class="legend-text">stasiun proses (bernomor)</span></div>
+    <div class="legend-item"><span class="stn-no stn-no-store"></span><span class="legend-text">titik stok &mdash; bukan proses</span></div>
+    <div class="legend-item"><span class="legend-text">&middot; arahkan kursor ke titik untuk rincian lengkap</span></div>
+  </div>
+
+  <%-- ===== PETA = RANTAI STASIUN =====
+       Untuk TIAP komponen selalu dirender SELURUH stasiun di lt_stg secara
+       berurutan (seq), jadi kartu antar komponen SEJAJAR dan bisa dibanding
+       sekilas. Stasiun yang tidak disinggahi tampil redup bergaris putus.
+       Tiap kartu stasiun memuat DUA lapis informasi:
+         (atas)  PROSES — titik operasi + chip order (hanya stasiun kind='P')
+         (bawah) STOK   — barang komponen ini yang SEKARANG ada di situ
+       Stasiun 9 'Lokasi lain' hanya dirender kalau memang ada stoknya.
+       Bersarangnya TETAP (komponen > chain > kartu > isi) — buka & tutup
+       div selalu di iterasi yang sama, tidak ada deteksi pergantian nilai. --%>
+  <%
+    FIELD-SYMBOLS: <nd> TYPE ty_node,
+                   <sk> TYPE ty_stkd,
+                   <mu> TYPE ty_mu.
+    DATA: lv_arrow  TYPE abap_bool,
+          lv_narrow TYPE abap_bool,
+          lv_adastk TYPE abap_bool,
+          lv_adaop  TYPE abap_bool,
+          lv_pord   TYPE afko-aufnr,
+          lv_maktx  TYPE string.
+
+    LOOP AT lt_mu ASSIGNING <mu>.
+
+      CLEAR lv_maktx.
+      READ TABLE lt_makt INTO ls_makt WITH KEY matnr = <mu>-matnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        lv_maktx = ls_makt-maktx.
+      ENDIF.
+      CLEAR ls_sksum.
+      READ TABLE lt_sksum INTO ls_sksum
+        WITH KEY kdpos = <mu>-kdpos matnr = <mu>-matnr BINARY SEARCH.
+  %>
+    <div class="komp">
+      <div class="komp-head">
+        <span class="komp-matnr"><%= <mu>-matnr %></span>
+        <span class="komp-maktx"><%= lv_maktx %></span>
+        <span class="komp-item">item <%= <mu>-kdpos %></span>
+        <% IF ls_sksum-qty > 0. %>
+        <span class="komp-stock">stok SO <%= ls_sksum-txt %></span>
+        <% ELSE. %>
+        <span class="komp-stock zero">belum ada stok SO</span>
+        <% ENDIF. %>
+      </div>
+
+      <div class="chain">
+      <% CLEAR lv_arrow.
+         LOOP AT lt_stg INTO ls_stg.
+
+           " Apakah stasiun ini disinggahi komponen tsb?
+           CLEAR: lv_adaop, lv_adastk.
+           READ TABLE lt_node TRANSPORTING NO FIELDS
+             WITH KEY kdpos = <mu>-kdpos matnr = <mu>-matnr stage_no = ls_stg-seq.
+           IF sy-subrc = 0.
+             lv_adaop = abap_true.
+           ENDIF.
+           READ TABLE lt_stkd TRANSPORTING NO FIELDS
+             WITH KEY kdpos = <mu>-kdpos matnr = <mu>-matnr seq = ls_stg-seq.
+           IF sy-subrc = 0.
+             lv_adastk = abap_true.
+           ENDIF.
+
+           " 'Lokasi lain' hanya muncul kalau benar-benar ada stok di sana
+           IF ls_stg-seq = 9 AND lv_adastk = abap_false.
+             CONTINUE.
+           ENDIF.
+
+           IF lv_arrow = abap_true. %>
+        <span class="arrow"><svg viewBox="0 0 32 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="8" x2="24" y2="8"/><polyline points="19 3 25 8 19 13"/></svg></span>
+      <%   ENDIF.
+           lv_arrow = abap_true. %>
+        <div class="stn<% IF ls_stg-kind = 'S'. %> is-store<% ENDIF. %><% IF lv_adaop = abap_false AND lv_adastk = abap_false. %> is-skip<% ENDIF. %>">
+
+          <div class="stn-head">
+            <% IF ls_stg-no IS NOT INITIAL. %>
+            <span class="stn-no"><%= ls_stg-no %></span>
+            <% ELSE. %>
+            <span class="stn-no stn-no-store"></span>
+            <% ENDIF. %>
+            <span class="stn-name"><%= ls_stg-tx %></span>
+          </div>
+          <div class="stn-loc"><%= ls_stg-loc %></div>
+
+          <%-- ----- lapis PROSES (hanya stasiun proses) ----- --%>
+          <% IF ls_stg-kind = 'P'. %>
+          <div class="stn-ops">
+          <%   IF lv_adaop = abap_false. %>
+            <span class="slot-empty">tidak ada order</span>
+          <%   ELSE.
+                 CLEAR: lv_pord, lv_narrow.
+                 LOOP AT lt_node ASSIGNING <nd>
+                   WHERE kdpos = <mu>-kdpos AND matnr = <mu>-matnr
+                     AND stage_no = ls_stg-seq.
+
+                   IF <nd>-aufnr <> lv_pord.
+                     lv_pord = <nd>-aufnr.
+                     CLEAR lv_narrow. %>
+            <span class="ord-chip"><%= <nd>-aufnr %> &middot; <%= <nd>-ord_qty %></span>
+          <%       ENDIF.
+                   IF lv_narrow = abap_true. %>
+            <span class="arrow arrow-sm"><svg viewBox="0 0 32 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="8" x2="22" y2="8"/><polyline points="17 3 23 8 17 13"/></svg></span>
+          <%       ENDIF.
+                   lv_narrow = abap_true. %>
+            <span class="node <%= <nd>-status %>">
+              <span class="dot"></span>
+              <span class="node-wc"><%= <nd>-arbpl %></span>
+              <span class="node-cap"><%= <nd>-ktext %></span>
+
+              <span class="tip">
+                <span class="tip-head">
+                  <span class="tip-pill <%= <nd>-status %>"><%= <nd>-stat_tx %></span>
+                  <span class="tip-stage">Stasiun <%= <nd>-stage_lb %> &middot; <%= <nd>-stage_tx %></span>
+                </span>
+                <span class="tip-title"><%= <nd>-arbpl %> &mdash; <%= <nd>-ktext %></span>
+                <span class="tip-row"><span class="tip-key">Order</span><span class="tip-val"><%= <nd>-aufnr %></span></span>
+                <span class="tip-row"><span class="tip-key">Operasi</span><span class="tip-val"><%= <nd>-vornr %></span></span>
+                <span class="tip-row"><span class="tip-key">Plant / MRP</span><span class="tip-val"><%= <nd>-plant %> / <%= <nd>-dispo %></span></span>
+                <span class="tip-row"><span class="tip-key">Konfirmasi op</span><span class="tip-val"><%= <nd>-op_qty %></span></span>
+                <span class="tip-row"><span class="tip-key">GR order</span><span class="tip-val"><%= <nd>-ord_qty %></span></span>
+                <span class="tip-bar"><span class="tip-fill" style="width:<%= <nd>-ord_pct %>%"></span></span>
+                <span class="tip-foot">Stok SO komponen ini: <b><%= <nd>-stk_txt %></b></span>
+              </span>
+            </span>
+          <%     ENDLOOP.
+               ENDIF. %>
+          </div>
+          <% ENDIF. %>
+
+          <%-- ----- lapis STOK di stasiun ini ----- --%>
+          <div class="stn-stk">
+          <% IF lv_adastk = abap_false. %>
+            <span class="stn-nostk">tanpa stok</span>
+          <% ELSE.
+               LOOP AT lt_stkd ASSIGNING <sk>
+                 WHERE kdpos = <mu>-kdpos AND matnr = <mu>-matnr
+                   AND seq = ls_stg-seq. %>
+            <span class="stk-line<% IF <sk>-sotyp = 'F'. %> free<% ENDIF. %>"
+                  title="<%= <sk>-werks %>/<%= <sk>-lgort %> <%= <sk>-lgobe %>">
+              <span class="stk-code"><%= <sk>-lgort %></span>
+              <% IF <sk>-u_txt IS NOT INITIAL. %><span class="stk-badge u"><%= <sk>-u_txt %></span><% ENDIF. %>
+              <% IF <sk>-q_txt IS NOT INITIAL. %><span class="stk-badge q">QI <%= <sk>-q_txt %></span><% ENDIF. %>
+              <% IF <sk>-b_txt IS NOT INITIAL. %><span class="stk-badge b">blok <%= <sk>-b_txt %></span><% ENDIF. %>
+              <% IF <sk>-sotyp = 'F'. %><span class="stk-free">bebas</span><% ENDIF. %>
+            </span>
+          <%   ENDLOOP.
+             ENDIF. %>
+          </div>
+
+        </div>
+      <% ENDLOOP. %>
+      </div>
+    </div>
+  <% ENDLOOP. %>
+
+<% ENDIF. %>
+
+  <div class="footer">
+    <span>Status: &Sigma;AFRU-LMNGA vs AFVV-MGVRG (STOKZ=X dibuang) &middot; rumus sama dgn diag_routing.htm &amp; index2.htm</span>
+    <span>Stok: MSKA SO-stock + MARD stok bebas &middot; tahap dari plant + AFKO-DISPO &middot; read-only</span>
+  </div>
+</div>
+</body>
+</html>
