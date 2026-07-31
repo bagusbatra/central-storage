@@ -1,3 +1,5 @@
 .claudeignore
 .opencodeignore
 .geminiignore
+# mockup sesi brainstorming (visual companion)
+.superpowers/
