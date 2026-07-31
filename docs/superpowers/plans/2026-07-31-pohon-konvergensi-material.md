@@ -16,7 +16,7 @@ Nilai-nilai berikut disalin verbatim dari spec dan berlaku di SEMUA task:
 - Plant SELALU dipasangkan dengan DISPO: Plant `1000` → `WM1, WM2, PN1, PN2`; Plant `2000` → `GA1, GA2, EB2`. Jangan pakai daftar DISPO datar.
 - Rumus status operasi (dipakai `diag_routing.htm` & `index2.htm`, jangan bikin varian): `ΣAFRU-LMNGA = 0` → queue · `0 < ΣLMNGA < AFVV-MGVRG` → active · `ΣLMNGA >= MGVRG` atau `AUERU='X'` → confirmed. Baris `AFRU` `STOKZ='X'` dibuang lebih dulu. `AFRU` dicocokkan ke operasi lewat `AUFNR + VORNR`.
 - Status kesiapan komponen memakai **`stok_so` saja** (MSKA). `stok_free` (MARD) ditampilkan tapi tidak menentukan status.
-- Stasiun: `1` Pembahanan (Plant 1000, semua DISPO) · `2` Central Storage (titik stok, 2KCS, tanpa nomor) · `3` Machining (GA1/GA2; SLoc 2261, 2262) · `4` Edge Banding (EB2; SLoc 22E2, 22E3) · `5` Sanding (SLoc 229K) · `9` Lainnya. `seq` = urutan internal; nomor yang TAMPIL: 1, (kosong), 2, 3, 4, (kosong).
+- Stasiun: `1` Pembahanan (Plant 1000 **hanya** DISPO WM1/WM2/PN1/PN2; Plant 1000 ber-DISPO lain jatuh ke stasiun 9) · `2` Central Storage (titik stok, 2KCS, tanpa nomor) · `3` Machining (GA1/GA2; SLoc 2261, 2262) · `4` Edge Banding (EB2; SLoc 22E2, 22E3) · `5` Sanding (SLoc 229K) · `9` Lainnya. `seq` = urutan internal; nomor yang TAMPIL: 1, (kosong), 2, 3, 4, (kosong).
 - `level` akar = 0. Batas kedalaman DFS = 10. Batas order default `iv_maxord` = 800.
 - Teks dari SAP (`MAKTX`, `KTEXT`) dibungkus `cl_http_utility=>escape_html( )` saat dirender.
 - Tidak ada resource eksternal (font/CDN) — ikon berupa `<symbol>` SVG inline.
@@ -211,9 +211,9 @@ CLASS zcl_cs_peg DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " index2.htm & class ini WAJIB memanggil method ini, jangan menyalin
     " percabangannya lagi (Task 11 mengalihkan index2.htm ke sini).
     CLASS-METHODS op_status
-      IMPORTING iv_lmnga         TYPE p
-                iv_mgvrg         TYPE p
-                iv_aueru         TYPE c
+      IMPORTING iv_lmnga         TYPE p LENGTH 15 DECIMALS 3
+                iv_mgvrg         TYPE p LENGTH 15 DECIMALS 3
+                iv_aueru         TYPE c LENGTH 1
       RETURNING VALUE(rv_status) TYPE string.
 
     " Pemetaan order -> stasiun. Plant SELALU dipasangkan dgn DISPO.
@@ -349,6 +349,13 @@ CLASS ltc_peg IMPLEMENTATION.
                               IMPORTING ev_seq = lv_seq ).
     cl_abap_unit_assert=>assert_equals( act = lv_seq exp = 4 msg = 'EB2 -> Edge Banding' ).
 
+    " Plant 1000 ber-DISPO asing -> stasiun 9, BUKAN Pembahanan
+    zcl_cs_peg=>stn_of_order( EXPORTING iv_pwerk = '1000' iv_dispo = 'ZZ9'
+                              IMPORTING ev_seq = lv_seq ev_in_scope = lv_in ).
+    cl_abap_unit_assert=>assert_equals( act = lv_seq exp = 9
+      msg = 'Plant 1000 + DISPO asing -> Lainnya, bukan Pembahanan' ).
+    cl_abap_unit_assert=>assert_equals( act = lv_in exp = abap_false ).
+
     " DISPO di luar 7 nilai baku -> stasiun 9, in_scope false
     zcl_cs_peg=>stn_of_order( EXPORTING iv_pwerk = '2000' iv_dispo = 'ZZ9'
                               IMPORTING ev_seq = lv_seq ev_in_scope = lv_in ).
@@ -395,12 +402,16 @@ Ganti kedua method kosong dengan:
     IF iv_pwerk = '1000'.
       " Plant 1000 DIGABUNG jadi satu stasiun (WM1/WM2 = pembahanan,
       " PN1/PN2 = panel & pressing tidak lagi dipisah).
-      ev_seq = 1. ev_txt = 'Pembahanan'.
+      " TAPI hanya untuk 4 DISPO baku itu: order Plant 1000 ber-DISPO lain
+      " kemungkinan milik unit lain (Chair/Metal/Painting), jadi jatuh ke
+      " stasiun 9 'Lainnya' — menaruhnya di Pembahanan akan mengklaim ia
+      " bagian alur Wood Furniture padahal belum tentu. (Putusan user
+      " 2026-07-31 saat review Task 1: spec yang berlaku, bukan rencana.)
       IF iv_dispo = 'WM1' OR iv_dispo = 'WM2'
       OR iv_dispo = 'PN1' OR iv_dispo = 'PN2'.
-        ev_in_scope = abap_true.
+        ev_seq = 1. ev_txt = 'Pembahanan'. ev_in_scope = abap_true.
+        RETURN.
       ENDIF.
-      RETURN.
     ENDIF.
 
     IF iv_pwerk = '2000'.
