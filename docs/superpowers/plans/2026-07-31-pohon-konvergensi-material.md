@@ -207,6 +207,15 @@ CLASS zcl_cs_peg DEFINITION PUBLIC FINAL CREATE PUBLIC.
 
     CONSTANTS: c_max_depth TYPE i VALUE 10.
 
+    " SATU-SATUNYA tempat rumus status operasi hidup. diag_routing.htm,
+    " index2.htm & class ini WAJIB memanggil method ini, jangan menyalin
+    " percabangannya lagi (Task 11 mengalihkan index2.htm ke sini).
+    CLASS-METHODS op_status
+      IMPORTING iv_lmnga         TYPE p
+                iv_mgvrg         TYPE p
+                iv_aueru         TYPE c
+      RETURNING VALUE(rv_status) TYPE string.
+
     " Pemetaan order -> stasiun. Plant SELALU dipasangkan dgn DISPO.
     CLASS-METHODS stn_of_order
       IMPORTING iv_pwerk        TYPE afpo-pwerk
@@ -236,6 +245,9 @@ CLASS zcl_cs_peg DEFINITION PUBLIC FINAL CREATE PUBLIC.
 ENDCLASS.
 
 CLASS zcl_cs_peg IMPLEMENTATION.
+
+  METHOD op_status.
+  ENDMETHOD.
 
   METHOD stn_of_order.
     CLEAR: ev_seq, ev_txt, ev_in_scope.
@@ -280,7 +292,8 @@ CLASS ltc_peg DEFINITION FOR TESTING
                            iv_enmng TYPE i DEFAULT 0
                  RETURNING VALUE(rs) TYPE zcl_cs_peg=>ty_res.
 
-    METHODS stasiun_dari_plant_dispo FOR TESTING.
+    METHODS: stasiun_dari_plant_dispo FOR TESTING,
+             rumus_status_operasi FOR TESTING.
 ENDCLASS.
 
 CLASS ltc_peg IMPLEMENTATION.
@@ -293,6 +306,29 @@ CLASS ltc_peg IMPLEMENTATION.
   METHOD res.
     rs-aufnr = iv_aufnr. rs-matnr = iv_matnr.
     rs-bdmng = iv_bdmng. rs-enmng = iv_enmng.
+  ENDMETHOD.
+
+  METHOD rumus_status_operasi.
+    " Rumus BAKU (Global Constraint). Batasnya diuji persis di titik ganti.
+    cl_abap_unit_assert=>assert_equals(
+      act = zcl_cs_peg=>op_status( iv_lmnga = 0 iv_mgvrg = 10 iv_aueru = ' ' )
+      exp = 'queue' msg = 'LMNGA 0 -> queue' ).
+    cl_abap_unit_assert=>assert_equals(
+      act = zcl_cs_peg=>op_status( iv_lmnga = 4 iv_mgvrg = 10 iv_aueru = ' ' )
+      exp = 'active' msg = '0 < LMNGA < MGVRG -> active' ).
+    cl_abap_unit_assert=>assert_equals(
+      act = zcl_cs_peg=>op_status( iv_lmnga = 10 iv_mgvrg = 10 iv_aueru = ' ' )
+      exp = 'confirmed' msg = 'LMNGA = MGVRG -> confirmed (batas bawah)' ).
+    cl_abap_unit_assert=>assert_equals(
+      act = zcl_cs_peg=>op_status( iv_lmnga = 0 iv_mgvrg = 10 iv_aueru = 'X' )
+      exp = 'confirmed' msg = 'AUERU X menang atas qty' ).
+    " MGVRG 0: tanpa qty rencana, perbandingan qty TIDAK berlaku
+    cl_abap_unit_assert=>assert_equals(
+      act = zcl_cs_peg=>op_status( iv_lmnga = 0 iv_mgvrg = 0 iv_aueru = ' ' )
+      exp = 'queue' msg = 'MGVRG 0 tanpa konfirmasi -> queue' ).
+    cl_abap_unit_assert=>assert_equals(
+      act = zcl_cs_peg=>op_status( iv_lmnga = 5 iv_mgvrg = 0 iv_aueru = ' ' )
+      exp = 'active' msg = 'MGVRG 0 tapi ada konfirmasi -> active, BUKAN confirmed' ).
   ENDMETHOD.
 
   METHOD stasiun_dari_plant_dispo.
@@ -330,11 +366,27 @@ Berhenti di sini dan minta user:
 2. Goto → Local Definitions/Implementations → Local Test Classes → tempel isi `ZCL_CS_PEG_TESTS.abap` → aktifkan
 3. `Ctrl+Shift+F10`
 
-Hasil yang diharapkan: **GAGAL** pada `stasiun_dari_plant_dispo` ("Plant 1000 -> stasiun 1", act = 0 exp = 1). Kalau yang muncul syntax error, laporkan pesannya — jangan lanjut.
+Hasil yang diharapkan: **GAGAL** pada `rumus_status_operasi` dan `stasiun_dari_plant_dispo` ("Plant 1000 -> stasiun 1", act = 0 exp = 1). Kalau yang muncul syntax error, laporkan pesannya — jangan lanjut.
 
-- [ ] **Step 4: Implementasikan `stn_of_order( )`**
+- [ ] **Step 4: Implementasikan `op_status( )` dan `stn_of_order( )`**
 
-Ganti method kosong dengan:
+Ganti kedua method kosong dengan:
+
+```abap
+  METHOD op_status.
+    " RUMUS BAKU — disalin dari diag_routing.htm:355-365 dan menjadi
+    " SATU-SATUNYA salinan yang hidup. Pemanggil (build(), index2.htm)
+    " tidak boleh menulis ulang percabangan ini.
+    IF iv_aueru = 'X'
+       OR ( iv_mgvrg > 0 AND iv_lmnga >= iv_mgvrg ).
+      rv_status = 'confirmed'.
+    ELSEIF iv_lmnga > 0.
+      rv_status = 'active'.
+    ELSE.
+      rv_status = 'queue'.
+    ENDIF.
+  ENDMETHOD.
+```
 
 ```abap
   METHOD stn_of_order.
@@ -367,7 +419,7 @@ Ganti method kosong dengan:
 
 - [ ] **Step 5: Minta user menjalankan tes lagi**
 
-Hasil yang diharapkan: `stasiun_dari_plant_dispo` **LULUS**. Kalau masih gagal, laporkan assertion mana dan angkanya.
+Hasil yang diharapkan: `rumus_status_operasi` dan `stasiun_dari_plant_dispo` **LULUS**. Kalau masih gagal, laporkan assertion mana dan angkanya.
 
 - [ ] **Step 6: Commit**
 
@@ -1429,15 +1481,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
             ls_opm-arbpl = ls_crhd-arbpl.
           ENDIF.
 
-          " RUMUS BAKU — jangan diubah di sini saja
-          IF ls_ruagg-aueru = 'X'
-             OR ( lv_mgvrg > 0 AND ls_ruagg-lmnga >= lv_mgvrg ).
-            ls_opm-op_status = 'confirmed'.
-          ELSEIF ls_ruagg-lmnga > 0.
-            ls_opm-op_status = 'active'.
-          ELSE.
-            ls_opm-op_status = 'queue'.
-          ENDIF.
+          " Rumus TIDAK ditulis ulang di sini — panggil sumber tunggalnya.
+          ls_opm-op_status = op_status( iv_lmnga = ls_ruagg-lmnga
+                                        iv_mgvrg = lv_mgvrg
+                                        iv_aueru = ls_ruagg-aueru ).
           APPEND ls_opm TO et_opm.
 
           " beban work center
@@ -2088,6 +2135,89 @@ git commit -m "docs(routing_map): perbarui header + bersihkan kode mati
 
 Catat batas yang diketahui: rantai berhenti di Sanding, barang beli tidak
 masuk pohon.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11: `index2.htm` memakai `op_status( )` (hapus duplikasi rumus)
+
+Ditambahkan atas keputusan user saat pre-flight: rumus status operasi tidak
+boleh punya dua salinan hidup.
+
+**Files:**
+- Modify: `ZBSP_CS_APP/Page with Flow Logic/index2.htm`
+
+**Interfaces:**
+- Consumes: `zcl_cs_peg=>op_status( iv_lmnga, iv_mgvrg, iv_aueru )` dari Task 1
+- Produces: —
+
+- [ ] **Step 1: Ganti percabangan inline dengan pemanggilan class**
+
+Di `index2.htm`, blok "DATA LIVE 2" memuat percabangan status operasi yang
+disalin dari `diag_routing.htm`. Cari blok ini:
+
+```abap
+      IF ls_ruagg-aueru = 'X'
+         OR ( lv_mgvrg > 0 AND ls_ruagg-lmnga >= lv_mgvrg ).
+        lv_op_conf = lv_op_conf + 1.
+      ELSEIF ls_ruagg-lmnga > 0.
+        lv_op_act = lv_op_act + 1.
+      ELSE.
+        lv_op_queue = lv_op_queue + 1.
+      ENDIF.
+```
+
+Ganti dengan:
+
+```abap
+      " Rumus status TIDAK ditulis ulang di sini — sumber tunggalnya
+      " ZCL_CS_PEG=>op_status( ). Kalau rumus berubah, cukup ubah di sana.
+      CASE zcl_cs_peg=>op_status( iv_lmnga = ls_ruagg-lmnga
+                                  iv_mgvrg = lv_mgvrg
+                                  iv_aueru = ls_ruagg-aueru ).
+        WHEN 'confirmed'. lv_op_conf  = lv_op_conf  + 1.
+        WHEN 'active'.    lv_op_act   = lv_op_act   + 1.
+        WHEN OTHERS.      lv_op_queue = lv_op_queue + 1.
+      ENDCASE.
+```
+
+- [ ] **Step 2: Perbarui komentar header `index2.htm`**
+
+Blok komentar di header masih menyatakan rumus "disalin PERSIS dari
+diag_routing.htm:355-365 ... kalau rumus berubah, ubah di KETIGA file".
+Itu tidak berlaku lagi. Ganti kalimat tersebut dengan:
+
+```
+*&   RUMUS STATUS OPERASI: TIDAK ada di file ini. Sumber tunggalnya
+*&   ZCL_CS_PEG=>op_status( ) — diuji ABAP Unit di sana. Jangan menyalin
+*&   percabangannya kembali ke sini.
+*&   ⚠️ ZCL_CS_PEG HARUS aktif di SE24 SEBELUM halaman ini diaktifkan.
+```
+
+- [ ] **Step 3: Jalankan pemeriksaan struktur**
+
+```bash
+python scripts/check_bsp.py "ZBSP_CS_APP/Page with Flow Logic/index2.htm"
+```
+Semua baris harus `OK`.
+
+- [ ] **Step 4: Minta user mengaktifkan & membandingkan angka**
+
+Buka `index2.htm` dan catat kartu **Confirmed** (persen + "X / Y op").
+Angkanya harus **sama persis** dengan sebelum perubahan — ini refactor murni,
+bukan perubahan perilaku. Kalau berubah, berarti percabangan lama dan
+`op_status( )` tidak setara; laporkan kedua angkanya.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add "ZBSP_CS_APP/Page with Flow Logic/index2.htm"
+git commit -m "refactor(index2): pakai ZCL_CS_PEG=>op_status, hapus duplikasi rumus
+
+Rumus status operasi kini punya satu salinan hidup yang teruji ABAP Unit.
+diag_routing.htm dibiarkan apa adanya — halaman diagnosa sekali pakai.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
