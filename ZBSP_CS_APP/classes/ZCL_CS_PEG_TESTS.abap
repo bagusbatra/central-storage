@@ -59,17 +59,28 @@ CLASS ltc_peg IMPLEMENTATION.
     cl_abap_unit_assert=>assert_equals(
       act = zcl_cs_peg=>op_status( iv_lmnga = 5 iv_mgvrg = 0 iv_aueru = ' ' )
       exp = 'active' msg = 'MGVRG 0 tapi ada konfirmasi -> active, BUKAN confirmed' ).
+    " qty pecahan TIDAK boleh dibulatkan sebelum dibandingkan
+    cl_abap_unit_assert=>assert_equals(
+      act = zcl_cs_peg=>op_status( iv_lmnga = '9.6' iv_mgvrg = '10.0' iv_aueru = ' ' )
+      exp = 'active' msg = '9,6 dari 10 belum selesai — jangan dibulatkan' ).
   ENDMETHOD.
 
   METHOD stasiun_dari_plant_dispo.
     DATA: lv_seq TYPE i, lv_txt TYPE string, lv_in TYPE abap_bool.
 
-    " Plant 1000 apa pun DISPO-nya -> stasiun 1 Pembahanan (digabung)
+    " Plant 1000 dgn DISPO baku -> stasiun 1 Pembahanan (digabung)
     zcl_cs_peg=>stn_of_order( EXPORTING iv_pwerk = '1000' iv_dispo = 'PN1'
                               IMPORTING ev_seq = lv_seq ev_txt = lv_txt
                                         ev_in_scope = lv_in ).
     cl_abap_unit_assert=>assert_equals( act = lv_seq exp = 1 msg = 'Plant 1000 -> stasiun 1' ).
     cl_abap_unit_assert=>assert_equals( act = lv_in  exp = abap_true ).
+
+    " Plant 1000 ber-DISPO asing -> stasiun 9, BUKAN Pembahanan
+    zcl_cs_peg=>stn_of_order( EXPORTING iv_pwerk = '1000' iv_dispo = 'ZZ9'
+                              IMPORTING ev_seq = lv_seq ev_in_scope = lv_in ).
+    cl_abap_unit_assert=>assert_equals( act = lv_seq exp = 9
+      msg = 'Plant 1000 + DISPO asing -> Lainnya, bukan Pembahanan' ).
+    cl_abap_unit_assert=>assert_equals( act = lv_in exp = abap_false ).
 
     zcl_cs_peg=>stn_of_order( EXPORTING iv_pwerk = '2000' iv_dispo = 'GA2'
                               IMPORTING ev_seq = lv_seq ev_in_scope = lv_in ).

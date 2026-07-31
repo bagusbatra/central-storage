@@ -120,9 +120,9 @@ CLASS zcl_cs_peg DEFINITION PUBLIC FINAL CREATE PUBLIC.
     " index2.htm & class ini WAJIB memanggil method ini, jangan menyalin
     " percabangannya lagi (Task 11 mengalihkan index2.htm ke sini).
     CLASS-METHODS op_status
-      IMPORTING iv_lmnga         TYPE p
-                iv_mgvrg         TYPE p
-                iv_aueru         TYPE c
+      IMPORTING iv_lmnga         TYPE p LENGTH 15 DECIMALS 3
+                iv_mgvrg         TYPE p LENGTH 15 DECIMALS 3
+                iv_aueru         TYPE c LENGTH 1
       RETURNING VALUE(rv_status) TYPE string.
 
     " Pemetaan order -> stasiun. Plant SELALU dipasangkan dgn DISPO.
@@ -175,12 +175,16 @@ CLASS zcl_cs_peg IMPLEMENTATION.
     IF iv_pwerk = '1000'.
       " Plant 1000 DIGABUNG jadi satu stasiun (WM1/WM2 = pembahanan,
       " PN1/PN2 = panel & pressing tidak lagi dipisah).
-      ev_seq = 1. ev_txt = 'Pembahanan'.
+      " TAPI hanya untuk 4 DISPO baku itu: order Plant 1000 ber-DISPO lain
+      " kemungkinan milik unit lain (Chair/Metal/Painting), jadi jatuh ke
+      " stasiun 9 'Lainnya' — menaruhnya di Pembahanan akan mengklaim ia
+      " bagian alur Wood Furniture padahal belum tentu. (Putusan user
+      " 2026-07-31 saat review Task 1: spec yang berlaku, bukan rencana.)
       IF iv_dispo = 'WM1' OR iv_dispo = 'WM2'
       OR iv_dispo = 'PN1' OR iv_dispo = 'PN2'.
-        ev_in_scope = abap_true.
+        ev_seq = 1. ev_txt = 'Pembahanan'. ev_in_scope = abap_true.
+        RETURN.
       ENDIF.
-      RETURN.
     ENDIF.
 
     IF iv_pwerk = '2000'.
