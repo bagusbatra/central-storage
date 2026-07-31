@@ -289,8 +289,12 @@ CLASS zcl_cs_peg IMPLEMENTATION.
 
       " anak-anaknya ditelusuri di Task 3 (DFS). Sementara: satu tingkat.
       LOOP AT lt_res_agg INTO ls_res WHERE aufnr = <p>-aufnr.
+        " kdpos WAJIB ikut jadi kunci: lt_prod berkunci (matnr, kdpos), dan
+        " assemble( ) bisa dipanggil utk SELURUH item SO sekaligus (iv_posnr
+        " opsional). Tanpa kdpos, anak bisa nyantol ke order induk milik item
+        " lain yang kebetulan memakai material sama.
         READ TABLE lt_prod ASSIGNING FIELD-SYMBOL(<c>)
-          WITH KEY matnr = ls_res-matnr.
+          WITH KEY matnr = ls_res-matnr kdpos = <p>-kdpos.
         IF sy-subrc <> 0.
           CONTINUE.           " barang beli -> dibuang (spec K4)
         ENDIF.

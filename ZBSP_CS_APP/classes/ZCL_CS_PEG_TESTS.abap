@@ -24,7 +24,8 @@ CLASS ltc_peg DEFINITION FOR TESTING
 
     METHODS: stasiun_dari_plant_dispo FOR TESTING,
              rumus_status_operasi FOR TESTING,
-             pohon_konvergensi FOR TESTING.
+             pohon_konvergensi FOR TESTING,
+             material_sama_beda_item FOR TESTING.
 ENDCLASS.
 
 CLASS ltc_peg IMPLEMENTATION.
@@ -130,6 +131,47 @@ CLASS ltc_peg IMPLEMENTATION.
     cl_abap_unit_assert=>assert_equals( act = ls_kid-qty_out exp = 20
       msg = 'qty_out anak = PSMNG order pembuatnya' ).
     cl_abap_unit_assert=>assert_equals( act = ls_kid-stn_seq exp = 1 ).
+  ENDMETHOD.
+
+  METHOD material_sama_beda_item.
+    " Material sama dipakai dua item SO -> anak harus nyantol ke induk
+    " milik ITEM-nya sendiri, bukan item tetangga.
+    DATA: lt_ord TYPE zcl_cs_peg=>tt_ord, lt_res TYPE zcl_cs_peg=>tt_res,
+          lt_stk TYPE zcl_cs_peg=>tt_stk, lt_mkt TYPE zcl_cs_peg=>tt_makt,
+          lt_nod TYPE zcl_cs_peg=>tt_node,
+          ls_o   TYPE zcl_cs_peg=>ty_ord,
+          ls_r   TYPE zcl_cs_peg=>ty_res.
+
+    " item 000010: PANEL10 <- KAKI
+    ls_o = ord( iv_aufnr = 'O1' iv_matnr = 'KAKI' iv_psmng = 20
+                iv_pwerk = '1000' iv_dispo = 'PN1' ).
+    ls_o-kdpos = '000010'. APPEND ls_o TO lt_ord.
+    ls_o = ord( iv_aufnr = 'O2' iv_matnr = 'PANEL10' iv_psmng = 4 ).
+    ls_o-kdpos = '000010'. APPEND ls_o TO lt_ord.
+
+    " item 000020: PANEL20 <- KAKI (material SAMA, order pembuat BEDA)
+    ls_o = ord( iv_aufnr = 'O9' iv_matnr = 'KAKI' iv_psmng = 20
+                iv_pwerk = '1000' iv_dispo = 'PN1' ).
+    ls_o-kdpos = '000020'. APPEND ls_o TO lt_ord.
+    ls_o = ord( iv_aufnr = 'O8' iv_matnr = 'PANEL20' iv_psmng = 4 ).
+    ls_o-kdpos = '000020'. APPEND ls_o TO lt_ord.
+
+    ls_r = res( iv_aufnr = 'O2' iv_matnr = 'KAKI' iv_bdmng = 20 ). APPEND ls_r TO lt_res.
+    ls_r = res( iv_aufnr = 'O8' iv_matnr = 'KAKI' iv_bdmng = 20 ). APPEND ls_r TO lt_res.
+
+    lt_nod = zcl_cs_peg=>assemble( it_ord = lt_ord it_res = lt_res
+                                   it_stk = lt_stk it_makt = lt_mkt ).
+
+    " anak KAKI di bawah PANEL20 harus memakai order O9, bukan O1
+    DATA lv_ok TYPE abap_bool.
+    LOOP AT lt_nod INTO DATA(ls_n)
+      WHERE matnr = 'KAKI' AND kdpos = '000020'.
+      cl_abap_unit_assert=>assert_equals( act = ls_n-aufnr exp = 'O9'
+        msg = 'anak item 20 harus memakai order pembuat milik item 20' ).
+      lv_ok = abap_true.
+    ENDLOOP.
+    cl_abap_unit_assert=>assert_equals( act = lv_ok exp = abap_true
+      msg = 'anak KAKI utk item 20 harus ada di pohon' ).
   ENDMETHOD.
 
 ENDCLASS.
