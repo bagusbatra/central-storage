@@ -22,6 +22,7 @@ Nilai-nilai berikut disalin verbatim dari spec dan berlaku di SEMUA task:
 - Tidak ada resource eksternal (font/CDN) — ikon berupa `<symbol>` SVG inline.
 - Form/link GET WAJIB `action="routing_map.htm"` eksplisit (bug lama: action kosong mengembalikan seluruh data).
 - Jangan menjumlahkan qty lintas material (campur UoM). Angka ringkasan stasiun = COUNT material.
+- Setiap pencarian order pembuat di `lt_prod`/`it_prod` WAJIB memakai kunci **(matnr, kdpos)**, bukan matnr saja — `assemble( )` bisa dipanggil untuk seluruh item SO sekaligus.
 
 ## Cara Verifikasi di Proyek Ini
 
@@ -600,8 +601,12 @@ Hasil yang diharapkan: **GAGAL** — `lines( lt_nod )` = 0, exp 2.
 
       " anak-anaknya ditelusuri di Task 3 (DFS). Sementara: satu tingkat.
       LOOP AT lt_res_agg INTO ls_res WHERE aufnr = <p>-aufnr.
+        " kdpos WAJIB ikut jadi kunci: lt_prod berkunci (matnr, kdpos), dan
+        " assemble( ) bisa dipanggil utk SELURUH item SO sekaligus (iv_posnr
+        " opsional). Tanpa kdpos, anak bisa nyantol ke order induk milik item
+        " lain yang kebetulan memakai material sama.
         READ TABLE lt_prod ASSIGNING FIELD-SYMBOL(<c>)
-          WITH KEY matnr = ls_res-matnr.
+          WITH KEY matnr = ls_res-matnr kdpos = <p>-kdpos.
         IF sy-subrc <> 0.
           CONTINUE.           " barang beli -> dibuang (spec K4)
         ENDIF.
@@ -818,7 +823,9 @@ Implementasinya:
 
     LOOP AT it_res_agg INTO ls_res WHERE aufnr = is_parent-aufnr.
 
-      READ TABLE it_prod ASSIGNING FIELD-SYMBOL(<c>) WITH KEY matnr = ls_res-matnr.
+      " kdpos ikut jadi kunci — lihat alasannya di assemble( ).
+      READ TABLE it_prod ASSIGNING FIELD-SYMBOL(<c>)
+        WITH KEY matnr = ls_res-matnr kdpos = is_parent-kdpos.
       IF sy-subrc <> 0.
         CONTINUE.                       " barang beli -> dibuang (K4)
       ENDIF.
