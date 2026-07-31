@@ -1,0 +1,206 @@
+*&---------------------------------------------------------------------*
+*& Global Class ZCL_CS_PEG — Pohon Konvergensi Material (pegging RESB)
+*&---------------------------------------------------------------------*
+*& PENTING (deployment): buat & aktifkan di SE24 dengan nama ZCL_CS_PEG
+*& SEBELUM mengaktifkan routing_map.htm. Package & transport sama dengan
+*& ZBSP_CS_APP.
+*&
+*& Dua lapis:
+*&   assemble( ) — FUNGSI MURNI. Tabel masuk -> tabel pohon keluar. TIDAK
+*&                 menyentuh database sama sekali, sehingga bisa diuji
+*&                 ABAP Unit. Semua aturan pohon & status ada di sini.
+*&   build( )    — selubung tipis: baca DB, panggil assemble( ).
+*& Kalau menambah aturan, taruh di assemble( ) supaya ikut teruji.
+*&
+*& Spec: docs/superpowers/specs/2026-07-31-pohon-konvergensi-material-design.md
+*&---------------------------------------------------------------------*
+CLASS zcl_cs_peg DEFINITION PUBLIC FINAL CREATE PUBLIC.
+
+  PUBLIC SECTION.
+
+    " ---------- MASUKAN assemble( ) ----------
+    TYPES: BEGIN OF ty_ord,
+             aufnr TYPE afko-aufnr,
+             matnr TYPE matnr,
+             kdpos TYPE afpo-kdpos,
+             psmng TYPE p LENGTH 15 DECIMALS 3,
+             wemng TYPE p LENGTH 15 DECIMALS 3,
+             pwerk TYPE afpo-pwerk,
+             dispo TYPE afko-dispo,
+             aufpl TYPE afko-aufpl,
+           END OF ty_ord,
+           tt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY.
+
+    TYPES: BEGIN OF ty_res,
+             aufnr    TYPE afko-aufnr,
+             matnr    TYPE matnr,
+             bdmng    TYPE p LENGTH 15 DECIMALS 3,
+             enmng    TYPE p LENGTH 15 DECIMALS 3,
+             any_open TYPE abap_bool,
+           END OF ty_res,
+           tt_res TYPE STANDARD TABLE OF ty_res WITH DEFAULT KEY.
+
+    TYPES: BEGIN OF ty_stk,
+             kdpos     TYPE afpo-kdpos,
+             matnr     TYPE matnr,
+             stok_so   TYPE p LENGTH 15 DECIMALS 3,
+             stok_free TYPE p LENGTH 15 DECIMALS 3,
+           END OF ty_stk,
+           tt_stk TYPE STANDARD TABLE OF ty_stk WITH DEFAULT KEY.
+
+    TYPES: BEGIN OF ty_makt,
+             matnr TYPE matnr,
+             maktx TYPE makt-maktx,
+           END OF ty_makt,
+           tt_makt TYPE STANDARD TABLE OF ty_makt WITH DEFAULT KEY.
+
+    " ---------- KELUARAN ----------
+    TYPES: BEGIN OF ty_node,
+             node_key   TYPE string,
+             parent_key TYPE string,
+             level      TYPE i,
+             has_child  TYPE abap_bool,
+             kdpos      TYPE afpo-kdpos,
+             matnr      TYPE matnr,
+             maktx      TYPE string,
+             aufnr      TYPE afko-aufnr,
+             stn_seq    TYPE i,
+             stn_txt    TYPE string,
+             dispo      TYPE afko-dispo,
+             in_scope   TYPE abap_bool,
+             bdmng      TYPE p LENGTH 15 DECIMALS 3,
+             enmng      TYPE p LENGTH 15 DECIMALS 3,
+             qty_out    TYPE p LENGTH 15 DECIMALS 3,
+             ratio_txt  TYPE string,
+             stok_so    TYPE p LENGTH 15 DECIMALS 3,
+             stok_free  TYPE p LENGTH 15 DECIMALS 3,
+             status     TYPE string,
+             dup_of     TYPE string,
+             note       TYPE string,
+           END OF ty_node,
+           tt_node TYPE STANDARD TABLE OF ty_node WITH DEFAULT KEY.
+
+    TYPES: BEGIN OF ty_stn,
+             seq       TYPE i,
+             no        TYPE string,
+             tx        TYPE string,
+             kind      TYPE c LENGTH 1,   " P = proses, S = titik stok
+             loc       TYPE string,
+             mat_cnt   TYPE i,
+             ratio_txt TYPE string,
+             is_hold   TYPE abap_bool,
+           END OF ty_stn,
+           tt_stn TYPE STANDARD TABLE OF ty_stn WITH DEFAULT KEY.
+
+    TYPES: BEGIN OF ty_wc,
+             stn_seq    TYPE i,
+             arbpl      TYPE crhd-arbpl,
+             ktext      TYPE string,
+             cnt_queue  TYPE i,
+             cnt_active TYPE i,
+             cnt_conf   TYPE i,
+           END OF ty_wc,
+           tt_wc TYPE STANDARD TABLE OF ty_wc WITH DEFAULT KEY.
+
+    TYPES: BEGIN OF ty_opm,
+             stn_seq   TYPE i,
+             matnr     TYPE matnr,
+             maktx     TYPE string,
+             arbpl     TYPE crhd-arbpl,
+             aufnr     TYPE afko-aufnr,
+             qty_order TYPE p LENGTH 15 DECIMALS 3,
+             stok_so   TYPE p LENGTH 15 DECIMALS 3,
+             op_status TYPE string,   " queue | active | confirmed
+           END OF ty_opm,
+           tt_opm TYPE STANDARD TABLE OF ty_opm WITH DEFAULT KEY.
+
+    CONSTANTS: c_max_depth TYPE i VALUE 10.
+
+    " SATU-SATUNYA tempat rumus status operasi hidup. diag_routing.htm,
+    " index2.htm & class ini WAJIB memanggil method ini, jangan menyalin
+    " percabangannya lagi (Task 11 mengalihkan index2.htm ke sini).
+    CLASS-METHODS op_status
+      IMPORTING iv_lmnga         TYPE p
+                iv_mgvrg         TYPE p
+                iv_aueru         TYPE c
+      RETURNING VALUE(rv_status) TYPE string.
+
+    " Pemetaan order -> stasiun. Plant SELALU dipasangkan dgn DISPO.
+    CLASS-METHODS stn_of_order
+      IMPORTING iv_pwerk        TYPE afpo-pwerk
+                iv_dispo        TYPE afko-dispo
+      EXPORTING ev_seq          TYPE i
+                ev_txt          TYPE string
+                ev_in_scope     TYPE abap_bool.
+
+    " FUNGSI MURNI — tanpa akses database.
+    CLASS-METHODS assemble
+      IMPORTING it_ord         TYPE tt_ord
+                it_res         TYPE tt_res
+                it_stk         TYPE tt_stk
+                it_makt        TYPE tt_makt
+      RETURNING VALUE(rt_node) TYPE tt_node.
+
+    CLASS-METHODS build
+      IMPORTING iv_vbeln  TYPE vbak-vbeln
+                iv_posnr  TYPE afpo-kdpos OPTIONAL
+                iv_maxord TYPE i DEFAULT 800
+      EXPORTING et_node   TYPE tt_node
+                et_stn    TYPE tt_stn
+                et_wc     TYPE tt_wc
+                et_opm    TYPE tt_opm
+                ev_trunc  TYPE abap_bool.
+
+ENDCLASS.
+
+CLASS zcl_cs_peg IMPLEMENTATION.
+
+  METHOD op_status.
+    " RUMUS BAKU — disalin dari diag_routing.htm:355-365 dan menjadi
+    " SATU-SATUNYA salinan yang hidup. Pemanggil (build(), index2.htm)
+    " tidak boleh menulis ulang percabangan ini.
+    IF iv_aueru = 'X'
+       OR ( iv_mgvrg > 0 AND iv_lmnga >= iv_mgvrg ).
+      rv_status = 'confirmed'.
+    ELSEIF iv_lmnga > 0.
+      rv_status = 'active'.
+    ELSE.
+      rv_status = 'queue'.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD stn_of_order.
+    CLEAR: ev_seq, ev_txt, ev_in_scope.
+
+    IF iv_pwerk = '1000'.
+      " Plant 1000 DIGABUNG jadi satu stasiun (WM1/WM2 = pembahanan,
+      " PN1/PN2 = panel & pressing tidak lagi dipisah).
+      ev_seq = 1. ev_txt = 'Pembahanan'.
+      IF iv_dispo = 'WM1' OR iv_dispo = 'WM2'
+      OR iv_dispo = 'PN1' OR iv_dispo = 'PN2'.
+        ev_in_scope = abap_true.
+      ENDIF.
+      RETURN.
+    ENDIF.
+
+    IF iv_pwerk = '2000'.
+      CASE iv_dispo.
+        WHEN 'GA1' OR 'GA2'.
+          ev_seq = 3. ev_txt = 'Machining'.    ev_in_scope = abap_true. RETURN.
+        WHEN 'EB2'.
+          ev_seq = 4. ev_txt = 'Edge Banding'. ev_in_scope = abap_true. RETURN.
+      ENDCASE.
+    ENDIF.
+
+    " Di luar 7 nilai baku: TETAP ditampilkan (spec K3) tapi ditandai.
+    ev_seq = 9. ev_txt = 'Lainnya'. ev_in_scope = abap_false.
+  ENDMETHOD.
+
+  METHOD assemble.
+  ENDMETHOD.
+
+  METHOD build.
+    CLEAR: et_node, et_stn, et_wc, et_opm, ev_trunc.
+  ENDMETHOD.
+
+ENDCLASS.
