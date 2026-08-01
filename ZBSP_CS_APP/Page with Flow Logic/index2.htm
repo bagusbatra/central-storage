@@ -201,7 +201,7 @@ READ TABLE lt_num INTO ls_num WITH KEY key = 'PCS'.  lv_t_pcs  = ls_num-txt.
 *&
 *&   SCOPE ORDER: order milik SO+Item yang PUNYA REAL STOCK (lt_stok, lihat
 *&   aturan dasar di header), di-scope MRP controller AFKO-DISPO mengikuti
-*&   konvensi backup/index2.htm + diag_routing.htm:
+*&   konvensi reference/backup-pages/index2.htm + diag_routing.htm:
 *&       Plant 1000 -> WM1/WM2/PN1/PN2   (Pembahanan)
 *&       Plant 2000 -> GA1/GA2/EB2       (Produksi)
 *&   Kedua plant SENGAJA diikutkan: lintasan Wood Furniture memang mulai di
@@ -237,7 +237,7 @@ IF lt_soit IS NOT INITIAL.
   TYPES: BEGIN OF ty_ord, aufnr TYPE afko-aufnr, aufpl TYPE afko-aufpl, END OF ty_ord.
   DATA: lt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY, ls_ord TYPE ty_ord.
   " PLANT DIPASANGKAN dgn DISPO (bukan daftar DISPO datar) — konvensi
-  " diag_routing.htm & backup/index2.htm. Daftar datar bisa menjaring order
+  " diag_routing.htm & reference/backup-pages/index2.htm. Daftar datar bisa menjaring order
   " Plant 2000 ber-DISPO Pembahanan, dan sebaliknya.
   SELECT k~aufnr k~aufpl
     FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr

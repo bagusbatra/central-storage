@@ -1,7 +1,11 @@
 # Checkpoint Rencana Pengembangan — ZBSP_CS_APP
 
 Ringkasan status setiap jalur pengembangan aplikasi Central Storage.
-Diperbarui: 2026-08-01 (setelah perubahan UI index2.htm)
+Diperbarui: 2026-08-01 (setelah perubahan UI index2.htm & penataan folder)
+
+**Aturan folder:** `ZBSP_CS_APP/` adalah cermin objek SAP — apa pun di dalamnya
+ada atau akan ada di sistem. Bahan rujukan yang tidak diaktifkan ada di
+`reference/`. Selengkapnya di `README.md` akar repo.
 
 **Cara pakai:** kolom Status memakai arti yang ketat di bawah ini. "Jalan"
 berarti sudah aktif di SAP dan dipakai; "Belum teruji" berarti kodenya ada
@@ -69,9 +73,8 @@ Movement punya sumber data di SAP.
 
 ## 4. Dashboard Production — 🟡 Sebagian
 
-UI disalin dari folder `prototype/` (permintaan user 2026-08-01). Versi
-sebelumnya ("Lintasan Routing & Confirmation", porting `prototype.html`
-lama) diganti total; isinya masih ada di git.
+UI disalin dari `reference/prototype-ui/index.html` (permintaan user 2026-08-01). Versi
+sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti total; isinya masih ada di git.
 
 - **Berkas:** `index2.htm`
 - **Sumbu utama:** **Buyer** (dulu SO)

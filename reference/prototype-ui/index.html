@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Production</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <div class="dashboard-container">
+        
+        <header class="main-header">
+            <div class="header-left">
+                <div class="logo-box">
+                    <i class="fa-solid fa-industry"></i>
+                </div>
+                <div>
+                    <h1>Dashboard Production</h1>
+                    <p class="subtitle">UNIT ASSEMBLING • MACHINING CENTER • EDGE BANDING & SANDING</p>
+                </div>
+            </div>
+            <div class="header-right">
+                <span class="flow-info">Alur: Storage → Machining → Edge Banding → Storage</span>
+                <span class="status-indicator"><span class="dot green"></span> 10 Buyer | 60 WC (40 MC - 20 EBS)</span>
+            </div>
+        </header>
+
+        <section class="summary-cards">
+            <div class="card">
+                <div class="card-title">BUYER <i class="fa-solid fa-users icon-top-right"></i></div>
+                <div class="card-value">10</div>
+                <div class="card-sub">16 PLO</div>
+            </div>
+            <div class="card">
+                <div class="card-title">KOMPONEN <i class="fa-solid fa-cubes icon-top-right"></i></div>
+                <div class="card-value">942</div>
+                <div class="card-sub">1869 pcs</div>
+            </div>
+            <div class="card">
+                <div class="card-title">CONFIRMED <i class="fa-solid fa-circle-check icon-top-right"></i></div>
+                <div class="card-value color-green">46 <span class="unit">%</span></div>
+                <div class="card-sub">basis komponen diterima</div>
+            </div>
+            <div class="card">
+                <div class="card-title">DI PRODUKSI <i class="fa-solid fa-gear icon-top-right"></i></div>
+                <div class="card-value color-blue">380</div>
+                <div class="card-sub">WIP di lantai</div>
+            </div>
+            <div class="card">
+                <div class="card-title">SELESAI PROD. <i class="fa-solid fa-square-check icon-top-right"></i></div>
+                <div class="card-value color-green">268</div>
+                <div class="card-sub">kembali ke storage</div>
+            </div>
+            <div class="card bottleneck-card">
+                <div class="card-title">BOTTLENECK <i class="fa-solid fa-triangle-exclamation icon-top-right"></i></div>
+                <div class="card-value color-red">EBS-13</div>
+                <div class="card-sub">Edge Band & Sand 13</div>
+            </div>
+        </section>
+
+        <section class="filter-section">
+            <div class="filter-header">
+                <span><i class="fa-solid fa-filter"></i> FILTER BUYER</span>
+                <button class="btn-all-buyer active" id="btn-all-buyer">Semua Buyer</button>
+            </div>
+            <div class="filter-buttons" id="buyer-filter-container">
+                </div>
+        </section>
+
+        <section class="wip-section">
+            <div class="section-title-container">
+                <h2><i class="fa-solid fa-route"></i> Lintasan Produksi — WIP per Center</h2>
+                <span class="view-status">menampilkan: <strong id="wip-display-status">Semua Buyer • Semua SO</strong></span>
+            </div>
+            
+            <div class="wip-flow-container">
+                <div class="storage-box">
+                    <i class="fa-solid fa-warehouse"></i>
+                    <div>IN • dari Storage</div>
+                </div>
+                
+                <i class="fa-solid fa-arrow-right flow-arrow"></i>
+
+                <div class="center-box active" id="mc-box">
+                    <div class="center-header">
+                        <span><i class="fa-solid fa-table-cells"></i> Machining Center</span>
+                        <span class="sub">40 WC</span>
+                    </div>
+                    <div class="center-body">
+                        <span class="wip-number" id="mc-wip-text">213</span> <span class="wip-lbl">WIP</span>
+                    </div>
+                    <div class="center-footer">
+                        <span>897 pcs</span>
+                        <span class="color-green">✓ 420</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="pb-done" style="width: 45%;"></div>
+                        <div class="pb-wip" style="width: 35%;"></div>
+                        <div class="pb-queue" style="width: 20%;"></div>
+                    </div>
+                </div>
+
+                <i class="fa-solid fa-arrow-right flow-arrow"></i>
+
+                <div class="center-box" id="ebs-box">
+                    <div class="center-header">
+                        <span><i class="fa-solid fa-border-all"></i> Edge Banding & Sanding</span>
+                        <span class="sub">20 WC</span>
+                    </div>
+                    <div class="center-body">
+                        <span class="wip-number" id="ebs-wip-text">167</span> <span class="wip-lbl">WIP</span>
+                    </div>
+                    <div class="center-footer">
+                        <span>869 pcs</span>
+                        <span class="color-green">✓ 269</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="pb-done" style="width: 30%;"></div>
+                        <div class="pb-wip" style="width: 50%;"></div>
+                        <div class="pb-queue" style="width: 20%;"></div>
+                    </div>
+                </div>
+
+                <i class="fa-solid fa-arrow-right flow-arrow"></i>
+
+                <div class="storage-box">
+                    <i class="fa-solid fa-box-open"></i>
+                    <div>OUT • ke Storage</div>
+                </div>
+            </div>
+            
+            <div class="legend-container">
+                <span class="legend-item"><span class="dot blue"></span> Dikerjakan</span>
+                <span class="legend-item"><span class="dot orange"></span> Antri</span>
+                <span class="legend-item"><span class="dot green"></span> Sudah Lewat</span>
+            </div>
+        </section>
+
+        <section class="wc-map-section">
+            <div class="section-title-container">
+                <h2><i class="fa-solid fa-grip"></i> Peta Work Center — <span id="wc-map-title">Machining Center</span> <small class="hint">klik WC untuk detail</small></h2>
+                <div class="load-legend">
+                    Beban: 
+                    <span class="lbl-load load-low">rendah</span>
+                    <span class="lbl-load load-med">sedang</span>
+                    <span class="lbl-load load-high">tinggi</span>
+                </div>
+            </div>
+            <div class="wc-grid" id="wc-grid-container">
+                </div>
+        </section>
+
+        <section class="so-section">
+            <div class="section-title-container">
+                <h2><i class="fa-solid fa-file-invoice"></i> SO / PLO</h2>
+                <span id="so-buyer-label" class="sub">Semua Buyer • 15 PLO</span>
+            </div>
+            
+            <div class="so-list-container" id="so-list-container">
+                </div>
+        </section>
+
+        <section class="component-detail-section">
+            <div class="detail-header-row">
+                <div class="section-title-container">
+                    <h2><i class="fa-solid fa-list-check"></i> Detail Komponen</h2>
+                    <span class="sub-filter" id="detail-sub-label">Semua Buyer • Machining Center</span>
+                </div>
+                
+                <div class="search-box-container">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" placeholder="cari nama / kode / buyer" id="search-component">
+                </div>
+            </div>
+
+            <div class="tab-filters">
+                <button class="tab-btn active" data-tab="semua">Semua</button>
+                <button class="tab-btn" data-tab="dikerjakan">Dikerjakan</button>
+                <button class="tab-btn" data-tab="antri">Antri</button>
+                <button class="tab-btn" data-tab="selesai">Selesai</button>
+            </div>
+
+            <div class="table-wrapper">
+                <table class="component-table">
+                    <thead>
+                        <tr>
+                            <th>KOMPONEN</th>
+                            <th>KODE MATERIAL</th>
+                            <th>QTY ROUTING</th>
+                            <th>STATUS</th>
+                            <th style="text-align: right;">POSISI</th>
+                        </tr>
+                    </thead>
+                    <tbody id="component-table-body">
+                        </tbody>
+                </table>
+            </div>
+            
+            <div class="table-footer-note">
+                confirmed = operasi ter-scan selesai di WC  |  WIP = komponen di WC saat ini
+                <span style="float: right;">data simulasi - production</span>
+            </div>
+        </section>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

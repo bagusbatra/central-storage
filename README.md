@@ -1,58 +1,101 @@
 # Central Storage Production Dashboard — KMI 2 (Plant 2000)
 
-Aplikasi **SAP BSP (Business Server Pages)** berbasis ABAP untuk memonitor dan menganalisis progres produksi di **Central Storage KMI 2 — Plant 2000 Surabaya**.
+Aplikasi **SAP BSP (Business Server Pages)** berbasis ABAP untuk memonitor
+progres produksi di **Central Storage KMI 2 — Plant 2000 Surabaya**.
 
-## Tujuan
+Repo ini menyimpan **sumber**-nya, bukan aplikasi yang berjalan. Berkasnya
+disalin ke SE80/SE24 lalu diaktifkan di sana.
 
-Memberikan visibilitas real-time terhadap status produksi dari data *Sales Order* (SO) yang terdaftar di Plant 2000. Aplikasi ini menggantikan proses manual dengan dashboard visual yang terintegrasi langsung ke tabel SAP (VBAK, VBAP, AFPO, MAST, STPO, MAKT).
+Akses aplikasi: `http://<server>:<port>/sap/bc/bsp/sap/zbsp_cs_app/index.htm`
 
-## Fitur
+---
 
-### 1. Dashboard Statistik (`index.htm`)
-- **Ringkasan KPI**: Total Sales Order, Total Item Produksi, Item Selesai (GR 100%), dan Tingkat Penyelesaian (*completion rate*).
-- **Filter Periode**: Tombol cepat 7 Hari / 30 Hari / 90 Hari.
-- **Grafik Batang Mingguan**: Distribusi item (Selesai / Dalam Proses / Belum Produksi) per minggu.
-- **Donut Chart**: Proporsi status produksi keseluruhan dengan persentase penyelesaian.
-- **5 SO Terlambat**: Tabel 5 Sales Order dengan progres paling lambat (*bottom 5*).
-- **10 SO Terbaru**: Daftar 10 Sales Order terbaru dengan nilai net dan mata uang.
-- **Skeleton Loading**: Animasi *skeleton* selama data dimuat dari server.
+## Aturan folder — baca sebelum mengubah apa pun
 
-### 2. Monitoring Detail (`monitoring.htm`)
-- **Pencarian Multi-Kriteria**: Filter berdasarkan Nomor SO, Kode Customer, dan Rentang Tanggal.
-- **Sidebar Daftar SO**: Daftar Sales Order dengan paginasi (5 per halaman), bisa diklik untuk melihat detail.
-- **Panel Detail Item**: Tabel item produksi per SO dengan kolom Material #, Deskripsi, Kuantitas, Target Produksi, Hasil GR, dan Progress Bar.
-- **Bill of Materials (BOM)**: *Expandable row* untuk setiap item yang menampilkan komponen rakitan dari tabel MAST/STPO lengkap dengan deskripsi material (MAKT) dan kuantitas kebutuhan.
+Satu aturan yang menentukan segalanya:
 
-### 3. Arsitektur ABAP
-- **Query Teroptimasi**: SELECT kolom spesifik (bukan `*`), pruning SO tanpa item Plant 2000, *pre-fetch* AFPO/MAST/STPO/MAKT dengan `FOR ALL ENTRIES`.
-- **RANGES Filter**: Penggunaan RANGES untuk filtering aman tanpa SQL Injection.
-- **Konversi Tanggal**: Parsing input HTML `date` ke format internal SAP.
-- **Autentikasi**: Validasi session user SAP via `sy-uname`.
+> **`ZBSP_CS_APP/` adalah cermin objek SAP.**
+> Apa pun di dalamnya ada, atau akan ada, sebagai objek di sistem.
+> Apa pun di `reference/` **tidak** diaktifkan.
+
+| Folder | Isi | Diaktifkan di SAP? |
+|---|---|---|
+| `ZBSP_CS_APP/Page with Flow Logic/` | Halaman BSP | **Ya** |
+| `ZBSP_CS_APP/classes/` | Global class (SE24) | **Ya** |
+| `ZBSP_CS_APP/MIMEs/` | Gambar yang dipakai halaman | **Ya** |
+| `ZBSP_CS_APP/report/CHECKPOINT.md` | Status tiap jalur pengembangan | — |
+| `ZBSP_CS_APP/report/daily/` | Catatan harian perubahan | — |
+| `reference/` | Bahan rujukan, tidak dipelihara | **Tidak** |
+| `docs/superpowers/` | Spec & rencana implementasi | — |
+| `scripts/` | Alat bantu pemeriksaan | — |
+
+**Menambah berkas baru?** Tanyakan satu hal: apakah ini akan diaktifkan di SAP?
+Kalau ya → `ZBSP_CS_APP/`. Kalau tidak — mockup, salinan, eksperimen, versi
+lama → `reference/`.
+
+Jangan menaruh mockup di dalam `Page with Flow Logic/`. Itu pernah terjadi
+(`prototype.html`) dan membuat orang mengira ada halaman BSP yang belum
+diaktifkan.
+
+## Isi `reference/`
+
+| Folder | Isi | Kenapa disimpan |
+|---|---|---|
+| `backup-pages/` | 13 halaman BSP versi lama | Rujukan cara pengambilan data — banyak pola query yang masih dipakai berasal dari sini |
+| `v2-so-tracer/` | `ZCL_CS_SO_TRACER` + report + tutorial | Eksperimen penelusuran SO, belum dipakai |
+| `prototype-ui/` | Mockup UI statis (HTML/CSS/JS) | Acuan tampilan. `index.html` = prototype yang sedang dipakai; `prototype-lama.html` = pendahulunya |
+
+Berkas di sini **tidak dipelihara**. Jangan memperbaiki bug di sini — kalau
+sebuah pola diambil dari sini, salin ke berkas aktif lalu perbaiki di sana.
+
+---
+
+## Memulai
+
+1. Baca `ZBSP_CS_APP/report/CHECKPOINT.md` — status tiap jalur pengembangan: apa yang
+   sudah jalan, apa yang masih dummy, apa yang terhalang, dan jebakan yang
+   sudah pernah memakan korban
+2. Baca catatan harian terbaru di `ZBSP_CS_APP/report/daily/`
+3. Sebelum menempel berkas `.htm` ke SE80, jalankan:
+
+   ```
+   python scripts/check_bsp.py "ZBSP_CS_APP/Page with Flow Logic/<berkas>.htm"
+   ```
+
+   Menangkap kesalahan yang sudah berkali-kali memakan waktu: delimiter BSP
+   nyasar di komentar ABAP, blok `LOOP`/`IF`/`CASE` yang tidak berpasangan, dan
+   tag HTML utuh di komentar. **Bukan** pengganti syntax check ABAP — hanya SAP
+   yang bisa memutuskan itu.
+
+## Dua hal yang mengikat seluruh aplikasi
+
+**Urutan aktivasi:** class dulu, baru halaman. `ZCL_CS_UTIL` dan `ZCL_CS_PEG`
+harus aktif di SE24 sebelum halaman BSP yang memanggilnya diaktifkan.
+
+**Jaringan SAP tertutup:** tidak ada CDN, font eksternal, atau JS dari domain
+luar yang akan termuat. Semua harus inline — ikon memakai `symbol` SVG di dalam
+berkas.
+
+---
+
+## Halaman
+
+| Berkas | Isi |
+|---|---|
+| `index.htm` | Dashboard Central Storage — stok per bagian, ranking buyer, sales order, feed pergerakan barang realtime |
+| `index2.htm` | Dashboard Production — filter buyer, lintasan produksi 2 center, peta work center, SO/PLO, detail komponen |
+| `monitoring.htm` | Pelacakan material per SO+Item, status komponen BOM berbasis RESB |
+| `routing_map.htm` | Peta perjalanan SO — rantai stasiun, dot map operasi, stok real per stasiun |
+| `diag_routing.htm` | Diagnostik routing Fase 0 (read-only, sekali pakai) |
+| `dash_*.htm` | Endpoint JSON untuk panel-panel `index.htm` |
+| `main.htm` | Flow logic inisialisasi (autentikasi) |
+
+Status rinci tiap halaman ada di `ZBSP_CS_APP/report/CHECKPOINT.md`.
 
 ## Teknologi
 
-- **Bahasa**: SAP ABAP (BSP Page with Flow Logic)
-- **Frontend**: HTML5, CSS3, Canvas API (chart murni tanpa library eksternal)
-- **Database SAP**: VBAK, VBAP, AFPO, MAST, STPO, MAKT
-- **Plant**: 2000 (Surabaya)
-
-## Struktur File
-
-```
-ZBSP_CS_APP/
-├── Page with Flow Logic/
-│   ├── index.htm         # Dashboard utama — KPI, grafik, tabel
-│   ├── main.htm          # Flow Logic inisialisasi (autentikasi)
-│   └── monitoring.htm    # Halaman monitoring detail & BOM
-└── MIMEs/
-    ├── background.png    # Gambar latar
-    └── logo.png          # Logo aplikasi
-```
-
-## Penggunaan
-
-1. Deploy BSP aplikasi `ZBSP_CS_APP` di sistem SAP.
-2. Akses via URL: `http://<server>:<port>/sap/bc/bsp/sap/zbsp_cs_app/index.htm`
-3. Gunakan tombol periode untuk mengatur rentang data.
-4. Klik bar pada grafik mingguan untuk *drill-down* ke halaman Monitoring.
-5. Pada halaman Monitoring, pilih SO di sidebar, klik item untuk melihat BOM.
+- **Bahasa:** SAP ABAP (BSP Page with Flow Logic) + global class SE24
+- **Frontend:** HTML5, CSS3, JS murni — tanpa library eksternal
+- **Tabel SAP utama:** VBAK, VBAP, AFKO, AFPO, AFVC, AFVV, AFRU, RESB, MSKA,
+  MARD, MAKT, CRHD, CRTX, T001L
+- **Plant:** 1000 (Pembahanan) & 2000 (Produksi, Surabaya)

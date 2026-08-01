@@ -8,7 +8,7 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
         :root {
-            --bg: #F4F5F9;
+            --bg: #ebebeb;
             --surface: #FFFFFF;
             --surface2: #F0F1F5;
             --hover: #E8E9F0;
@@ -773,14 +773,19 @@
                 padding: 14px 16px;
             }
         }
+        .icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; stroke: currentColor; stroke-width: 1.8; }
+        .icon-sm { width: 14px; height: 14px; }
+        .icon-lg { width: 22px; height: 22px; }
+        .icon-inline { vertical-align: -2px; }
     </style>
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
     <div class="container">
         <!-- HEADER -->
         <header class="header">
             <div class="header-left">
-                <div class="header-icon">🏭</div>
+                <div class="header-icon"><i data-lucide="factory" class="icon-lg"></i></div>
                 <div class="header-title">
                     <h1>Central Storage</h1>
                     <div class="header-subtitle">Unit Wood Furniture Assembling · Routing &amp; Confirmation</div>
@@ -796,42 +801,42 @@
         <section class="kpi-grid">
             <div class="kpi">
                 <div class="kpi-header">
-                    <span class="kpi-label">📋 SO Aktif</span>
+                    <span class="kpi-label"><i data-lucide="clipboard-list" class="icon-sm"></i> SO Aktif</span>
                 </div>
                 <div class="kpi-value">5<span class="kpi-unit"></span></div>
                 <div class="kpi-sub">300 komponen</div>
             </div>
             <div class="kpi">
                 <div class="kpi-header">
-                    <span class="kpi-label">📦 Komponen</span>
+                    <span class="kpi-label"><i data-lucide="package" class="icon-sm"></i> Komponen</span>
                 </div>
                 <div class="kpi-value">300<span class="kpi-unit"></span></div>
                 <div class="kpi-sub">1,850 pcs</div>
             </div>
             <div class="kpi">
                 <div class="kpi-header">
-                    <span class="kpi-label">✓ Confirmed</span>
+                    <span class="kpi-label"><i data-lucide="check-circle" class="icon-sm"></i> Confirmed</span>
                 </div>
                 <div class="kpi-value" style="color: var(--green);">47<span class="kpi-unit">%</span></div>
                 <div class="kpi-sub">2,100 / 4,470 op</div>
             </div>
             <div class="kpi">
                 <div class="kpi-header">
-                    <span class="kpi-label">🏭 Work Center</span>
+                    <span class="kpi-label"><i data-lucide="building-2" class="icon-sm"></i> Work Center</span>
                 </div>
                 <div class="kpi-value">52</div>
                 <div class="kpi-sub">30 CNC · 18 EB · 4 Asm</div>
             </div>
             <div class="kpi">
                 <div class="kpi-header">
-                    <span class="kpi-label">⏳ Bergerak</span>
+                    <span class="kpi-label"><i data-lucide="timer" class="icon-sm"></i> Bergerak</span>
                 </div>
                 <div class="kpi-value" style="color: var(--blue);">187<span class="kpi-unit"></span></div>
                 <div class="kpi-sub">113 selesai</div>
             </div>
             <div class="kpi">
                 <div class="kpi-header">
-                    <span class="kpi-label">🚨 Bottleneck</span>
+                    <span class="kpi-label"><i data-lucide="alert-triangle" class="icon-sm"></i> Bottleneck</span>
                 </div>
                 <div class="kpi-value" style="color: var(--red);">WC-25</div>
                 <div class="kpi-sub">18 menunggu</div>
@@ -841,14 +846,14 @@
         <!-- SECTION PIPELINE -->
         <section class="section-pipeline">
             <div class="section-title">
-                <h2>📊 Lintasan Routing — WIP per Section</h2>
+                <h2><i data-lucide="bar-chart-3" class="icon"></i> Lintasan Routing — WIP per Section</h2>
                 <span class="section-meta">menampilkan: Semua SO</span>
             </div>
 
             <div class="section-buttons">
                 <button class="sec-btn active">
                     <div class="sec-btn-header">
-                        <span class="sec-btn-title">⚙️ Machining Center</span>
+                        <span class="sec-btn-title"><i data-lucide="settings" class="icon"></i> Machining Center</span>
                         <span class="sec-btn-wc">8 WC</span>
                     </div>
                     <div class="sec-btn-body">
@@ -869,7 +874,7 @@
 
                 <button class="sec-btn">
                     <div class="sec-btn-header">
-                        <span class="sec-btn-title">📐 Edge Banding</span>
+                        <span class="sec-btn-title"><i data-lucide="ruler" class="icon"></i> Edge Banding</span>
                         <span class="sec-btn-wc">18 WC</span>
                     </div>
                     <div class="sec-btn-body">
@@ -890,7 +895,7 @@
 
                 <button class="sec-btn">
                     <div class="sec-btn-header">
-                        <span class="sec-btn-title">🔧 Assembling</span>
+                        <span class="sec-btn-title"><i data-lucide="wrench" class="icon"></i> Assembling</span>
                         <span class="sec-btn-wc">4 WC</span>
                     </div>
                     <div class="sec-btn-body">
@@ -929,7 +934,7 @@
         <!-- WC HEATMAP -->
         <section class="heatmap-section">
             <div class="heatmap-header">
-                <h2 class="heatmap-title">🗺️ Peta Work Center — Machining Center</h2>
+                <h2 class="heatmap-title"><i data-lucide="map" class="icon"></i> Peta Work Center — Machining Center</h2>
                 <div class="legend">
                     <span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 9.5px; color: var(--faint);">beban:</span>
                     <div class="legend-item">
@@ -987,7 +992,7 @@
         <section class="lower-grid">
             <!-- SO OUTSTANDING -->
             <div class="so-list">
-                <h3 class="so-title">📋 SO Outstanding (SO)</h3>
+                <h3 class="so-title"><i data-lucide="clipboard-list" class="icon"></i> SO Outstanding (SO)</h3>
                 
                 <button class="so-btn active">
                     <div class="so-btn-header">
@@ -1037,11 +1042,11 @@
             <div class="component-detail">
                 <div class="detail-header">
                     <div class="detail-title">
-                        📦 Detail Komponen
+                        <i data-lucide="package" class="icon"></i> Detail Komponen
                         <span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 10px; background-color: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; color: var(--sub);">Semua SO · Machining Center</span>
                     </div>
                     <div class="detail-filter">
-                        <span style="color: var(--faint);">🔍</span>
+                        <span style="color: var(--faint); display: flex;"><i data-lucide="search" class="icon-sm"></i></span>
                         <input type="text" placeholder="cari nama / kode / material">
                     </div>
                 </div>
@@ -1083,7 +1088,7 @@
                                     <span style="color: var(--faint); font-size: 8px;">›</span>
                                     <span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 9px; font-weight: 700; color: var(--text); background: transparent; border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px;">EB</span>
                                 </td>
-                                <td><span class="status-pill done">✓ Selesai</span></td>
+                                <td><span class="status-pill done"><i data-lucide="check-circle" class="icon-sm"></i> Selesai</span></td>
                                 <td style="text-align: right;"><span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 12px; color: var(--green);">100%</span></td>
                             </tr>
                             <tr>
@@ -1103,7 +1108,7 @@
                                     <span style="color: var(--faint); font-size: 8px;">›</span>
                                     <span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 9px; font-weight: 700; color: var(--text); background: transparent; border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px;">EB</span>
                                 </td>
-                                <td><span class="status-pill active">⏳ Dikerjakan</span></td>
+                                <td><span class="status-pill active"><i data-lucide="loader" class="icon-sm"></i> Dikerjakan</span></td>
                                 <td style="text-align: right;"><span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 12px; color: var(--text);">75%</span></td>
                             </tr>
                             <tr>
@@ -1123,7 +1128,7 @@
                                     <span style="color: var(--faint); font-size: 8px;">›</span>
                                     <span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 9px; font-weight: 700; color: var(--faint); background: transparent; border: 1px solid var(--border); border-radius: 4px; padding: 2px 4px;">EB</span>
                                 </td>
-                                <td><span class="status-pill queue">⧖ Antre</span></td>
+                                <td><span class="status-pill queue"><i data-lucide="clock" class="icon-sm"></i> Antre</span></td>
                                 <td style="text-align: right;"><span style="font-family: ui-monospace, 'SF Mono', monospace; font-size: 12px; color: var(--text);">35%</span></td>
                             </tr>
                         </tbody>
@@ -1138,5 +1143,6 @@
             <span>data simulasi · Unit Wood Furniture Assembling</span>
         </footer>
     </div>
+    <script>lucide.createIcons();</script>
 </body>
 </html>
