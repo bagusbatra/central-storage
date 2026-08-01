@@ -51,12 +51,36 @@
 *& angka kita berbasis operasi).
 *&---------------------------------------------------------------------*
 
-" ===== Cakupan real stock — aturan tetap halaman ini =====
-"   SO yang dihitung HANYA yang punya real stock di Central Storage.
-"   Definisi sama dengan dash_cs.htm.
+" ===== Cakupan real stock — KETENTUAN WAJIB halaman ini =====
+"   SO yang dihitung HANYA yang punya real stock di SALAH SATU dari ENAM
+"   storage location berikut (ketetapan user 2026-08-01). Berlaku untuk
+"   SEMUA panel: buyer, komponen, SO, work center.
+"
+"     Machining Center        : 2KCS, 2261, 2262
+"     Edge Banding & Sanding  : 22E2, 22E3, 229K
+"
+"   ⚠️ Sebelumnya halaman ini hanya memfilter 2KCS. Perluasan ini MENAIKKAN
+"      angka kartu KOMPONEN — itu benar, bukan regresi.
+"   ⚠️ lt_stok kini menyimpan LGORT. Panel berikutnya butuh tahu material
+"      ada di SLoc mana, bukan sekadar ada atau tidak — arti tiga warna di
+"      Lintasan Produksi bergantung penuh pada itu.
 CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
-           lc_lgort  TYPE lgort_d    VALUE '2KCS',
            lc_sample TYPE kna1-kunnr VALUE '2000000004'.
+
+" Daftar SLoc dalam cakupan + pemetaannya ke center. Satu-satunya tempat
+" daftar ini hidup — panel lain membacanya dari sini, jangan menyalin.
+TYPES: BEGIN OF ty_sloc,
+         lgort  TYPE lgort_d,
+         center TYPE string,      " 'MC' | 'EBS'
+       END OF ty_sloc.
+DATA: lt_sloc TYPE STANDARD TABLE OF ty_sloc WITH DEFAULT KEY,
+      ls_sloc TYPE ty_sloc.
+lt_sloc = VALUE #( ( lgort = '2KCS' center = 'MC'  )
+                   ( lgort = '2261' center = 'MC'  )
+                   ( lgort = '2262' center = 'MC'  )
+                   ( lgort = '22E2' center = 'EBS' )
+                   ( lgort = '22E3' center = 'EBS' )
+                   ( lgort = '229K' center = 'EBS' ) ).
 
 DATA: lv_user    TYPE string,
       lv_ts_date TYPE string,
@@ -74,25 +98,39 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 *&   nanti dilepas dari dummy — JANGAN bikin SELECT MSKA kedua.
 *&---------------------------------------------------------------------*
 TYPES: BEGIN OF ty_stok,
-         vbeln TYPE mska-vbeln,
-         posnr TYPE mska-posnr,
-         matnr TYPE mska-matnr,
-         qty   TYPE p LENGTH 15 DECIMALS 3,   " SUM KALAB
+         vbeln  TYPE mska-vbeln,
+         posnr  TYPE mska-posnr,
+         matnr  TYPE mska-matnr,
+         lgort  TYPE lgort_d,                  " SLoc tempat stok ini berada
+         center TYPE string,                   " 'MC' | 'EBS' (turunan lgort)
+         qty    TYPE p LENGTH 15 DECIMALS 3,   " SUM KALAB
        END OF ty_stok.
 DATA: lt_stok TYPE STANDARD TABLE OF ty_stok WITH DEFAULT KEY,
       ls_stok TYPE ty_stok.
 
-" --- (1) Ambil real stock 2KCS ---
+" --- (1) Ambil real stock dari ENAM SLoc dalam cakupan ---
+"     Range dibangun dari lt_sloc supaya daftar SLoc hanya hidup di satu
+"     tempat. Menambah/mengurangi SLoc cukup di lt_sloc.
 TYPES: BEGIN OF ty_mska,
          vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
-         matnr TYPE mska-matnr, kalab TYPE mska-kalab,
+         matnr TYPE mska-matnr, lgort TYPE mska-lgort,
+         kalab TYPE mska-kalab,
        END OF ty_mska.
 DATA: lt_mska TYPE STANDARD TABLE OF ty_mska WITH DEFAULT KEY,
       ls_mska TYPE ty_mska.
-SELECT vbeln posnr matnr kalab FROM mska
+
+DATA: lr_lgort TYPE RANGE OF lgort_d,
+      ls_rlgort LIKE LINE OF lr_lgort.
+LOOP AT lt_sloc INTO ls_sloc.
+  CLEAR ls_rlgort.
+  ls_rlgort-sign = 'I'. ls_rlgort-option = 'EQ'. ls_rlgort-low = ls_sloc-lgort.
+  APPEND ls_rlgort TO lr_lgort.
+ENDLOOP.
+
+SELECT vbeln posnr matnr lgort kalab FROM mska
   INTO CORRESPONDING FIELDS OF TABLE lt_mska
   WHERE werks = lc_werks
-    AND lgort = lc_lgort
+    AND lgort IN lr_lgort
     AND sobkz = 'E'
     AND kalab > 0.
 
@@ -124,29 +162,48 @@ LOOP AT lt_mska INTO ls_mska.
   ls_stok-vbeln = ls_mska-vbeln.
   ls_stok-posnr = ls_mska-posnr.
   ls_stok-matnr = ls_mska-matnr.
+  ls_stok-lgort = ls_mska-lgort.
+  READ TABLE lt_sloc INTO ls_sloc WITH KEY lgort = ls_mska-lgort.
+  IF sy-subrc = 0.
+    ls_stok-center = ls_sloc-center.
+  ENDIF.
   ls_stok-qty   = ls_mska-kalab.
+  " COLLECT: kunci = seluruh field non-numerik, jadi satu material yang
+  " tersebar di BEBERAPA SLoc tetap jadi baris TERPISAH per SLoc. Itu yang
+  " diinginkan — posisi barang adalah informasinya, bukan gangguan.
   COLLECT ls_stok INTO lt_stok.
 ENDLOOP.
-SORT lt_stok BY vbeln posnr matnr.
+SORT lt_stok BY vbeln posnr matnr lgort.
 
 " --- (4) Hitung angka KPI ---
 DATA: lv_so_cnt   TYPE i,          " COUNT DISTINCT VBELN
-      lv_komp_cnt TYPE i,          " COUNT baris lt_stok (VBELN+POSNR+MATNR)
+      lv_komp_cnt TYPE i,          " COUNT DISTINCT (VBELN+POSNR+MATNR)
       lv_pcs      TYPE p LENGTH 15 DECIMALS 3,
       lv_pcs_i    TYPE i,
-      lv_prev_so  TYPE mska-vbeln.
+      lv_prev_so  TYPE mska-vbeln,
+      lv_prev_kmp TYPE string,
+      lv_key_kmp  TYPE string.
 FIELD-SYMBOLS <st> TYPE ty_stok.
 
-CLEAR lv_prev_so.
-LOOP AT lt_stok ASSIGNING <st>.       " sudah SORT BY vbeln -> cukup cek ganti
+" ⚠️ lt_stok kini SATU BARIS PER SLoc, jadi satu material yang tersebar di
+"    beberapa SLoc muncul beberapa kali. Definisi "komponen" yang disepakati
+"    tetap COUNT DISTINCT (VBELN+POSNR+MATNR) — karena itu lines( lt_stok )
+"    TIDAK BOLEH dipakai lagi; ia akan menghitung ganda.
+"    lt_stok sudah SORT BY vbeln posnr matnr lgort, jadi cukup deteksi ganti.
+CLEAR: lv_prev_so, lv_prev_kmp.
+LOOP AT lt_stok ASSIGNING <st>.
   IF <st>-vbeln <> lv_prev_so.
     lv_so_cnt  = lv_so_cnt + 1.
     lv_prev_so = <st>-vbeln.
   ENDIF.
+  lv_key_kmp = <st>-vbeln && '/' && <st>-posnr && '/' && <st>-matnr.
+  IF lv_key_kmp <> lv_prev_kmp.
+    lv_komp_cnt = lv_komp_cnt + 1.
+    lv_prev_kmp = lv_key_kmp.
+  ENDIF.
   lv_pcs = lv_pcs + <st>-qty.
 ENDLOOP.
-lv_komp_cnt = lines( lt_stok ).
-lv_pcs_i    = round( val = lv_pcs dec = 0 ).
+lv_pcs_i = round( val = lv_pcs dec = 0 ).
 
 " --- (5) Format ribuan (1850 -> '1.850'); dipakai 3 angka sekaligus ---
 "     ⚠️ lv_pcs menjumlahkan KALAB LINTAS MATERIAL, jadi satuannya campur
