@@ -38,6 +38,8 @@
 *&                  "prod":n,"done":n,"mcq":n,"mcp":n,"ebq":n,"ebp":n,
 *&                  "solist_more":n,"solist":[{so,item,bid,buyer,komp,pcs,cs,mc,eb}],
 *&                  "buyer":[{id,name,pct,komp,so},...],"ms":n}
+*&   part=hist  -> {"ok":1,"mcgone":n,"ebgone":n,"rows":n,"ms":n}
+*&                 butuh part=stock dijalankan lebih dulu
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,"queue":n,
 *&                  "ord":n,"trunc":0|1,"ms":n}
 *&---------------------------------------------------------------------*
@@ -73,11 +75,13 @@ DATA: lv_part  TYPE string,
 
 lv_part  = request->get_form_field( 'part' ).
 lv_fresh = request->get_form_field( 'fresh' ).
-IF lv_part <> 'ops'.
+IF lv_part <> 'ops' AND lv_part <> 'hist'.
   lv_part = 'stock'.
 ENDIF.
 IF lv_part = 'ops'.
   lv_cid = 'DPRODOP'.
+ELSEIF lv_part = 'hist'.
+  lv_cid = 'DPRODHI'.
 ELSE.
   lv_cid = 'DPRODST'.
 ENDIF.
@@ -117,6 +121,128 @@ ENDLOOP.
 
 DATA: lt_soit TYPE tt_soit,
       ls_soit TYPE ty_soit.
+
+*&---------------------------------------------------------------------*
+*& BAGIAN HIST — "sudah lewat" (segmen hijau dua kotak center)
+*&---------------------------------------------------------------------*
+*& MASALAHNYA: barang yang selesai diproses otomatis tidak punya stok lagi
+*& di center itu, jadi saldo stok TIDAK BISA menjawab "pernah lewat".
+*& Jawabannya ada di RIWAYAT PERGERAKAN.
+*&
+*& DEFINISI (ketetapan user 2026-08-01, K3):
+*&   sudah lewat = PERNAH ada penerimaan ke SLoc center itu (MSEG shkzg='S')
+*&                 DAN saldo stoknya di situ SEKARANG nol.
+*& Dengan begitu ketiga warna saling lepas per komponen:
+*&   kuning ada stok di 2KCS · biru ada stok di SLoc center ·
+*&   hijau  pernah masuk tapi stoknya sudah habis
+*& Komponen yang TIDAK PERNAH masuk sebuah center tidak dihitung sama
+*& sekali di bar center itu — persis yang diminta user.
+*&
+*& Basis hitungan: CACAH KOMPONEN, sama dengan seluruh panel lain di
+*& halaman ini, supaya angkanya bisa saling dicocokkan.
+*&
+*& ⚠️ MSEG discope lewat MATNR, bukan KDAUF. MSEG punya indeks di MATNR;
+*&    KDAUF tidak, sehingga menyaring lewat SO akan memicu pemindaian penuh.
+*&    Pola ini disalin dari dash_detail.htm yang sudah terbukti.
+*& ⚠️ TIDAK menjoin MKPF: pertanyaannya "pernah masuk atau tidak", bukan
+*&    "kapan". Tanpa join, query jauh lebih ringan.
+*& ⚠️ bwart 321 dikecualikan — itu pelepasan Quality Inspection (lgort =
+*&    umlgo), bukan perpindahan fisik. Aturan global aplikasi ini.
+IF lv_part = 'hist'.
+
+  TYPES: BEGIN OF ty_kmp2,
+           vbeln TYPE mska-vbeln,
+           posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr,
+           moved TYPE abap_bool,
+           at_cs TYPE abap_bool,
+           at_mc TYPE abap_bool,
+           at_eb TYPE abap_bool,
+           at_sd TYPE abap_bool,
+         END OF ty_kmp2.
+  DATA: lt_kmp2 TYPE STANDARD TABLE OF ty_kmp2 WITH DEFAULT KEY.
+  FIELD-SYMBOLS <k2> TYPE ty_kmp2.
+
+  DATA lv_km_ts TYPE timestamp.
+  IMPORT ts = lv_km_ts km = lt_kmp2 FROM SHARED BUFFER indx(zc) ID 'DPRODKM'.
+  IF sy-subrc <> 0 OR lt_kmp2 IS INITIAL.
+    " Daftar komponen belum ada — part=stock harus dijalankan lebih dulu.
+    " Dijawab jujur, bukan dengan angka nol yang menyesatkan.
+    response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+    %>{"ok":0,"msg":"jalankan part=stock lebih dulu"}<%
+    RETURN.
+  ENDIF.
+
+  " Daftar material unik untuk menyaring MSEG lewat indeks MATNR
+  TYPES: BEGIN OF ty_mat, matnr TYPE mska-matnr, END OF ty_mat.
+  DATA: lt_mat TYPE STANDARD TABLE OF ty_mat WITH DEFAULT KEY, ls_mat TYPE ty_mat.
+  LOOP AT lt_kmp2 ASSIGNING <k2>.
+    ls_mat-matnr = <k2>-matnr.
+    APPEND ls_mat TO lt_mat.
+  ENDLOOP.
+  SORT lt_mat BY matnr.
+  DELETE ADJACENT DUPLICATES FROM lt_mat COMPARING matnr.
+
+  TYPES: BEGIN OF ty_mv,
+           matnr TYPE mseg-matnr,
+           kdauf TYPE mseg-kdauf,
+           kdpos TYPE mseg-kdpos,
+           lgort TYPE mseg-lgort,
+         END OF ty_mv.
+  DATA: lt_mv TYPE STANDARD TABLE OF ty_mv WITH DEFAULT KEY, ls_mv TYPE ty_mv.
+
+  IF lt_mat IS NOT INITIAL.
+    SELECT matnr kdauf kdpos lgort FROM mseg
+      INTO CORRESPONDING FIELDS OF TABLE lt_mv
+      FOR ALL ENTRIES IN lt_mat
+      WHERE matnr = lt_mat-matnr
+        AND werks = lc_werks
+        AND lgort IN lr_lgort
+        AND shkzg = 'S'
+        AND bwart <> '321'.
+  ENDIF.
+
+  " Tandai: komponen ini pernah diterima di MC / di EBS?
+  DATA: lv_hist_mc TYPE i, lv_hist_eb TYPE i.
+  LOOP AT lt_mv INTO ls_mv.
+    IF ls_mv-kdauf IS INITIAL.
+      CONTINUE.               " gerakan tanpa SO -> di luar cakupan halaman
+    ENDIF.
+    READ TABLE lt_kmp2 ASSIGNING <k2>
+      WITH KEY vbeln = ls_mv-kdauf posnr = ls_mv-kdpos matnr = ls_mv-matnr.
+    IF sy-subrc <> 0.
+      CONTINUE.
+    ENDIF.
+    IF ls_mv-lgort = '2261' OR ls_mv-lgort = '2262'.
+      <k2>-moved = abap_true.          " dipakai ulang sbg penanda "pernah di MC"
+    ELSEIF ls_mv-lgort = '22E2' OR ls_mv-lgort = '22E3' OR ls_mv-lgort = '229K'.
+      <k2>-at_sd = abap_true.          " dipakai ulang sbg penanda "pernah di EBS"
+    ENDIF.
+  ENDLOOP.
+
+  " sudah lewat = pernah masuk DAN stok di situ sekarang nol
+  LOOP AT lt_kmp2 ASSIGNING <k2>.
+    IF <k2>-moved = abap_true AND <k2>-at_mc = abap_false.
+      lv_hist_mc = lv_hist_mc + 1.
+    ENDIF.
+    IF <k2>-at_sd = abap_true AND <k2>-at_eb = abap_false.
+      lv_hist_eb = lv_hist_eb + 1.
+    ENDIF.
+  ENDLOOP.
+
+  GET RUN TIME FIELD lv_t1.
+  lv_ms = ( lv_t1 - lv_t0 ) / 1000.
+
+  lv_json = '{"ok":1,"mcgone":' && |{ lv_hist_mc }|
+         && ',"ebgone":'        && |{ lv_hist_eb }|
+         && ',"rows":'          && |{ lines( lt_mv ) }|
+         && ',"ms":'            && |{ lv_ms }| && '}'.
+
+  EXPORT ts = lv_now js = lv_json TO SHARED BUFFER indx(zc) ID lv_cid.
+  response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+  %><%= lv_json %><%
+  RETURN.
+ENDIF.
 
 *&---------------------------------------------------------------------*
 *& BAGIAN STOCK
@@ -217,6 +343,7 @@ IF lv_part = 'stock'.
   " Simpan daftar SO+Item supaya part=ops tidak perlu menembak MSKA lagi.
   EXPORT ts = lv_now si = lt_soit TO SHARED BUFFER indx(zc) ID 'DPRODSI'.
 
+
   " ===================================================================
   " BUYER — daftar + persen kemajuan
   " ===================================================================
@@ -310,6 +437,11 @@ IF lv_part = 'stock'.
       lv_eb_p = lv_eb_p + 1.
     ENDIF.
   ENDLOOP.
+
+  " Simpan daftar komponen + posisinya supaya part=hist tidak perlu menembak
+  " MSKA untuk kedua kalinya. HARUS di sini — lt_kmp baru terisi penuh
+  " setelah loop di atas; menaruhnya lebih awal akan menyimpan tabel kosong.
+  EXPORT ts = lv_now km = lt_kmp TO SHARED BUFFER indx(zc) ID 'DPRODKM'.
 
   " ===== Daftar SO + Item =====
   "   Ketentuan user: tampilkan SEMUA SO dan Item-nya, urutan jangan

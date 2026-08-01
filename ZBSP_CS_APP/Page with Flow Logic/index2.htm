@@ -1206,6 +1206,32 @@ function kpiNum(n) {
     return out;
 }
 
+/* Angka dua kotak center datang dari DUA endpoint: kuning & biru dari
+   part=stock, hijau dari part=hist. Disimpan di sini lalu digambar ulang
+   tiap kali salah satunya tiba, supaya yang datang duluan tidak tertimpa. */
+var CENTER = { mcq: 0, mcp: 0, mcg: null, ebq: 0, ebp: 0, ebg: null };
+
+function drawCenters() {
+    var pairs = [
+        ['mc',  CENTER.mcq, CENTER.mcp, CENTER.mcg, 'antre di 2KCS'],
+        ['ebs', CENTER.ebq, CENTER.ebp, CENTER.ebg, 'antre di 2261/2262']
+    ];
+    for (var i = 0; i < pairs.length; i++) {
+        var p = pairs[i], id = p[0], q = p[1], a = p[2], g = p[3];
+        var tot = q + a + (g || 0);
+        kpiText(id + '-wip-text', kpiNum(a));
+        kpiText(id + '-foot', kpiNum(q) + ' ' + p[4]);
+        /* Selama hist belum tiba, hijau ditulis "menghitung", BUKAN nol.
+           Nol berarti "tidak ada yang lewat"; yang benar "belum dihitung". */
+        kpiText(id + '-done', (g === null)
+            ? 'sudah lewat: menghitung&hellip;'
+            : '&#10003; ' + kpiNum(g) + ' sudah lewat');
+        setBar(id + '-bar-done',  tot ? Math.round((g || 0) * 100 / tot) : 0);
+        setBar(id + '-bar-wip',   tot ? Math.round(a * 100 / tot) : 0);
+        setBar(id + '-bar-queue', tot ? Math.round(q * 100 / tot) : 0);
+    }
+}
+
 function setBar(id, pct) {
     var el = document.getElementById(id);
     if (el) { el.style.width = pct + '%'; }
@@ -1239,22 +1265,9 @@ function loadKpi() {
            keterangan "belum tersedia": barang yang sudah selesai tidak punya
            stok lagi, jadi saldo stok tidak bisa menjawabnya. Mengisinya nol
            akan terbaca "tidak ada yang lewat", padahal "belum dihitung". */
-        var mcTot = (d.mcq || 0) + (d.mcp || 0);
-        var ebTot = (d.ebq || 0) + (d.ebp || 0);
-
-        kpiText('mc-wip-text', kpiNum(d.mcp));
-        kpiText('mc-foot', kpiNum(d.mcq) + ' antre di 2KCS');
-        kpiText('mc-done', 'sudah lewat: belum tersedia');
-        setBar('mc-bar-done', 0);
-        setBar('mc-bar-wip', mcTot ? Math.round(d.mcp * 100 / mcTot) : 0);
-        setBar('mc-bar-queue', mcTot ? Math.round(d.mcq * 100 / mcTot) : 0);
-
-        kpiText('ebs-wip-text', kpiNum(d.ebp));
-        kpiText('ebs-foot', kpiNum(d.ebq) + ' antre di 2261/2262');
-        kpiText('ebs-done', 'sudah lewat: belum tersedia');
-        setBar('ebs-bar-done', 0);
-        setBar('ebs-bar-wip', ebTot ? Math.round(d.ebp * 100 / ebTot) : 0);
-        setBar('ebs-bar-queue', ebTot ? Math.round(d.ebq * 100 / ebTot) : 0);
+        CENTER.mcq = d.mcq || 0; CENTER.mcp = d.mcp || 0;
+        CENTER.ebq = d.ebq || 0; CENTER.ebp = d.ebp || 0;
+        drawCenters();
 
         if (d.buyer && d.buyer.length) {
             BUYERS = d.buyer;
@@ -1266,8 +1279,24 @@ function loadKpi() {
         }
         updateLabels();
         renderSOList();
+
+        kpiGet('dash_prod.htm?part=hist', function (h) {
+            if (!h || !h.ok) {
+                CENTER.mcg = 0; CENTER.ebg = 0;
+                drawCenters();
+                kpiText('mc-done', 'sudah lewat: gagal dimuat');
+                kpiText('ebs-done', 'sudah lewat: gagal dimuat');
+                return;
+            }
+            CENTER.mcg = h.mcgone || 0;
+            CENTER.ebg = h.ebgone || 0;
+            drawCenters();
+        });
     });
 
+    /* hist dipanggil SETELAH stock, karena ia membaca daftar komponen yang
+       baru disiapkan part=stock. Kalau dipanggil bersamaan, hist bisa tiba
+       sebelum daftarnya ada dan membalas "jalankan part=stock lebih dulu". */
     kpiGet('dash_prod.htm?part=ops', function (d) {
         if (!d || !d.ok) {
             kpiText('kpi-conf', '-');
