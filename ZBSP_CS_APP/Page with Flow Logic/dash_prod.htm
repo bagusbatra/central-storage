@@ -212,9 +212,11 @@ IF lv_part = 'stock'.
   " Simpan daftar SO+Item supaya part=ops tidak perlu menembak MSKA lagi.
   EXPORT ts = lv_now si = lt_soit TO SHARED BUFFER indx(zc) ID 'DPRODSI'.
 
-  *&-------------------------------------------------------------------*
-  *& BUYER — daftar + persen kemajuan
-  *&-------------------------------------------------------------------*
+  " ===================================================================
+  " BUYER — daftar + persen kemajuan
+  " ===================================================================
+  "   Memakai komentar " (bukan *&) karena blok ini MENJOROK ke dalam:
+  "   tanda * hanya dianggap komentar bila berada di KOLOM 1.
   " ARTI PERSEN (ketetapan user 2026-08-01, K1):
   "   % = komponen yang SUDAH KELUAR dari 2KCS, dibagi seluruh komponen
   "       buyer itu. Menjawab "seberapa jauh barang buyer ini sudah masuk

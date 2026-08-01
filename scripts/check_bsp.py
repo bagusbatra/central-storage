@@ -25,8 +25,37 @@ import sys
 path = sys.argv[1]
 raw = open(path, encoding='utf-8').read()
 
-# blok ABAP utama = setelah direktif baris 1, sampai %> pertama
+# blok ABAP utama = setelah direktif baris 1, sampai %> pertama.
+# Dipakai HANYA untuk deteksi delimiter nyasar di prolog.
 abap = '\n'.join(raw.split('\n')[1:]).split('%>')[0]
+
+# SELURUH baris yang berada di dalam scriptlet, beserta nomor barisnya.
+#
+# Percobaan sebelumnya memeriksa `abap` saja — dan itu berarti hanya blok
+# PERTAMA. dash_prod.htm menutup scriptlet di tengah (untuk mengirim cache
+# lebih awal), sehingga sebagian besar berkasnya tidak pernah diperiksa dan
+# bug komentar di baris 215 lolos sampai SE80. Sekarang seluruh scriptlet
+# ditelusuri, dengan nomor baris yang sebenarnya.
+abap_lines = []
+_inside = False
+for _idx, _line in enumerate(raw.split('\n'), start=1):
+    _began_inside = _inside
+    _rest = _line
+    while True:
+        if not _inside:
+            _j = _rest.find('<%')
+            if _j < 0:
+                break
+            _inside = True
+            _rest = _rest[_j + 2:]
+        else:
+            _j = _rest.find('%>')
+            if _j < 0:
+                break
+            _inside = False
+            _rest = _rest[_j + 2:]
+    if _began_inside:
+        abap_lines.append((_idx, _line))
 
 # versi tanpa komentar, khusus untuk menghitung tag HTML
 no_comment = re.sub(r'<%--.*?--%>', '', raw, flags=re.S)
@@ -118,17 +147,18 @@ def _is_cmt(t):
 
 _lines = abap.split('\n')
 orphan = []
-for i in range(1, len(_lines) - 1):
-    cur = _lines[i].strip()
+for k in range(1, len(abap_lines) - 1):
+    lineno, txt = abap_lines[k]
+    cur = txt.strip()
     if not cur or _is_cmt(cur):
         continue
-    if not (_is_cmt(_lines[i - 1]) and _is_cmt(_lines[i + 1])):
+    if not (_is_cmt(abap_lines[k - 1][1]) and _is_cmt(abap_lines[k + 1][1])):
         continue
     if '=' in cur or '(' in cur or "'" in cur:
         continue
     if re.split(r'[\s:.]', cur)[0].upper() in KEYWORDS:
         continue
-    orphan.append((i + 2, cur[:60]))
+    orphan.append((lineno, cur[:60]))
 
 if orphan:
     ok = False
@@ -137,5 +167,22 @@ if orphan:
         print('      baris {}: {}'.format(ln, txt))
 else:
     print('OK    komentar ABAP tanpa tanda kutip pembuka: tidak ada')
+
+# Komentar '*' yang TIDAK di kolom 1. ABAP hanya menganggap * sebagai
+# komentar bila berada di kolom pertama; kalau menjorok, ia dibaca sebagai
+# pernyataan dan aktivasi gagal ("statement *&---...--* is invalid").
+# Terjadi 2026-08-01 di dash_prod.htm baris 215.
+indented_star = []
+for lineno, line in abap_lines:
+    if line[:1] in (' ', '\t') and line.lstrip().startswith('*'):
+        indented_star.append((lineno, line.strip()[:50]))
+if indented_star:
+    ok = False
+    print('GAGAL komentar * tidak di kolom 1 (ABAP membacanya sbg pernyataan):')
+    for ln, txt in indented_star:
+        print('      baris {}: {}'.format(ln, txt))
+    print('      (pakai " untuk komentar yang menjorok)')
+else:
+    print('OK    komentar * di kolom 1: ya')
 
 sys.exit(0 if ok else 1)
