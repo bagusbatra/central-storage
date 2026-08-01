@@ -1,7 +1,7 @@
 # Checkpoint Rencana Pengembangan — ZBSP_CS_APP
 
 Ringkasan status setiap jalur pengembangan aplikasi Central Storage.
-Diperbarui: 2026-08-01 (UI index2.htm selesai & aktif; roadmap fase data dibuat)
+Diperbarui: 2026-08-01 (UI index2.htm aktif; roadmap fase data + ketentuan wajib user)
 
 **Aturan folder:** `ZBSP_CS_APP/` adalah cermin objek SAP — apa pun di dalamnya
 ada atau akan ada di sistem. Bahan rujukan yang tidak diaktifkan ada di
@@ -81,10 +81,17 @@ sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti t
 - **Pusat produksi:** 2 center — Machining Center (40 WC) + Edge Banding &
   Sanding (20 WC). Dulu 3 section
 - **Alur:** Storage → Machining → Edge Banding → Storage
-- **Aturan cakupan (masih berlaku, disepakati 2026-07-30):** hanya SO yang
-  punya **real stock** di Central Storage — `MSKA` WERKS 2000 / LGORT 2KCS /
-  SOBKZ='E' / KALAB>0, sample customer `2000000004` dibuang. Free stock MARD
-  tidak ikut. Satu "komponen" = COUNT DISTINCT (VBELN+POSNR+MATNR)
+- **⚠️ ATURAN CAKUPAN DIPERLUAS (ketentuan wajib user, 2026-08-01):** SO yang
+  dihitung adalah yang punya stok di **enam** SLoc: `2KCS`, `2261`, `2262`,
+  `22E2`, `22E3`, `229K` — bukan lagi 2KCS saja. Berlaku untuk buyer,
+  komponen, SO, work center, semuanya. Sample customer `2000000004` tetap
+  dibuang. Satu "komponen" = COUNT DISTINCT (VBELN+POSNR+MATNR)
+- **⚠️ Kode sekarang masih memfilter 2KCS saja.** Tahap 0 roadmap memperluasnya;
+  angka kartu KOMPONEN akan **naik** setelah itu — wajar, bukan regresi
+- **PLO tidak dipakai** (ketentuan wajib user). Keterangan PLO di kartu BUYER
+  dan panel SO harus dihapus; `PLAF` tidak disentuh
+- **Pemetaan center:** Machining Center = `2KCS`/`2261`/`2262`;
+  Edge Banding & Sanding = `22E2`/`22E3`/`229K`
 - **Sudah live:** kartu KOMPONEN, kartu CONFIRMED
 - **Masih dummy:** kartu BUYER / DI PRODUKSI / SELESAI PROD. / BOTTLENECK,
   filter buyer, dua kotak center, peta work center, daftar SO/PLO, tabel
@@ -110,8 +117,13 @@ sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti t
   Cukup aktifkan `index2.htm` saja
 - **Tabel yang dibaca:** MSKA, VBAK, AFKO⨝AFPO, AFVC, AFVV, AFRU
 - 📍 **Fase data punya roadmap sendiri:** `report/ROADMAP-index2-data.md` —
-  7 tahap berurutan, 6 keputusan yang harus diambil saat tahapnya tiba, dan
-  tiga ketidakcocokan prototype vs data nyata yang sudah diketahui di muka
+  ketentuan wajib, arti tiga warna Lintasan Produksi, 8 tahap, dan 6 keputusan
+  terbuka. **Baca itu dulu kalau melanjutkan di sesi baru**
+- 🔴 **Penghambat utama — K3 "warna hijau sudah lewat":** material yang sudah
+  selesai diproses otomatis tidak punya stok lagi, tapi halaman tetap harus
+  bisa menyatakan ia pernah masuk & selesai di center itu. Saldo stok tidak
+  bisa menjawab; jawabannya ada di pergerakan barang (`MSEG`). Memblokir
+  sebagian tahap 3, tahap 6, dan arti kartu SELESAI PROD.
 
 ## 5. Peta Perjalanan SO — 🟡 Sebagian
 
@@ -227,6 +239,17 @@ tidak sahih untuk halaman yang markup-nya dipecah lintas cabang `IF` ABAP
 **False positive yang aman diabaikan:** linter CSS di IDE menandai
 `property value expected` pada baris `style="width:<%= ... %>%"`. Linter tidak
 mengenal tag output BSP; hasil render di server valid.
+
+**Mesin checkpoint yang menganggur.** `ZCL_CS_UTIL` memuat `cp_qty( )`,
+`item_cp_status( )`, dan `dot_stages( )` yang merumuskan pergerakan barang per
+checkpoint dari `MSEG⨝MKPF` (CP1 Diterima 2KCS · CP2 Masuk Machining 2261 ·
+CP3 Keluar Machining 2262 · CP4 Selesai 229K; bwart `321` selalu dikecualikan
+karena itu pelepasan QI, bukan perpindahan fisik). Diperiksa 2026-08-01:
+**tidak ada satu pun halaman yang memanggilnya** — rumusannya matang tapi
+belum pernah terbukti terhadap data nyata. Ini kandidat kuat untuk menjawab
+K3, tapi wajib diverifikasi dulu terhadap SO yang riwayatnya diketahui.
+Empat halaman aktif (`dash_detail`, `dash_feed`, `dash_mrp`, `monitoring`)
+sudah membaca MSEG langsung, jadi pendekatannya sendiri terbukti jalan.
 
 **Urutan aktivasi di SAP:** class dulu, baru halaman. `ZCL_CS_UTIL` dan
 (nanti) `ZCL_CS_PEG` harus aktif di SE24 sebelum halaman BSP yang
