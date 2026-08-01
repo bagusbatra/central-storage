@@ -37,7 +37,10 @@
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
 *&                  "buyer":[{id,name,pct,komp,so},...],"ms":n}
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,"queue":n,
-*&                  "ord":n,"trunc":0|1,"ms":n}
+*&                  "ord":n,"trunc":0|1,"wccnt":n,
+*&                  "wc":[{center,wc,name,q,a,c},...],"ms":n}
+*&   part=comp  -> {"ok":1,"rows":[{matnr,maktx,lgort,qty}, ...]}
+*&                 dipanggil saat baris SO diklik; butuh &so=..&item=..
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
            lc_sample TYPE kna1-kunnr VALUE '2000000004',
@@ -68,7 +71,7 @@ DATA: lv_part  TYPE string,
 
 lv_part  = request->get_form_field( 'part' ).
 lv_fresh = request->get_form_field( 'fresh' ).
-IF lv_part <> 'ops'.
+IF lv_part <> 'ops' AND lv_part <> 'comp'.
   lv_part = 'stock'.
 ENDIF.
 IF lv_part = 'ops'.
@@ -76,6 +79,8 @@ IF lv_part = 'ops'.
 ELSE.
   lv_cid = 'DPRODST'.
 ENDIF.
+
+
 
 GET TIME STAMP FIELD lv_now.
 
@@ -109,6 +114,105 @@ LOOP AT lt_slocs INTO lv_sloc.
   ls_rlgort-low = lv_sloc.
   APPEND ls_rlgort TO lr_lgort.
 ENDLOOP.
+
+*&---------------------------------------------------------------------*
+*& BAGIAN COMP — komponen satu SO+Item (dipanggil saat baris SO diklik)
+*&---------------------------------------------------------------------*
+*& SENGAJA TIDAK di-cache: dipanggil sesuai permintaan, querinya sempit
+*& (satu SO+Item), dan hasilnya harus mengikuti stok terbaru saat diklik.
+*& Juga tidak ikut dua bagian di atas supaya daftar komponen — yang bisa
+*& ribuan baris — tidak pernah dikirim borongan ke browser.
+IF lv_part = 'comp'.
+  DATA: lv_in_so   TYPE string,
+        lv_in_item TYPE string,
+        lv_c_so    TYPE mska-vbeln,
+        lv_c_item  TYPE mska-posnr.
+  lv_in_so   = request->get_form_field( 'so' ).
+  lv_in_item = request->get_form_field( 'item' ).
+
+  IF lv_in_so IS INITIAL.
+    response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+    %>{"ok":0,"msg":"parameter so wajib"}<%
+    RETURN.
+  ENDIF.
+  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+    EXPORTING input = lv_in_so IMPORTING output = lv_c_so.
+  lv_c_item = lv_in_item.
+
+  TYPES: BEGIN OF ty_cmp,
+           matnr TYPE mska-matnr, lgort TYPE mska-lgort,
+           kalab TYPE mska-kalab,
+         END OF ty_cmp.
+  DATA: lt_cmp TYPE STANDARD TABLE OF ty_cmp WITH DEFAULT KEY,
+        ls_cmp TYPE ty_cmp.
+
+  IF lv_c_item IS INITIAL.
+    SELECT matnr lgort kalab FROM mska INTO CORRESPONDING FIELDS OF TABLE lt_cmp
+      WHERE vbeln = lv_c_so AND werks = lc_werks AND lgort IN lr_lgort
+        AND sobkz = 'E' AND kalab > 0.
+  ELSE.
+    SELECT matnr lgort kalab FROM mska INTO CORRESPONDING FIELDS OF TABLE lt_cmp
+      WHERE vbeln = lv_c_so AND posnr = lv_c_item AND werks = lc_werks
+        AND lgort IN lr_lgort AND sobkz = 'E' AND kalab > 0.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_cagg,
+           matnr TYPE mska-matnr, lgort TYPE mska-lgort,
+           qty   TYPE p LENGTH 15 DECIMALS 3,
+         END OF ty_cagg.
+  DATA: lt_cagg TYPE STANDARD TABLE OF ty_cagg WITH DEFAULT KEY,
+        ls_cagg TYPE ty_cagg.
+  LOOP AT lt_cmp INTO ls_cmp.
+    CLEAR ls_cagg.
+    ls_cagg-matnr = ls_cmp-matnr.
+    ls_cagg-lgort = ls_cmp-lgort.
+    ls_cagg-qty   = ls_cmp-kalab.
+    COLLECT ls_cagg INTO lt_cagg.
+  ENDLOOP.
+  SORT lt_cagg BY matnr lgort.
+
+  " Teks material
+  TYPES: BEGIN OF ty_makt, matnr TYPE matnr, maktx TYPE makt-maktx, END OF ty_makt.
+  DATA: lt_makt TYPE STANDARD TABLE OF ty_makt WITH DEFAULT KEY, ls_makt TYPE ty_makt.
+  IF lt_cagg IS NOT INITIAL.
+    SELECT matnr maktx FROM makt INTO TABLE lt_makt
+      FOR ALL ENTRIES IN lt_cagg
+      WHERE matnr = lt_cagg-matnr AND spras = sy-langu.
+    SORT lt_makt BY matnr.
+  ENDIF.
+
+  DATA: lv_rows TYPE string, lv_mtx TYPE string, lv_qi TYPE i,
+        lv_cfirst TYPE abap_bool VALUE abap_true, lv_ccenter TYPE string.
+  FIELD-SYMBOLS <cg> TYPE ty_cagg.
+  LOOP AT lt_cagg ASSIGNING <cg>.
+    CLEAR lv_mtx.
+    READ TABLE lt_makt INTO ls_makt WITH KEY matnr = <cg>-matnr BINARY SEARCH.
+    IF sy-subrc = 0.
+      lv_mtx = ls_makt-maktx.
+    ENDIF.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_mtx WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_mtx WITH '\\"'.
+    CASE <cg>-lgort.
+      WHEN '2KCS' OR '2261' OR '2262'. lv_ccenter = 'MC'.
+      WHEN OTHERS.                     lv_ccenter = 'EBS'.
+    ENDCASE.
+    lv_qi = round( val = <cg>-qty dec = 0 ).
+    IF lv_cfirst = abap_false.
+      lv_rows = lv_rows && ','.
+    ENDIF.
+    lv_cfirst = abap_false.
+    lv_rows = lv_rows
+           && '{"matnr":"' && <cg>-matnr && '"'
+           && ',"maktx":"' && lv_mtx     && '"'
+           && ',"lgort":"' && <cg>-lgort && '"'
+           && ',"center":"' && lv_ccenter && '"'
+           && ',"qty":'    && |{ lv_qi }| && '}'.
+  ENDLOOP.
+  lv_json = '{"ok":1,"rows":[' && lv_rows && ']}'.
+  response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+  %><%= lv_json %><%
+  RETURN.
+ENDIF.
 
 DATA: lt_soit TYPE tt_soit,
       ls_soit TYPE ty_soit.
@@ -235,7 +339,11 @@ IF lv_part = 'stock'.
            vbeln TYPE mska-vbeln,
            posnr TYPE mska-posnr,
            matnr TYPE mska-matnr,
-           moved TYPE abap_bool,
+           moved TYPE abap_bool,   " pernah keluar 2KCS
+           at_cs TYPE abap_bool,   " ada di 2KCS
+           at_mc TYPE abap_bool,   " ada di 2261/2262
+           at_eb TYPE abap_bool,   " ada di 22E2/22E3/229K
+           at_sd TYPE abap_bool,   " ada di 229K (SLoc terakhir)
          END OF ty_kmp.
   DATA: lt_kmp TYPE STANDARD TABLE OF ty_kmp WITH DEFAULT KEY.
   FIELD-SYMBOLS <km> TYPE ty_kmp.
@@ -251,6 +359,50 @@ IF lv_part = 'stock'.
     ENDIF.
     IF <st>-lgort <> '2KCS'.
       <km>-moved = abap_true.
+    ENDIF.
+    CASE <st>-lgort.
+      WHEN '2KCS'.            <km>-at_cs = abap_true.
+      WHEN '2261' OR '2262'.  <km>-at_mc = abap_true.
+      WHEN '22E2' OR '22E3'.  <km>-at_eb = abap_true.
+      WHEN '229K'.            <km>-at_eb = abap_true. <km>-at_sd = abap_true.
+    ENDCASE.
+  ENDLOOP.
+
+  " ===== Rekap posisi: kartu DI PRODUKSI / SELESAI PROD. + dua kotak center
+  "
+  " Arti tiga warna (ketetapan user 2026-08-01):
+  "   Machining Center  kuning = masih di 2KCS
+  "                     biru   = ada di 2261/2262
+  "   Edge Banding&Sand kuning = belum masuk EB/sanding (masih di 2261/2262)
+  "                     biru   = ada di 22E2/22E3/229K
+  "
+  " ⚠️ HIJAU ("sudah lewat") TIDAK DIHITUNG DI SINI dan dikirim -1 sebagai
+  "    penanda "belum tersedia". Barang yang selesai diproses otomatis tidak
+  "    punya stok lagi, jadi saldo stok TIDAK BISA menjawabnya — jawabannya
+  "    ada di riwayat pergerakan (MSEG). Itu keputusan K3 yang belum diambil.
+  "    UI WAJIB menampilkannya sebagai belum tersedia, bukan sebagai nol.
+  DATA: lv_prod   TYPE i,   " DI PRODUKSI: komponen di SLoc proses mana pun
+        lv_done   TYPE i,   " SELESAI PROD (SEMENTARA): komponen di 229K
+        lv_mc_q   TYPE i,   " MC antri
+        lv_mc_p   TYPE i,   " MC diproses
+        lv_eb_q   TYPE i,   " EBS antri
+        lv_eb_p   TYPE i.   " EBS diproses
+  LOOP AT lt_kmp ASSIGNING <km>.
+    IF <km>-at_mc = abap_true OR <km>-at_eb = abap_true.
+      lv_prod = lv_prod + 1.
+    ENDIF.
+    IF <km>-at_sd = abap_true.
+      lv_done = lv_done + 1.
+    ENDIF.
+    IF <km>-at_cs = abap_true.
+      lv_mc_q = lv_mc_q + 1.
+    ENDIF.
+    IF <km>-at_mc = abap_true.
+      lv_mc_p = lv_mc_p + 1.
+      lv_eb_q = lv_eb_q + 1.   " selesai machining = menunggu edge banding
+    ENDIF.
+    IF <km>-at_eb = abap_true.
+      lv_eb_p = lv_eb_p + 1.
     ENDIF.
   ENDLOOP.
 
@@ -358,6 +510,100 @@ IF lv_part = 'stock'.
   lv_buy_cnt   = lines( lt_buy ).
   lv_buy_cnt_c = |{ lv_buy_cnt }|.
 
+  " ===== Daftar SO + Item =====
+  "   Ketentuan user: tampilkan SEMUA SO dan Item-nya, urutan jangan
+  "   berantakan -> diurut SO lalu Item menaik, tegas.
+  "   Dibatasi lc_maxso supaya JSON tidak membengkak; sisanya dihitung dan
+  "   diberitahukan ke UI, tidak dibuang diam-diam.
+  CONSTANTS lc_maxso TYPE i VALUE 500.
+  TYPES: BEGIN OF ty_so,
+           vbeln TYPE mska-vbeln,
+           posnr TYPE mska-posnr,
+           kunnr TYPE kna1-kunnr,
+           bname TYPE kna1-name1,
+           komp  TYPE i,
+           pcs   TYPE p LENGTH 15 DECIMALS 3,
+           at_cs TYPE i,
+           at_mc TYPE i,
+           at_eb TYPE i,
+         END OF ty_so.
+  DATA: lt_solist TYPE STANDARD TABLE OF ty_so WITH DEFAULT KEY.
+  FIELD-SYMBOLS <so> TYPE ty_so.
+
+  LOOP AT lt_kmp ASSIGNING <km>.
+    READ TABLE lt_solist ASSIGNING <so>
+      WITH KEY vbeln = <km>-vbeln posnr = <km>-posnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_solist ASSIGNING <so>.
+      <so>-vbeln = <km>-vbeln.
+      <so>-posnr = <km>-posnr.
+      READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = <km>-vbeln BINARY SEARCH.
+      IF sy-subrc = 0.
+        <so>-kunnr = ls_vbak-kunnr.
+        READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = ls_vbak-kunnr BINARY SEARCH.
+        IF sy-subrc = 0.
+          <so>-bname = ls_kna1-name1.
+        ELSE.
+          <so>-bname = ls_vbak-kunnr.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    <so>-komp = <so>-komp + 1.
+    IF <km>-at_cs = abap_true.
+      <so>-at_cs = <so>-at_cs + 1.
+    ENDIF.
+    IF <km>-at_mc = abap_true.
+      <so>-at_mc = <so>-at_mc + 1.
+    ENDIF.
+    IF <km>-at_eb = abap_true.
+      <so>-at_eb = <so>-at_eb + 1.
+    ENDIF.
+  ENDLOOP.
+
+  " qty per SO+Item dari lt_stok (bukan dari lt_kmp, karena qty ada di stok)
+  LOOP AT lt_stok ASSIGNING <st>.
+    READ TABLE lt_solist ASSIGNING <so>
+      WITH KEY vbeln = <st>-vbeln posnr = <st>-posnr.
+    IF sy-subrc = 0.
+      <so>-pcs = <so>-pcs + <st>-qty.
+    ENDIF.
+  ENDLOOP.
+
+  SORT lt_solist BY vbeln ASCENDING posnr ASCENDING.
+
+  DATA: lv_so_total TYPE i, lv_so_shown TYPE i, lv_so_more TYPE i,
+        lv_solist   TYPE string, lv_sname TYPE string, lv_pcs_so TYPE i.
+  lv_so_total = lines( lt_solist ).
+  lv_first = abap_true.
+  LOOP AT lt_solist ASSIGNING <so>.
+    lv_so_shown = lv_so_shown + 1.
+    IF lv_so_shown > lc_maxso.
+      EXIT.
+    ENDIF.
+    lv_sname = <so>-bname.
+    REPLACE ALL OCCURRENCES OF '' IN lv_sname WITH '\'.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_sname WITH '\"'.
+    lv_pcs_so = round( val = <so>-pcs dec = 0 ).
+    IF lv_first = abap_false.
+      lv_solist = lv_solist && ','.
+    ENDIF.
+    lv_first = abap_false.
+    lv_solist = lv_solist
+             && '{"so":"'    && <so>-vbeln && '"'
+             && ',"item":"'  && <so>-posnr && '"'
+             && ',"bid":"'   && <so>-kunnr && '"'
+             && ',"buyer":"' && lv_sname   && '"'
+             && ',"komp":'   && |{ <so>-komp }|
+             && ',"pcs":'    && |{ lv_pcs_so }|
+             && ',"cs":'     && |{ <so>-at_cs }|
+             && ',"mc":'     && |{ <so>-at_mc }|
+             && ',"eb":'     && |{ <so>-at_eb }| && '}'.
+  ENDLOOP.
+  lv_solist = '[' && lv_solist && ']'.
+  IF lv_so_total > lc_maxso.
+    lv_so_more = lv_so_total - lc_maxso.
+  ENDIF.
+
   GET RUN TIME FIELD lv_t1.
   lv_ms = ( lv_t1 - lv_t0 ) / 1000.
 
@@ -365,7 +611,15 @@ IF lv_part = 'stock'.
          && ',"pcs":'          && |{ lv_pcs_i }|
          && ',"so":'           && |{ lv_so_cnt }|
          && ',"buyers":'       && lv_buy_cnt_c
+         && ',"prod":'         && |{ lv_prod }|
+         && ',"done":'         && |{ lv_done }|
+         && ',"mcq":'          && |{ lv_mc_q }|
+         && ',"mcp":'          && |{ lv_mc_p }|
+         && ',"ebq":'          && |{ lv_eb_q }|
+         && ',"ebp":'          && |{ lv_eb_p }|
+         && ',"solist_more":'  && |{ lv_so_more }|
          && ',"buyer":'        && lv_buyers
+         && ',"solist":'       && lv_solist
          && ',"ms":'           && |{ lv_ms }| && '}'.
 
 *&---------------------------------------------------------------------*
@@ -397,11 +651,12 @@ ELSE.
   IF lt_soit IS NOT INITIAL.
 
     " Order: plant SELALU dipasangkan dgn DISPO (konvensi diag_routing.htm)
-    TYPES: BEGIN OF ty_ord, aufnr TYPE afko-aufnr, aufpl TYPE afko-aufpl, END OF ty_ord.
+    TYPES: BEGIN OF ty_ord, aufnr TYPE afko-aufnr, aufpl TYPE afko-aufpl,
+             dispo TYPE afko-dispo, END OF ty_ord.
     DATA: lt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY, ls_ord TYPE ty_ord.
-    SELECT k~aufnr k~aufpl
+    SELECT k~aufnr k~aufpl k~dispo
       FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr
-      INTO TABLE lt_ord
+      INTO CORRESPONDING FIELDS OF TABLE lt_ord
       FOR ALL ENTRIES IN lt_soit
       WHERE a~kdauf = lt_soit-vbeln
         AND a~kdpos = lt_soit-posnr
@@ -421,10 +676,36 @@ ELSE.
 
     IF lt_ord IS NOT INITIAL.
       TYPES: BEGIN OF ty_op, aufpl TYPE afvc-aufpl, aplzl TYPE afvc-aplzl,
-               vornr TYPE afvc-vornr, END OF ty_op.
+               vornr TYPE afvc-vornr, arbid TYPE afvc-arbid, END OF ty_op.
       DATA: lt_op TYPE STANDARD TABLE OF ty_op WITH DEFAULT KEY, ls_op TYPE ty_op.
-      SELECT aufpl aplzl vornr FROM afvc INTO TABLE lt_op
+      SELECT aufpl aplzl vornr arbid FROM afvc INTO TABLE lt_op
         FOR ALL ENTRIES IN lt_ord WHERE aufpl = lt_ord-aufpl.
+
+      " Master work center — untuk Peta Work Center & tooltip isinya
+      TYPES: BEGIN OF ty_arb, arbid TYPE afvc-arbid, END OF ty_arb.
+      DATA: lt_arb TYPE STANDARD TABLE OF ty_arb WITH DEFAULT KEY, ls_arb TYPE ty_arb.
+      LOOP AT lt_op INTO ls_op.
+        IF ls_op-arbid IS NOT INITIAL.
+          ls_arb-arbid = ls_op-arbid.
+          APPEND ls_arb TO lt_arb.
+        ENDIF.
+      ENDLOOP.
+      SORT lt_arb BY arbid. DELETE ADJACENT DUPLICATES FROM lt_arb COMPARING arbid.
+
+      TYPES: BEGIN OF ty_crhd, objid TYPE crhd-objid, arbpl TYPE crhd-arbpl, END OF ty_crhd.
+      DATA: lt_crhd TYPE STANDARD TABLE OF ty_crhd WITH DEFAULT KEY, ls_crhd TYPE ty_crhd.
+      TYPES: BEGIN OF ty_crtx, objid TYPE crtx-objid, ktext TYPE crtx-ktext, END OF ty_crtx.
+      DATA: lt_crtx TYPE STANDARD TABLE OF ty_crtx WITH DEFAULT KEY, ls_crtx TYPE ty_crtx.
+      IF lt_arb IS NOT INITIAL.
+        " CRHD/CRTX bisa punya >1 baris per objid (time-dependent) -> ambil satu
+        SELECT objid arbpl FROM crhd INTO CORRESPONDING FIELDS OF TABLE lt_crhd
+          FOR ALL ENTRIES IN lt_arb WHERE objty = 'A' AND objid = lt_arb-arbid.
+        SORT lt_crhd BY objid. DELETE ADJACENT DUPLICATES FROM lt_crhd COMPARING objid.
+        SELECT objid ktext FROM crtx INTO CORRESPONDING FIELDS OF TABLE lt_crtx
+          FOR ALL ENTRIES IN lt_arb
+          WHERE objty = 'A' AND objid = lt_arb-arbid AND spras = sy-langu.
+        SORT lt_crtx BY objid. DELETE ADJACENT DUPLICATES FROM lt_crtx COMPARING objid.
+      ENDIF.
 
       TYPES: BEGIN OF ty_vv, aufpl TYPE afvv-aufpl, aplzl TYPE afvv-aplzl,
                mgvrg TYPE afvv-mgvrg, END OF ty_vv.
@@ -464,6 +745,23 @@ ELSE.
       SORT lt_ruagg BY aufnr vornr.
       SORT lt_ord BY aufpl.
 
+      " ===== Peta Work Center =====
+      "   WC dipetakan ke center lewat DISPO order pemiliknya:
+      "     GA1/GA2 -> Machining Center ; EB2 -> Edge Banding & Sanding
+      "   Order Plant 1000 (WM/PN) = Pembahanan, DI LUAR kedua center itu,
+      "   jadi WC-nya tidak masuk peta.
+      TYPES: BEGIN OF ty_wc,
+               center TYPE string,
+               arbpl  TYPE crhd-arbpl,
+               ktext  TYPE crtx-ktext,
+               q      TYPE i,   " antre
+               a      TYPE i,   " dikerjakan
+               c      TYPE i,   " selesai
+             END OF ty_wc.
+      DATA: lt_wc TYPE STANDARD TABLE OF ty_wc WITH DEFAULT KEY.
+      FIELD-SYMBOLS <wc> TYPE ty_wc.
+      DATA: lv_center TYPE string, lv_st TYPE string.
+
       DATA: lv_mgvrg TYPE afvv-mgvrg, lv_aufnr TYPE afko-aufnr.
       LOOP AT lt_op INTO ls_op.
         lv_op_total = lv_op_total + 1.
@@ -486,12 +784,48 @@ ELSE.
         IF ls_ruagg-aueru = 'X'
            OR ( lv_mgvrg > 0 AND ls_ruagg-lmnga >= lv_mgvrg ).
           lv_op_conf = lv_op_conf + 1.
+          lv_st = 'c'.
         ELSEIF ls_ruagg-lmnga > 0.
           lv_op_act = lv_op_act + 1.
+          lv_st = 'a'.
         ELSE.
           lv_op_queue = lv_op_queue + 1.
+          lv_st = 'q'.
         ENDIF.
+
+        " --- rekap per work center ---
+        CLEAR lv_center.
+        CASE ls_ord-dispo.
+          WHEN 'GA1' OR 'GA2'. lv_center = 'MC'.
+          WHEN 'EB2'.          lv_center = 'EBS'.
+        ENDCASE.
+        IF lv_center IS INITIAL OR ls_op-arbid IS INITIAL.
+          CONTINUE.
+        ENDIF.
+        CLEAR ls_crhd.
+        READ TABLE lt_crhd INTO ls_crhd WITH KEY objid = ls_op-arbid BINARY SEARCH.
+        IF ls_crhd-arbpl IS INITIAL.
+          CONTINUE.
+        ENDIF.
+        READ TABLE lt_wc ASSIGNING <wc>
+          WITH KEY center = lv_center arbpl = ls_crhd-arbpl.
+        IF sy-subrc <> 0.
+          APPEND INITIAL LINE TO lt_wc ASSIGNING <wc>.
+          <wc>-center = lv_center.
+          <wc>-arbpl  = ls_crhd-arbpl.
+          READ TABLE lt_crtx INTO ls_crtx WITH KEY objid = ls_op-arbid BINARY SEARCH.
+          IF sy-subrc = 0.
+            <wc>-ktext = ls_crtx-ktext.
+          ENDIF.
+        ENDIF.
+        CASE lv_st.
+          WHEN 'c'. <wc>-c = <wc>-c + 1.
+          WHEN 'a'. <wc>-a = <wc>-a + 1.
+          WHEN OTHERS. <wc>-q = <wc>-q + 1.
+        ENDCASE.
       ENDLOOP.
+
+      SORT lt_wc BY center ASCENDING arbpl ASCENDING.
     ENDIF.
   ENDIF.
 
@@ -502,6 +836,29 @@ ELSE.
   GET RUN TIME FIELD lv_t1.
   lv_ms = ( lv_t1 - lv_t0 ) / 1000.
 
+  " rakit array work center
+  DATA: lv_wcs TYPE string, lv_wtx TYPE string, lv_wfirst TYPE abap_bool VALUE abap_true,
+        lv_wc_cnt TYPE i.
+  FIELD-SYMBOLS <wc2> TYPE ty_wc.
+  LOOP AT lt_wc ASSIGNING <wc2>.
+    lv_wtx = <wc2>-ktext.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_wtx WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_wtx WITH '\\"'.
+    IF lv_wfirst = abap_false.
+      lv_wcs = lv_wcs && ','.
+    ENDIF.
+    lv_wfirst = abap_false.
+    lv_wcs = lv_wcs
+          && '{"center":"' && <wc2>-center && '"'
+          && ',"wc":"'     && <wc2>-arbpl  && '"'
+          && ',"name":"'   && lv_wtx       && '"'
+          && ',"q":'       && |{ <wc2>-q }|
+          && ',"a":'       && |{ <wc2>-a }|
+          && ',"c":'       && |{ <wc2>-c }| && '}'.
+  ENDLOOP.
+  lv_wcs = '[' && lv_wcs && ']'.
+  lv_wc_cnt = lines( lt_wc ).
+
   lv_json = '{"ok":1,"pct":' && |{ lv_pct }|
          && ',"conf":'       && |{ lv_op_conf }|
          && ',"total":'      && |{ lv_op_total }|
@@ -509,6 +866,8 @@ ELSE.
          && ',"queue":'      && |{ lv_op_queue }|
          && ',"ord":'        && |{ lv_ord_cnt }|
          && ',"trunc":'      && |{ lv_trunc }|
+         && ',"wccnt":'      && |{ lv_wc_cnt }|
+         && ',"wc":'         && lv_wcs
          && ',"ms":'         && |{ lv_ms }| && '}'.
 
 ENDIF.
