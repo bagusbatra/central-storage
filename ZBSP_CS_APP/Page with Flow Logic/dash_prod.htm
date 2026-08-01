@@ -1,0 +1,369 @@
+<%@ page language="abap" %><%
+*&---------------------------------------------------------------------*
+*& BSP Page — dash_prod.htm :: endpoint JSON untuk index2.htm
+*&---------------------------------------------------------------------*
+*& DIBUAT 2026-08-01 karena index2.htm menjadi >1 MENIT / timeout setelah
+*& cakupan diperluas ke enam SLoc. Seluruh query dijalankan SINKRON sebelum
+*& satu piksel pun terkirim, jadi browser hanya menunggu.
+*&
+*& Pola ini SUDAH TERBUKTI di aplikasi ini: index.htm dulu ber-TTFB 15 detik
+*& karena sebab yang sama, lalu diselamatkan dengan memindahkan hitungan ke
+*& dash_kpi.htm + dash_cs.htm. Endpoint ini mengikuti pola yang sama persis.
+*&
+*& ===== KENAPA DIPECAH DUA BAGIAN =====
+*& part=stock : MSKA enam SLoc. BERAT (dash_kpi.htm mengukur query MSKA atas
+*&              SLoc yang sama ~15 detik) tapi TERBATAS — besarnya sebanding
+*&              jumlah baris stok.
+*& part=ops   : rantai AFKO -> AFVC -> AFVV -> AFRU. Besarnya sebanding
+*&              JUMLAH ORDER, dan itulah yang meledak setelah cakupan
+*&              diperluas. Dibatasi lc_maxord.
+*&
+*& Dipisah supaya yang satu tidak memblokir yang lain: kartu KOMPONEN muncul
+*& tanpa menunggu CONFIRMED selesai. Kalau digabung, bagian paling lambat
+*& menentukan seluruh halaman.
+*&
+*& ===== CACHE =====
+*& SHARED BUFFER indx(zc), TTL 90 detik, ID terpisah per bagian.
+*& ?fresh=1 memaksa hitung ulang.
+*& ⚠️ AKTIVASI: bila relid 'ZC' ditolak sistem, ganti ke relid valid lain,
+*&    atau ke 'TO/FROM DATABASE indx(zc)'. Sama seperti catatan dash_cs.htm.
+*&
+*& ⚠️ part=stock ikut menyimpan daftar SO+Item ke SHARED BUFFER ID 'DPRODSI'.
+*&    part=ops MEMBACANYA supaya tidak perlu menembak MSKA untuk kedua
+*&    kalinya. Kalau daftar itu belum ada, part=ops menghitungnya sendiri
+*&    (fallback) — lebih lambat, tapi tidak pernah salah.
+*&
+*& Balas JSON:
+*&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"ms":n}
+*&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,"queue":n,
+*&                  "ord":n,"trunc":0|1,"ms":n}
+*&---------------------------------------------------------------------*
+CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
+           lc_sample TYPE kna1-kunnr VALUE '2000000004',
+           lc_ttl    TYPE i          VALUE 90,
+           " Pengaman rantai operasi. diag_routing.htm memakai 500 untuk
+           " sekali-pakai; di sini lebih longgar karena dashboard, tapi TETAP
+           " ada batas — tanpa batas itulah halaman ini sempat timeout.
+           " Bila terpotong, ev trunc=1 dan UI WAJIB memberi tahu bahwa
+           " angkanya tidak lengkap. Jangan menaikkan diam-diam.
+           lc_maxord TYPE i          VALUE 1500.
+
+TYPES: BEGIN OF ty_soit,
+         vbeln TYPE mska-vbeln,
+         posnr TYPE mska-posnr,
+       END OF ty_soit.
+TYPES: tt_soit TYPE STANDARD TABLE OF ty_soit WITH DEFAULT KEY.
+
+DATA: lv_part  TYPE string,
+      lv_fresh TYPE string,
+      lv_json  TYPE string,
+      lv_cid   TYPE char10,
+      lv_now   TYPE timestamp,
+      lv_saved TYPE timestamp,
+      lv_age   TYPE i,
+      lv_t0    TYPE i,
+      lv_t1    TYPE i,
+      lv_ms    TYPE i.
+
+lv_part  = request->get_form_field( 'part' ).
+lv_fresh = request->get_form_field( 'fresh' ).
+IF lv_part <> 'ops'.
+  lv_part = 'stock'.
+ENDIF.
+IF lv_part = 'ops'.
+  lv_cid = 'DPRODOP'.
+ELSE.
+  lv_cid = 'DPRODST'.
+ENDIF.
+
+GET TIME STAMP FIELD lv_now.
+
+" ===== Baca cache =====
+IF lv_fresh IS INITIAL.
+  IMPORT ts = lv_saved js = lv_json FROM SHARED BUFFER indx(zc) ID lv_cid.
+  IF sy-subrc = 0 AND lv_json IS NOT INITIAL.
+    lv_age = cl_abap_tstmp=>subtract( tstmp1 = lv_now tstmp2 = lv_saved ).
+    IF lv_age <= lc_ttl.
+      response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+      %><%= lv_json %><%
+      RETURN.
+    ENDIF.
+  ENDIF.
+ENDIF.
+
+GET RUN TIME FIELD lv_t0.
+
+" ===== Daftar SLoc dalam cakupan (ketentuan wajib W1) =====
+"   Sengaja TIDAK memakai makro DEFINE — makro di dalam kode halaman BSP
+"   (yang menjadi badan method) berisiko ditolak saat aktivasi.
+DATA: lr_lgort  TYPE RANGE OF lgort_d,
+      ls_rlgort LIKE LINE OF lr_lgort,
+      lt_slocs  TYPE STANDARD TABLE OF lgort_d WITH DEFAULT KEY,
+      lv_sloc   TYPE lgort_d.
+lt_slocs = VALUE #( ( '2KCS' ) ( '2261' ) ( '2262' )
+                    ( '22E2' ) ( '22E3' ) ( '229K' ) ).
+ls_rlgort-sign = 'I'.
+ls_rlgort-option = 'EQ'.
+LOOP AT lt_slocs INTO lv_sloc.
+  ls_rlgort-low = lv_sloc.
+  APPEND ls_rlgort TO lr_lgort.
+ENDLOOP.
+
+DATA: lt_soit TYPE tt_soit,
+      ls_soit TYPE ty_soit.
+
+*&---------------------------------------------------------------------*
+*& BAGIAN STOCK
+*&---------------------------------------------------------------------*
+IF lv_part = 'stock'.
+
+  TYPES: BEGIN OF ty_mska,
+           vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr, lgort TYPE mska-lgort,
+           kalab TYPE mska-kalab,
+         END OF ty_mska.
+  DATA: lt_mska TYPE STANDARD TABLE OF ty_mska WITH DEFAULT KEY,
+        ls_mska TYPE ty_mska.
+
+  SELECT vbeln posnr matnr lgort kalab FROM mska
+    INTO CORRESPONDING FIELDS OF TABLE lt_mska
+    WHERE werks = lc_werks
+      AND lgort IN lr_lgort
+      AND sobkz = 'E'
+      AND kalab > 0.
+
+  " Buang sample customer
+  TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
+  DATA: lt_vbak  TYPE STANDARD TABLE OF ty_vbak WITH DEFAULT KEY, ls_vbak TYPE ty_vbak,
+        lt_vbeln TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY.
+  LOOP AT lt_mska INTO ls_mska.
+    APPEND ls_mska-vbeln TO lt_vbeln.
+  ENDLOOP.
+  SORT lt_vbeln. DELETE ADJACENT DUPLICATES FROM lt_vbeln.
+  IF lt_vbeln IS NOT INITIAL.
+    SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
+      FOR ALL ENTRIES IN lt_vbeln
+      WHERE vbeln = lt_vbeln-table_line.
+    SORT lt_vbak BY vbeln.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_stok,
+           vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr, lgort TYPE lgort_d,
+           qty   TYPE p LENGTH 15 DECIMALS 3,
+         END OF ty_stok.
+  DATA: lt_stok TYPE STANDARD TABLE OF ty_stok WITH DEFAULT KEY,
+        ls_stok TYPE ty_stok.
+
+  LOOP AT lt_mska INTO ls_mska.
+    READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
+    IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
+      CONTINUE.
+    ENDIF.
+    CLEAR ls_stok.
+    ls_stok-vbeln = ls_mska-vbeln.
+    ls_stok-posnr = ls_mska-posnr.
+    ls_stok-matnr = ls_mska-matnr.
+    ls_stok-lgort = ls_mska-lgort.
+    ls_stok-qty   = ls_mska-kalab.
+    COLLECT ls_stok INTO lt_stok.
+  ENDLOOP.
+  SORT lt_stok BY vbeln posnr matnr lgort.
+
+  " Hitung: SO distinct, komponen distinct (vbeln+posnr+matnr), total pcs.
+  " lt_stok satu baris per SLoc -> komponen HARUS dihitung dgn deteksi ganti
+  " kunci, bukan lines( ), supaya material lintas SLoc tidak ganda.
+  DATA: lv_so_cnt   TYPE i,
+        lv_komp_cnt TYPE i,
+        lv_pcs      TYPE p LENGTH 15 DECIMALS 3,
+        lv_pcs_i    TYPE i,
+        lv_prev_so  TYPE mska-vbeln,
+        lv_prev_kmp TYPE string,
+        lv_key_kmp  TYPE string.
+  FIELD-SYMBOLS <st> TYPE ty_stok.
+
+  CLEAR: lv_prev_so, lv_prev_kmp.
+  LOOP AT lt_stok ASSIGNING <st>.
+    IF <st>-vbeln <> lv_prev_so.
+      lv_so_cnt = lv_so_cnt + 1.
+      lv_prev_so = <st>-vbeln.
+      CLEAR ls_soit.
+      ls_soit-vbeln = <st>-vbeln.
+      ls_soit-posnr = <st>-posnr.
+      APPEND ls_soit TO lt_soit.
+    ELSE.
+      ls_soit-vbeln = <st>-vbeln.
+      ls_soit-posnr = <st>-posnr.
+      APPEND ls_soit TO lt_soit.
+    ENDIF.
+    lv_key_kmp = <st>-vbeln && '/' && <st>-posnr && '/' && <st>-matnr.
+    IF lv_key_kmp <> lv_prev_kmp.
+      lv_komp_cnt = lv_komp_cnt + 1.
+      lv_prev_kmp = lv_key_kmp.
+    ENDIF.
+    lv_pcs = lv_pcs + <st>-qty.
+  ENDLOOP.
+  lv_pcs_i = round( val = lv_pcs dec = 0 ).
+
+  SORT lt_soit BY vbeln posnr.
+  DELETE ADJACENT DUPLICATES FROM lt_soit COMPARING vbeln posnr.
+
+  " Simpan daftar SO+Item supaya part=ops tidak perlu menembak MSKA lagi.
+  EXPORT ts = lv_now si = lt_soit TO SHARED BUFFER indx(zc) ID 'DPRODSI'.
+
+  GET RUN TIME FIELD lv_t1.
+  lv_ms = ( lv_t1 - lv_t0 ) / 1000.
+
+  lv_json = '{"ok":1,"komp":'  && |{ lv_komp_cnt }|
+         && ',"pcs":'          && |{ lv_pcs_i }|
+         && ',"so":'           && |{ lv_so_cnt }|
+         && ',"ms":'           && |{ lv_ms }| && '}'.
+
+*&---------------------------------------------------------------------*
+*& BAGIAN OPS
+*&---------------------------------------------------------------------*
+ELSE.
+
+  " Ambil daftar SO+Item dari cache part=stock. Fallback: hitung sendiri.
+  DATA: lv_si_ts TYPE timestamp.
+  IMPORT ts = lv_si_ts si = lt_soit FROM SHARED BUFFER indx(zc) ID 'DPRODSI'.
+  IF sy-subrc <> 0 OR lt_soit IS INITIAL.
+    TYPES: BEGIN OF ty_m2, vbeln TYPE mska-vbeln, posnr TYPE mska-posnr, END OF ty_m2.
+    DATA: lt_m2 TYPE STANDARD TABLE OF ty_m2 WITH DEFAULT KEY, ls_m2 TYPE ty_m2.
+    SELECT vbeln posnr FROM mska INTO CORRESPONDING FIELDS OF TABLE lt_m2
+      WHERE werks = lc_werks AND lgort IN lr_lgort AND sobkz = 'E' AND kalab > 0.
+    LOOP AT lt_m2 INTO ls_m2.
+      CLEAR ls_soit.
+      ls_soit-vbeln = ls_m2-vbeln. ls_soit-posnr = ls_m2-posnr.
+      APPEND ls_soit TO lt_soit.
+    ENDLOOP.
+    SORT lt_soit BY vbeln posnr.
+    DELETE ADJACENT DUPLICATES FROM lt_soit COMPARING vbeln posnr.
+  ENDIF.
+
+  DATA: lv_op_total TYPE i, lv_op_conf TYPE i, lv_op_act TYPE i,
+        lv_op_queue TYPE i, lv_pct TYPE i, lv_ord_cnt TYPE i,
+        lv_trunc TYPE i, lv_cut TYPE i.
+
+  IF lt_soit IS NOT INITIAL.
+
+    " Order: plant SELALU dipasangkan dgn DISPO (konvensi diag_routing.htm)
+    TYPES: BEGIN OF ty_ord, aufnr TYPE afko-aufnr, aufpl TYPE afko-aufpl, END OF ty_ord.
+    DATA: lt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY, ls_ord TYPE ty_ord.
+    SELECT k~aufnr k~aufpl
+      FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr
+      INTO TABLE lt_ord
+      FOR ALL ENTRIES IN lt_soit
+      WHERE a~kdauf = lt_soit-vbeln
+        AND a~kdpos = lt_soit-posnr
+        AND (    ( a~pwerk = '1000' AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' ) )
+              OR ( a~pwerk = '2000' AND k~dispo IN ( 'GA1', 'GA2', 'EB2' ) ) )
+        AND k~aufpl <> '0000000000'.
+    SORT lt_ord BY aufpl.
+    DELETE ADJACENT DUPLICATES FROM lt_ord COMPARING aufpl.
+    lv_ord_cnt = lines( lt_ord ).
+
+    " PENGAMAN: tanpa batas ini halaman sempat timeout.
+    IF lv_ord_cnt > lc_maxord.
+      lv_cut = lc_maxord + 1.
+      DELETE lt_ord FROM lv_cut.
+      lv_trunc = 1.
+    ENDIF.
+
+    IF lt_ord IS NOT INITIAL.
+      TYPES: BEGIN OF ty_op, aufpl TYPE afvc-aufpl, aplzl TYPE afvc-aplzl,
+               vornr TYPE afvc-vornr, END OF ty_op.
+      DATA: lt_op TYPE STANDARD TABLE OF ty_op WITH DEFAULT KEY, ls_op TYPE ty_op.
+      SELECT aufpl aplzl vornr FROM afvc INTO TABLE lt_op
+        FOR ALL ENTRIES IN lt_ord WHERE aufpl = lt_ord-aufpl.
+
+      TYPES: BEGIN OF ty_vv, aufpl TYPE afvv-aufpl, aplzl TYPE afvv-aplzl,
+               mgvrg TYPE afvv-mgvrg, END OF ty_vv.
+      DATA: lt_vv TYPE STANDARD TABLE OF ty_vv WITH DEFAULT KEY, ls_vv TYPE ty_vv.
+      IF lt_op IS NOT INITIAL.
+        SELECT aufpl aplzl mgvrg FROM afvv INTO TABLE lt_vv
+          FOR ALL ENTRIES IN lt_ord WHERE aufpl = lt_ord-aufpl.
+        SORT lt_vv BY aufpl aplzl.
+      ENDIF.
+
+      TYPES: BEGIN OF ty_ru, aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
+               lmnga TYPE afru-lmnga, stokz TYPE afru-stokz,
+               aueru TYPE afru-aueru, END OF ty_ru.
+      DATA: lt_ru TYPE STANDARD TABLE OF ty_ru WITH DEFAULT KEY, ls_ru TYPE ty_ru.
+      SELECT aufnr vornr lmnga stokz aueru FROM afru INTO TABLE lt_ru
+        FOR ALL ENTRIES IN lt_ord WHERE aufnr = lt_ord-aufnr.
+      DELETE lt_ru WHERE stokz = 'X'.        " dibatalkan -> qty ganda
+
+      TYPES: BEGIN OF ty_ruagg, aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
+               lmnga TYPE p LENGTH 15 DECIMALS 3, aueru TYPE c LENGTH 1,
+             END OF ty_ruagg.
+      DATA: lt_ruagg TYPE STANDARD TABLE OF ty_ruagg WITH DEFAULT KEY,
+            ls_ruagg TYPE ty_ruagg.
+      FIELD-SYMBOLS <ra> TYPE ty_ruagg.
+      LOOP AT lt_ru INTO ls_ru.
+        READ TABLE lt_ruagg ASSIGNING <ra>
+          WITH KEY aufnr = ls_ru-aufnr vornr = ls_ru-vornr.
+        IF sy-subrc <> 0.
+          APPEND INITIAL LINE TO lt_ruagg ASSIGNING <ra>.
+          <ra>-aufnr = ls_ru-aufnr. <ra>-vornr = ls_ru-vornr.
+        ENDIF.
+        <ra>-lmnga = <ra>-lmnga + ls_ru-lmnga.
+        IF ls_ru-aueru = 'X'.
+          <ra>-aueru = 'X'.
+        ENDIF.
+      ENDLOOP.
+      SORT lt_ruagg BY aufnr vornr.
+      SORT lt_ord BY aufpl.
+
+      DATA: lv_mgvrg TYPE afvv-mgvrg, lv_aufnr TYPE afko-aufnr.
+      LOOP AT lt_op INTO ls_op.
+        lv_op_total = lv_op_total + 1.
+
+        READ TABLE lt_ord INTO ls_ord WITH KEY aufpl = ls_op-aufpl BINARY SEARCH.
+        lv_aufnr = ls_ord-aufnr.
+
+        CLEAR lv_mgvrg.
+        READ TABLE lt_vv INTO ls_vv
+          WITH KEY aufpl = ls_op-aufpl aplzl = ls_op-aplzl BINARY SEARCH.
+        IF sy-subrc = 0.
+          lv_mgvrg = ls_vv-mgvrg.
+        ENDIF.
+
+        CLEAR ls_ruagg.
+        READ TABLE lt_ruagg INTO ls_ruagg
+          WITH KEY aufnr = lv_aufnr vornr = ls_op-vornr BINARY SEARCH.
+
+        " RUMUS BAKU — sama dgn diag_routing.htm:355-365 & index2.htm
+        IF ls_ruagg-aueru = 'X'
+           OR ( lv_mgvrg > 0 AND ls_ruagg-lmnga >= lv_mgvrg ).
+          lv_op_conf = lv_op_conf + 1.
+        ELSEIF ls_ruagg-lmnga > 0.
+          lv_op_act = lv_op_act + 1.
+        ELSE.
+          lv_op_queue = lv_op_queue + 1.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+  IF lv_op_total > 0.
+    lv_pct = lv_op_conf * 100 / lv_op_total.
+  ENDIF.
+
+  GET RUN TIME FIELD lv_t1.
+  lv_ms = ( lv_t1 - lv_t0 ) / 1000.
+
+  lv_json = '{"ok":1,"pct":' && |{ lv_pct }|
+         && ',"conf":'       && |{ lv_op_conf }|
+         && ',"total":'      && |{ lv_op_total }|
+         && ',"act":'        && |{ lv_op_act }|
+         && ',"queue":'      && |{ lv_op_queue }|
+         && ',"ord":'        && |{ lv_ord_cnt }|
+         && ',"trunc":'      && |{ lv_trunc }|
+         && ',"ms":'         && |{ lv_ms }| && '}'.
+
+ENDIF.
+
+EXPORT ts = lv_now js = lv_json TO SHARED BUFFER indx(zc) ID lv_cid.
+response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+%><%= lv_json %>

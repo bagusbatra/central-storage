@@ -22,8 +22,7 @@
 *& JANGAN menambahkan link atau script ke domain luar di file ini.
 *&
 *& ===== STATUS DATA =====
-*& LIVE  : kartu KOMPONEN & CONFIRMED (blok "DATA LIVE" di bawah, dibawa
-*&         utuh dari versi sebelumnya — query MSKA & AFRU yang sudah jalan)
+*& LIVE  : kartu KOMPONEN & CONFIRMED — diambil ASINKRON dari dash_prod.htm
 *& DUMMY : kartu BUYER / DI PRODUKSI / SELESAI PROD. / BOTTLENECK, filter
 *&         buyer, dua kotak center, peta work center, daftar SO/PLO, tabel
 *&         Detail Komponen.
@@ -41,14 +40,10 @@
 *&    WAJIB di-escape sebelum masuk string JS — tanda kutip tunggal akan
 *&    mematahkan array-nya.
 *&
-*& CATATAN: blok DATA LIVE ikut menghitung lv_t_so / lv_so_cnt (jumlah SO
-*& ber-real-stock) dan lv_op_act / lv_op_queue (operasi sedang dikerjakan /
-*& antre). Keempatnya BELUM dipakai layout karena kartu yang memakainya di
-*& versi lama sudah tidak ada. Sengaja DIPERTAHANKAN, bukan kode mati:
-*& lv_op_act adalah kandidat langsung untuk kartu "DI PRODUKSI" dan
-*& lv_so_cnt untuk label panel SO/PLO — keduanya menunggu fase data
-*& memastikan definisinya cocok (prototype menghitung berbasis komponen,
-*& angka kita berbasis operasi).
+*& CATATAN: dash_prod.htm juga mengembalikan jumlah SO, operasi aktif, dan
+*& operasi antre. Belum dipakai layout — kandidat langsung untuk kartu
+*& "DI PRODUKSI" dan label panel SO, menunggu fase data memastikan
+*& definisinya cocok.
 *&---------------------------------------------------------------------*
 
 " ===== Cakupan real stock — KETENTUAN WAJIB halaman ini =====
@@ -64,23 +59,8 @@
 "   ⚠️ lt_stok kini menyimpan LGORT. Panel berikutnya butuh tahu material
 "      ada di SLoc mana, bukan sekadar ada atau tidak — arti tiga warna di
 "      Lintasan Produksi bergantung penuh pada itu.
-CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
-           lc_sample TYPE kna1-kunnr VALUE '2000000004'.
-
-" Daftar SLoc dalam cakupan + pemetaannya ke center. Satu-satunya tempat
-" daftar ini hidup — panel lain membacanya dari sini, jangan menyalin.
-TYPES: BEGIN OF ty_sloc,
-         lgort  TYPE lgort_d,
-         center TYPE string,      " 'MC' | 'EBS'
-       END OF ty_sloc.
-DATA: lt_sloc TYPE STANDARD TABLE OF ty_sloc WITH DEFAULT KEY,
-      ls_sloc TYPE ty_sloc.
-lt_sloc = VALUE #( ( lgort = '2KCS' center = 'MC'  )
-                   ( lgort = '2261' center = 'MC'  )
-                   ( lgort = '2262' center = 'MC'  )
-                   ( lgort = '22E2' center = 'EBS' )
-                   ( lgort = '22E3' center = 'EBS' )
-                   ( lgort = '229K' center = 'EBS' ) ).
+ Daftar SLoc kini hidup di dash_prod.htm — di sanalah query dijalankan.
+" Halaman ini tidak lagi menyentuh MSKA sama sekali.
 
 DATA: lv_user    TYPE string,
       lv_ts_date TYPE string,
@@ -91,338 +71,22 @@ lv_ts_date = sy-datum+6(2) && '.' && sy-datum+4(2) && '.' && sy-datum(4).
 lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
 *&---------------------------------------------------------------------*
-*& === DATA LIVE — SO & KOMPONEN BER-REAL-STOCK DI 2KCS ===
-*&   Sumber tunggal utk KPI "SO Aktif" & "Komponen". Tabel hasilnya
-*&   (lt_stok) SENGAJA dibiarkan hidup sampai akhir halaman supaya panel
-*&   lain (SO Outstanding, Detail Komponen) tinggal ikut memakainya saat
-*&   nanti dilepas dari dummy — JANGAN bikin SELECT MSKA kedua.
+*& === DATA: SELURUHNYA LEWAT AJAX ===
 *&---------------------------------------------------------------------*
-TYPES: BEGIN OF ty_stok,
-         vbeln  TYPE mska-vbeln,
-         posnr  TYPE mska-posnr,
-         matnr  TYPE mska-matnr,
-         lgort  TYPE lgort_d,                  " SLoc tempat stok ini berada
-         center TYPE string,                   " 'MC' | 'EBS' (turunan lgort)
-         qty    TYPE p LENGTH 15 DECIMALS 3,   " SUM KALAB
-       END OF ty_stok.
-DATA: lt_stok TYPE STANDARD TABLE OF ty_stok WITH DEFAULT KEY,
-      ls_stok TYPE ty_stok.
-
-" --- (1) Ambil real stock dari ENAM SLoc dalam cakupan ---
-"     Range dibangun dari lt_sloc supaya daftar SLoc hanya hidup di satu
-"     tempat. Menambah/mengurangi SLoc cukup di lt_sloc.
-TYPES: BEGIN OF ty_mska,
-         vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
-         matnr TYPE mska-matnr, lgort TYPE mska-lgort,
-         kalab TYPE mska-kalab,
-       END OF ty_mska.
-DATA: lt_mska TYPE STANDARD TABLE OF ty_mska WITH DEFAULT KEY,
-      ls_mska TYPE ty_mska.
-
-DATA: lr_lgort TYPE RANGE OF lgort_d,
-      ls_rlgort LIKE LINE OF lr_lgort.
-LOOP AT lt_sloc INTO ls_sloc.
-  CLEAR ls_rlgort.
-  ls_rlgort-sign = 'I'. ls_rlgort-option = 'EQ'. ls_rlgort-low = ls_sloc-lgort.
-  APPEND ls_rlgort TO lr_lgort.
-ENDLOOP.
-
-SELECT vbeln posnr matnr lgort kalab FROM mska
-  INTO CORRESPONDING FIELDS OF TABLE lt_mska
-  WHERE werks = lc_werks
-    AND lgort IN lr_lgort
-    AND sobkz = 'E'
-    AND kalab > 0.
-
-" --- (2) Buang sample customer (2000000004) lewat VBAK ---
-TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
-DATA: lt_vbak  TYPE STANDARD TABLE OF ty_vbak WITH DEFAULT KEY, ls_vbak TYPE ty_vbak,
-      lt_vbeln TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY.
-LOOP AT lt_mska INTO ls_mska.
-  APPEND ls_mska-vbeln TO lt_vbeln.
-ENDLOOP.
-SORT lt_vbeln.
-DELETE ADJACENT DUPLICATES FROM lt_vbeln.
-IF lt_vbeln IS NOT INITIAL.
-  SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
-    FOR ALL ENTRIES IN lt_vbeln
-    WHERE vbeln = lt_vbeln-table_line.
-  SORT lt_vbak BY vbeln.
-ENDIF.
-
-" --- (3) Agregasi per (VBELN, POSNR, MATNR) = satuan "komponen" ---
-"     COLLECT menjumlahkan KALAB utk kunci yg sama (beberapa charge/batch
-"     material yg sama di 1 SO+Item menjadi SATU komponen, bukan dua).
-LOOP AT lt_mska INTO ls_mska.
-  READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
-  IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
-    CONTINUE.
-  ENDIF.
-  CLEAR ls_stok.
-  ls_stok-vbeln = ls_mska-vbeln.
-  ls_stok-posnr = ls_mska-posnr.
-  ls_stok-matnr = ls_mska-matnr.
-  ls_stok-lgort = ls_mska-lgort.
-  READ TABLE lt_sloc INTO ls_sloc WITH KEY lgort = ls_mska-lgort.
-  IF sy-subrc = 0.
-    ls_stok-center = ls_sloc-center.
-  ENDIF.
-  ls_stok-qty   = ls_mska-kalab.
-  " COLLECT: kunci = seluruh field non-numerik, jadi satu material yang
-  " tersebar di BEBERAPA SLoc tetap jadi baris TERPISAH per SLoc. Itu yang
-  " diinginkan — posisi barang adalah informasinya, bukan gangguan.
-  COLLECT ls_stok INTO lt_stok.
-ENDLOOP.
-SORT lt_stok BY vbeln posnr matnr lgort.
-
-" --- (4) Hitung angka KPI ---
-DATA: lv_so_cnt   TYPE i,          " COUNT DISTINCT VBELN
-      lv_komp_cnt TYPE i,          " COUNT DISTINCT (VBELN+POSNR+MATNR)
-      lv_pcs      TYPE p LENGTH 15 DECIMALS 3,
-      lv_pcs_i    TYPE i,
-      lv_prev_so  TYPE mska-vbeln,
-      lv_prev_kmp TYPE string,
-      lv_key_kmp  TYPE string.
-FIELD-SYMBOLS <st> TYPE ty_stok.
-
-" ⚠️ lt_stok kini SATU BARIS PER SLoc, jadi satu material yang tersebar di
-"    beberapa SLoc muncul beberapa kali. Definisi "komponen" yang disepakati
-"    tetap COUNT DISTINCT (VBELN+POSNR+MATNR) — karena itu lines( lt_stok )
-"    TIDAK BOLEH dipakai lagi; ia akan menghitung ganda.
-"    lt_stok sudah SORT BY vbeln posnr matnr lgort, jadi cukup deteksi ganti.
-CLEAR: lv_prev_so, lv_prev_kmp.
-LOOP AT lt_stok ASSIGNING <st>.
-  IF <st>-vbeln <> lv_prev_so.
-    lv_so_cnt  = lv_so_cnt + 1.
-    lv_prev_so = <st>-vbeln.
-  ENDIF.
-  lv_key_kmp = <st>-vbeln && '/' && <st>-posnr && '/' && <st>-matnr.
-  IF lv_key_kmp <> lv_prev_kmp.
-    lv_komp_cnt = lv_komp_cnt + 1.
-    lv_prev_kmp = lv_key_kmp.
-  ENDIF.
-  lv_pcs = lv_pcs + <st>-qty.
-ENDLOOP.
-lv_pcs_i = round( val = lv_pcs dec = 0 ).
-
-" --- (5) Format ribuan (1850 -> '1.850'); dipakai 3 angka sekaligus ---
-"     ⚠️ lv_pcs menjumlahkan KALAB LINTAS MATERIAL, jadi satuannya campur
-"     (PC + M2 + dst). Angka ini indikatif, BUKAN kuantitas satu UoM.
-TYPES: BEGIN OF ty_num, key TYPE string, val TYPE i, txt TYPE string, END OF ty_num.
-DATA: lt_num TYPE STANDARD TABLE OF ty_num WITH DEFAULT KEY,
-      ls_num TYPE ty_num.
-DATA: lv_raw TYPE string, lv_fmt TYPE string, lv_len TYPE i, lv_off TYPE i, lv_head TYPE i.
-FIELD-SYMBOLS <n> TYPE ty_num.
-
-ls_num-key = 'SO'.   ls_num-val = lv_so_cnt.   APPEND ls_num TO lt_num.
-ls_num-key = 'KOMP'. ls_num-val = lv_komp_cnt. APPEND ls_num TO lt_num.
-ls_num-key = 'PCS'.  ls_num-val = lv_pcs_i.    APPEND ls_num TO lt_num.
-
-LOOP AT lt_num ASSIGNING <n>.
-  lv_raw  = |{ <n>-val }|.
-  lv_len  = strlen( lv_raw ).
-  lv_head = lv_len MOD 3.
-  IF lv_head = 0.
-    lv_head = 3.
-  ENDIF.
-  lv_fmt = lv_raw(lv_head).
-  lv_off = lv_head.
-  WHILE lv_off < lv_len.
-    lv_fmt = lv_fmt && '.' && lv_raw+lv_off(3).
-    lv_off = lv_off + 3.
-  ENDWHILE.
-  <n>-txt = lv_fmt.
-ENDLOOP.
-
-DATA: lv_t_so TYPE string, lv_t_komp TYPE string, lv_t_pcs TYPE string.
-READ TABLE lt_num INTO ls_num WITH KEY key = 'SO'.   lv_t_so   = ls_num-txt.
-READ TABLE lt_num INTO ls_num WITH KEY key = 'KOMP'. lv_t_komp = ls_num-txt.
-READ TABLE lt_num INTO ls_num WITH KEY key = 'PCS'.  lv_t_pcs  = ls_num-txt.
-
+*& Halaman ini TIDAK menjalankan query berat lagi. Sebelumnya seluruh
+*& rantai MSKA -> VBAK -> AFKO/AFPO -> AFVC -> AFVV -> AFRU dijalankan
+*& SINKRON di sini; setelah cakupan diperluas ke enam SLoc (2026-08-01)
+*& akibatnya halaman menjadi >1 MENIT / timeout.
+*&
+*& Sekarang: HTML keluar SEKETIKA, angka menyusul lewat dash_prod.htm.
+*& Pola yang sama menyelamatkan index.htm dari TTFB 15 detik.
+*&
+*& ⚠️ dash_prod.htm WAJIB ikut diaktifkan di SE80. Tanpa itu, kartu
+*&    KOMPONEN & CONFIRMED akan tetap menampilkan tanda "-".
+*& ⚠️ JANGAN menambahkan SELECT baru di halaman ini. Kalau butuh data,
+*&    tambahkan di dash_prod.htm supaya ikut ter-cache dan tidak
+*&    memblokir tampilan.
 *&---------------------------------------------------------------------*
-*& === DATA LIVE 2 — KPI "CONFIRMED" (konfirmasi per operasi) ===
-*&   DIBUKTIKAN dulu lewat diag_routing.htm bagian C (SO 10446, 2026-07-30):
-*&   AFRU terisi — 74 baris mentah, 0 dibatalkan, 41 operasi ->
-*&   26 confirmed / 5 active / 10 queue. Jadi metrik ini SAH.
-*&
-*&   RUMUS STATUS OPERASI — disalin PERSIS dari diag_routing.htm:355-365.
-*&   JANGAN bikin varian baru di sini; kalau rumus berubah, ubah di KEDUA
-*&   file supaya halaman nyata & halaman diagnosa tidak menyimpang.
-*&       ΣAFRU-LMNGA = 0                          -> queue
-*&       0 < ΣLMNGA < AFVV-MGVRG                  -> active
-*&       ΣLMNGA >= MGVRG  ATAU  AFRU-AUERU = 'X'  -> confirmed
-*&   Baris AFRU STOKZ='X' (dibatalkan) DIBUANG DULU — kalau tidak, qty
-*&   terhitung ganda. AFRU dicocokkan ke operasi lewat AUFNR + VORNR.
-*&
-*&   Confirmed % = COUNT(operasi confirmed) / COUNT(total operasi) x 100
-*&
-*&   SCOPE ORDER: order milik SO+Item yang PUNYA REAL STOCK (lt_stok, lihat
-*&   aturan dasar di header), di-scope MRP controller AFKO-DISPO mengikuti
-*&   konvensi reference/backup-pages/index2.htm + diag_routing.htm:
-*&       Plant 1000 -> WM1/WM2/PN1/PN2   (Pembahanan)
-*&       Plant 2000 -> GA1/GA2/EB2       (Produksi)
-*&   Kedua plant SENGAJA diikutkan: lintasan Wood Furniture memang mulai di
-*&   Pembahanan (Plant 1000) lalu lanjut Produksi (Plant 2000). Kalau nanti
-*&   diputuskan Plant 2000 saja, buang 4 DISPO pertama dari lc_dispo.
-*&
-*&   ⚠️ BEBAN QUERY: diag_routing.htm membatasi 500 order karena AFVC/AFVV/
-*&      AFRU ditembak FOR ALL ENTRIES. Di sini scope-nya SELURUH SO ber-real-
-*&      stock, jadi jumlah order bisa jauh lebih besar. Kalau halaman terasa
-*&      lambat, pindahkan blok ini ke endpoint AJAX + cache seperti
-*&      dash_kpi.htm / dash_cs.htm (SHARED BUFFER, TTL 90 dtk).
-*&---------------------------------------------------------------------*
-DATA: lv_op_total TYPE i,
-      lv_op_conf  TYPE i,
-      lv_op_act   TYPE i,
-      lv_op_queue TYPE i,
-      lv_conf_pct TYPE i.
-
-" --- (1) Himpunan SO+Item ber-real-stock (kunci ke AFPO-KDAUF/KDPOS) ---
-TYPES: BEGIN OF ty_soit, vbeln TYPE afpo-kdauf, posnr TYPE afpo-kdpos, END OF ty_soit.
-DATA: lt_soit TYPE STANDARD TABLE OF ty_soit WITH DEFAULT KEY, ls_soit TYPE ty_soit.
-LOOP AT lt_stok ASSIGNING <st>.
-  ls_soit-vbeln = <st>-vbeln.
-  ls_soit-posnr = <st>-posnr.
-  APPEND ls_soit TO lt_soit.
-ENDLOOP.
-SORT lt_soit BY vbeln posnr.
-DELETE ADJACENT DUPLICATES FROM lt_soit COMPARING vbeln posnr.
-
-IF lt_soit IS NOT INITIAL.
-
-  " --- (2) Order + nomor rute (AUFPL). Order tanpa rute tidak punya operasi ---
-  TYPES: BEGIN OF ty_ord, aufnr TYPE afko-aufnr, aufpl TYPE afko-aufpl, END OF ty_ord.
-  DATA: lt_ord TYPE STANDARD TABLE OF ty_ord WITH DEFAULT KEY, ls_ord TYPE ty_ord.
-  " PLANT DIPASANGKAN dgn DISPO (bukan daftar DISPO datar) — konvensi
-  " diag_routing.htm & reference/backup-pages/index2.htm. Daftar datar bisa menjaring order
-  " Plant 2000 ber-DISPO Pembahanan, dan sebaliknya.
-  SELECT k~aufnr k~aufpl
-    FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr
-    INTO TABLE lt_ord
-    FOR ALL ENTRIES IN lt_soit
-    WHERE a~kdauf = lt_soit-vbeln
-      AND a~kdpos = lt_soit-posnr
-      AND (    ( a~pwerk = '1000' AND k~dispo IN ( 'WM1', 'WM2', 'PN1', 'PN2' ) )
-            OR ( a~pwerk = '2000' AND k~dispo IN ( 'GA1', 'GA2', 'EB2' ) ) )
-      AND k~aufpl <> '0000000000'.
-  SORT lt_ord BY aufpl.
-  DELETE ADJACENT DUPLICATES FROM lt_ord COMPARING aufpl.
-
-  IF lt_ord IS NOT INITIAL.
-
-    " --- (3) Operasi (AFVC) + qty rencana (AFVV) ---
-    TYPES: BEGIN OF ty_op, aufpl TYPE afvc-aufpl, aplzl TYPE afvc-aplzl,
-             vornr TYPE afvc-vornr, END OF ty_op.
-    DATA: lt_op TYPE STANDARD TABLE OF ty_op WITH DEFAULT KEY, ls_op TYPE ty_op.
-    SELECT aufpl aplzl vornr FROM afvc INTO TABLE lt_op
-      FOR ALL ENTRIES IN lt_ord
-      WHERE aufpl = lt_ord-aufpl.
-
-    TYPES: BEGIN OF ty_vv, aufpl TYPE afvv-aufpl, aplzl TYPE afvv-aplzl,
-             mgvrg TYPE afvv-mgvrg, END OF ty_vv.
-    DATA: lt_vv TYPE STANDARD TABLE OF ty_vv WITH DEFAULT KEY, ls_vv TYPE ty_vv.
-    IF lt_op IS NOT INITIAL.
-      SELECT aufpl aplzl mgvrg FROM afvv INTO TABLE lt_vv
-        FOR ALL ENTRIES IN lt_ord
-        WHERE aufpl = lt_ord-aufpl.
-      SORT lt_vv BY aufpl aplzl.
-    ENDIF.
-
-    " --- (4) Konfirmasi (AFRU). Baris dibatalkan DIBUANG lebih dulu ---
-    TYPES: BEGIN OF ty_ru, aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
-             lmnga TYPE afru-lmnga, stokz TYPE afru-stokz,
-             aueru TYPE afru-aueru, END OF ty_ru.
-    DATA: lt_ru TYPE STANDARD TABLE OF ty_ru WITH DEFAULT KEY, ls_ru TYPE ty_ru.
-    SELECT aufnr vornr lmnga stokz aueru FROM afru INTO TABLE lt_ru
-      FOR ALL ENTRIES IN lt_ord
-      WHERE aufnr = lt_ord-aufnr.
-    DELETE lt_ru WHERE stokz = 'X'.
-
-    " Agregasi ΣLMNGA per (AUFNR, VORNR) supaya pencocokan per operasi
-    " tidak perlu menyapu lt_ru berulang kali.
-    TYPES: BEGIN OF ty_ruagg, aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
-             lmnga TYPE p LENGTH 15 DECIMALS 3, aueru TYPE c LENGTH 1,
-           END OF ty_ruagg.
-    DATA: lt_ruagg TYPE STANDARD TABLE OF ty_ruagg WITH DEFAULT KEY,
-          ls_ruagg TYPE ty_ruagg.
-    FIELD-SYMBOLS <ra> TYPE ty_ruagg.
-    LOOP AT lt_ru INTO ls_ru.
-      READ TABLE lt_ruagg ASSIGNING <ra>
-        WITH KEY aufnr = ls_ru-aufnr vornr = ls_ru-vornr.
-      IF sy-subrc <> 0.
-        APPEND INITIAL LINE TO lt_ruagg ASSIGNING <ra>.
-        <ra>-aufnr = ls_ru-aufnr.
-        <ra>-vornr = ls_ru-vornr.
-      ENDIF.
-      <ra>-lmnga = <ra>-lmnga + ls_ru-lmnga.
-      IF ls_ru-aueru = 'X'.
-        <ra>-aueru = 'X'.       " konfirmasi final -> confirmed apa pun qty-nya
-      ENDIF.
-    ENDLOOP.
-    SORT lt_ruagg BY aufnr vornr.
-
-    " --- (5) Tetapkan status tiap operasi & hitung ---
-    DATA: lv_mgvrg TYPE afvv-mgvrg,
-          lv_aufnr TYPE afko-aufnr.
-    LOOP AT lt_op INTO ls_op.
-      lv_op_total = lv_op_total + 1.
-
-      READ TABLE lt_ord INTO ls_ord WITH KEY aufpl = ls_op-aufpl BINARY SEARCH.
-      lv_aufnr = ls_ord-aufnr.
-
-      CLEAR lv_mgvrg.
-      READ TABLE lt_vv INTO ls_vv
-        WITH KEY aufpl = ls_op-aufpl aplzl = ls_op-aplzl BINARY SEARCH.
-      IF sy-subrc = 0.
-        lv_mgvrg = ls_vv-mgvrg.
-      ENDIF.
-
-      CLEAR ls_ruagg.
-      READ TABLE lt_ruagg INTO ls_ruagg
-        WITH KEY aufnr = lv_aufnr vornr = ls_op-vornr BINARY SEARCH.
-
-      IF ls_ruagg-aueru = 'X'
-         OR ( lv_mgvrg > 0 AND ls_ruagg-lmnga >= lv_mgvrg ).
-        lv_op_conf = lv_op_conf + 1.
-      ELSEIF ls_ruagg-lmnga > 0.
-        lv_op_act = lv_op_act + 1.
-      ELSE.
-        lv_op_queue = lv_op_queue + 1.
-      ENDIF.
-    ENDLOOP.
-
-  ENDIF.
-ENDIF.
-
-IF lv_op_total > 0.
-  lv_conf_pct = lv_op_conf * 100 / lv_op_total.
-ENDIF.
-
-" Teks kartu: "26 / 41 op" (dgn pemisah ribuan bila besar)
-DATA: lv_t_conf TYPE string, lv_t_optot TYPE string, lv_t_confsub TYPE string.
-CLEAR lt_num.
-ls_num-key = 'CONF'.  ls_num-val = lv_op_conf.  APPEND ls_num TO lt_num.
-ls_num-key = 'OPTOT'. ls_num-val = lv_op_total. APPEND ls_num TO lt_num.
-LOOP AT lt_num ASSIGNING <n>.
-  lv_raw  = |{ <n>-val }|.
-  lv_len  = strlen( lv_raw ).
-  lv_head = lv_len MOD 3.
-  IF lv_head = 0.
-    lv_head = 3.
-  ENDIF.
-  lv_fmt = lv_raw(lv_head).
-  lv_off = lv_head.
-  WHILE lv_off < lv_len.
-    lv_fmt = lv_fmt && '.' && lv_raw+lv_off(3).
-    lv_off = lv_off + 3.
-  ENDWHILE.
-  <n>-txt = lv_fmt.
-ENDLOOP.
-READ TABLE lt_num INTO ls_num WITH KEY key = 'CONF'.  lv_t_conf   = ls_num-txt.
-READ TABLE lt_num INTO ls_num WITH KEY key = 'OPTOT'. lv_t_optot  = ls_num-txt.
-lv_t_confsub = lv_t_conf && ' / ' && lv_t_optot && ' op'.
-
-*&--- === AKHIR DATA LIVE === -----------------------------------------*
 
 %>
 <html>
@@ -965,13 +629,13 @@ lv_t_confsub = lv_t_conf && ' / ' && lv_t_optot && ' op'.
         </div>
         <div class="card">
             <div class="card-title">KOMPONEN <svg class="ic icon-top-right"><use xlink:href="#fa-cubes"></use></svg></div>
-            <div class="card-value"><%= lv_t_komp %></div>
-            <div class="card-sub"><%= lv_t_pcs %> pcs</div>
+            <div class="card-value" id="kpi-komp">-</div>
+            <div class="card-sub" id="kpi-pcs">memuat&hellip;</div>
         </div>
         <div class="card">
             <div class="card-title">CONFIRMED <svg class="ic icon-top-right"><use xlink:href="#fa-circle-check"></use></svg></div>
-            <div class="card-value color-green"><%= lv_conf_pct %> <span class="unit">%</span></div>
-            <div class="card-sub"><%= lv_t_confsub %></div>
+            <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span></div>
+            <div class="card-sub" id="kpi-conf-sub">memuat&hellip;</div>
         </div>
         <div class="card">
             <div class="card-title">DI PRODUKSI <svg class="ic icon-top-right"><use xlink:href="#fa-gear"></use></svg></div>
@@ -1437,10 +1101,79 @@ function setupEventListeners() {
     };
 }
 
+/* ====================================================================
+   Pengambilan angka dari dash_prod.htm — ASINKRON.
+   Halaman sudah tampil sebelum ini berjalan; kalau endpoint lambat atau
+   gagal, yang terlihat cuma kartu bertanda "-", bukan halaman mati.
+
+   Dua bagian dipanggil TERPISAH supaya yang lambat tidak memblokir yang
+   cepat. part=ops jauh lebih berat dari part=stock.
+   ==================================================================== */
+function kpiGet(url, onOk) {
+    var x = window.XMLHttpRequest ? new XMLHttpRequest()
+                                  : new ActiveXObject('Microsoft.XMLHTTP');
+    x.open('GET', url, true);
+    x.onreadystatechange = function () {
+        if (x.readyState !== 4) { return; }
+        if (x.status === 200) {
+            try { onOk(eval('(' + x.responseText + ')')); return; } catch (e) { }
+        }
+        onOk(null);
+    };
+    x.send();
+}
+
+function kpiText(id, txt) {
+    var el = document.getElementById(id);
+    if (el) { el.innerHTML = txt; }
+}
+
+function kpiNum(n) {
+    /* pemisah ribuan: 1850 -> 1.850 */
+    var s = String(n), out = '', c = 0, i;
+    for (i = s.length - 1; i >= 0; i--) {
+        out = s.charAt(i) + out;
+        if (++c % 3 === 0 && i > 0) { out = '.' + out; }
+    }
+    return out;
+}
+
+function loadKpi() {
+    kpiGet('dash_prod.htm?part=stock', function (d) {
+        if (!d || !d.ok) {
+            kpiText('kpi-komp', '-');
+            kpiText('kpi-pcs', 'gagal memuat');
+            return;
+        }
+        kpiText('kpi-komp', kpiNum(d.komp));
+        kpiText('kpi-pcs', kpiNum(d.pcs) + ' pcs');
+    });
+
+    kpiGet('dash_prod.htm?part=ops', function (d) {
+        if (!d || !d.ok) {
+            kpiText('kpi-conf', '-');
+            kpiText('kpi-conf-sub', 'gagal memuat');
+            return;
+        }
+        kpiText('kpi-conf', d.pct);
+        var sub = kpiNum(d.conf) + ' / ' + kpiNum(d.total) + ' op';
+        /* Kalau hasil dipotong batas order, WAJIB diberitahu — angka yang
+           tidak lengkap tapi tampil meyakinkan lebih berbahaya daripada
+           angka yang jelas ditandai. */
+        if (d.trunc) { sub += ' — TIDAK LENGKAP (dibatasi ' + kpiNum(d.ord) + ' order)'; }
+        kpiText('kpi-conf-sub', sub);
+    });
+}
+
+function boot() {
+    init();
+    loadKpi();
+}
+
 if (window.addEventListener) {
-    window.addEventListener('DOMContentLoaded', init, false);
+    window.addEventListener('DOMContentLoaded', boot, false);
 } else {
-    window.attachEvent('onload', init);
+    window.attachEvent('onload', boot);
 }
 </script>
 </body>
