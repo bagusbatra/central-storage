@@ -29,7 +29,8 @@ CLASS ltc_peg DEFINITION FOR TESTING
              pohon_tiga_tingkat FOR TESTING,
              komponen_dipakai_dua_induk FOR TESTING,
              siklus_dihentikan FOR TESTING,
-             akar_di_satu_item_komponen_di_lain FOR TESTING.
+             akar_di_satu_item_komponen_di_lain FOR TESTING,
+             batas_kedalaman_dihormati FOR TESTING.
 ENDCLASS.
 
 CLASS ltc_peg IMPLEMENTATION.
@@ -255,7 +256,11 @@ CLASS ltc_peg IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD siklus_dihentikan.
-    " A memakan B, B memakan A -> harus berhenti, tidak menggantung
+    " A memakan B, B memakan A -> keduanya "terpakai" sehingga deteksi akar
+    " normal (Langkah 4 assemble) TIDAK menemukan kandidat sama sekali (K3:
+    " pohon tidak boleh kosong diam-diam -> fallback Langkah 5 memperlakukan
+    " SEMUA order pembuat sbg akar, lalu descend( ) yang menghentikan
+    " rekursinya lewat penjaga siklus). Harus berhenti, tidak menggantung.
     DATA: lt_ord TYPE zcl_cs_peg=>tt_ord, lt_res TYPE zcl_cs_peg=>tt_res,
           lt_stk TYPE zcl_cs_peg=>tt_stk, lt_mkt TYPE zcl_cs_peg=>tt_makt,
           lt_nod TYPE zcl_cs_peg=>tt_node.
@@ -272,12 +277,73 @@ CLASS ltc_peg IMPLEMENTATION.
       msg = 'siklus tidak boleh menghasilkan pohon kosong' ).
     cl_abap_unit_assert=>assert_true( xsdbool( lines( lt_nod ) < 30 )
       msg = 'siklus harus berhenti, bukan meledak' ).
-    DATA lv_ada TYPE abap_bool.
-    LOOP AT lt_nod INTO DATA(ls_n) WHERE note CS 'rekursi'.
-      lv_ada = abap_true.
+
+    DATA lv_ada_akar_fallback TYPE abap_bool.
+    DATA lv_ada_rekursi TYPE abap_bool.
+    LOOP AT lt_nod INTO DATA(ls_n).
+      IF ls_n-note = 'akar tidak terdeteksi (kemungkinan siklus)'.
+        lv_ada_akar_fallback = abap_true.
+      ENDIF.
+      IF ls_n-note = 'rekursi dihentikan'.
+        lv_ada_rekursi = abap_true.
+      ENDIF.
     ENDLOOP.
-    cl_abap_unit_assert=>assert_equals( act = lv_ada exp = abap_true
-      msg = 'baris pemutus siklus harus ditandai' ).
+    cl_abap_unit_assert=>assert_equals( act = lv_ada_akar_fallback exp = abap_true
+      msg = 'K3: deteksi akar normal gagal -> semua order pembuat jadi ' &&
+            'akar fallback, ditandai catatannya' ).
+    cl_abap_unit_assert=>assert_equals( act = lv_ada_rekursi exp = abap_true
+      msg = 'penjaga siklus di descend( ) harus benar-benar tereksekusi ' &&
+            'dan memutus rekursinya' ).
+  ENDMETHOD.
+
+  METHOD batas_kedalaman_dihormati.
+    " Rantai lurus A11 <- A10 <- ... <- A0 (12 material, 11 tingkat
+    " turunan) -- lebih dalam dari c_max_depth (10). descend( ) harus
+    " memotongnya di level 10, menandai note 'batas kedalaman', dan TIDAK
+    " pernah membangun simpul level 11 (A0 tidak boleh muncul).
+    DATA: lt_ord TYPE zcl_cs_peg=>tt_ord, lt_res TYPE zcl_cs_peg=>tt_res,
+          lt_stk TYPE zcl_cs_peg=>tt_stk, lt_mkt TYPE zcl_cs_peg=>tt_makt,
+          lt_nod TYPE zcl_cs_peg=>tt_node.
+    DATA: lv_i TYPE i, lv_matnr TYPE string, lv_matnr_child TYPE string,
+          lv_aufnr TYPE string.
+
+    " 12 order: O11 menghasilkan A11, O10 menghasilkan A10, ..., O0 -> A0.
+    DO 12 TIMES.
+      lv_i = 12 - sy-index.               " 11, 10, ..., 0
+      lv_matnr = |A{ lv_i }|.
+      lv_aufnr = |O{ lv_i }|.
+      APPEND ord( iv_aufnr = lv_aufnr iv_matnr = lv_matnr iv_psmng = 1 )
+        TO lt_ord.
+    ENDDO.
+
+    " 11 RESB: O11 memakan A10, O10 memakan A9, ..., O1 memakan A0.
+    DO 11 TIMES.
+      lv_i = 12 - sy-index.                " 11, 10, ..., 1
+      lv_aufnr = |O{ lv_i }|.
+      lv_matnr_child = |A{ lv_i - 1 }|.
+      APPEND res( iv_aufnr = lv_aufnr iv_matnr = lv_matnr_child iv_bdmng = 1 )
+        TO lt_res.
+    ENDDO.
+
+    lt_nod = zcl_cs_peg=>assemble( it_ord = lt_ord it_res = lt_res
+                                   it_stk = lt_stk it_makt = lt_mkt ).
+
+    DATA lv_ada_note TYPE abap_bool.
+    DATA lv_max_lvl TYPE i.
+    LOOP AT lt_nod INTO DATA(ls_n).
+      IF ls_n-level > lv_max_lvl.
+        lv_max_lvl = ls_n-level.
+      ENDIF.
+      IF ls_n-note = 'batas kedalaman'.
+        lv_ada_note = abap_true.
+      ENDIF.
+    ENDLOOP.
+
+    cl_abap_unit_assert=>assert_equals( act = lv_ada_note exp = abap_true
+      msg = 'rantai > c_max_depth tingkat harus dipotong dgn note batas kedalaman' ).
+    cl_abap_unit_assert=>assert_true(
+      xsdbool( lv_max_lvl <= zcl_cs_peg=>c_max_depth )
+      msg = 'level maksimum yang muncul tidak boleh melebihi c_max_depth' ).
   ENDMETHOD.
 
   METHOD akar_di_satu_item_komponen_di_lain.

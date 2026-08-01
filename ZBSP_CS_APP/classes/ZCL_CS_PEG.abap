@@ -173,6 +173,19 @@ CLASS zcl_cs_peg DEFINITION PUBLIC FINAL CREATE PUBLIC.
       CHANGING  ct_node    TYPE tt_node
                 ct_seen    TYPE string_table.
 
+    " Bentuk SATU simpul akar dari lt_prod dan telusuri anak-anaknya lewat
+    " descend( ). Dipakai baik utk akar normal (Langkah 4 assemble) maupun
+    " akar fallback (K3: pohon tidak boleh kosong diam-diam bila siklus
+    " membuat deteksi akar normal tidak menemukan kandidat sama sekali) —
+    " supaya blok pembentukan simpul tidak disalin dua kali.
+    CLASS-METHODS build_root
+      IMPORTING is_prod    TYPE ty_prod
+                it_prod    TYPE tt_prod
+                it_res_agg TYPE tt_res
+                iv_note    TYPE string OPTIONAL
+      CHANGING  ct_node    TYPE tt_node
+                ct_seen    TYPE string_table.
+
 ENDCLASS.
 
 CLASS zcl_cs_peg IMPLEMENTATION.
@@ -302,12 +315,39 @@ CLASS zcl_cs_peg IMPLEMENTATION.
     ENDLOOP.
   ENDMETHOD.
 
+  METHOD build_root.
+    DATA: ls_node TYPE ty_node,
+          lt_path TYPE string_table.
+
+    CLEAR ls_node.
+    ls_node-node_key = is_prod-kdpos && '/' && is_prod-matnr.
+    ls_node-kdpos    = is_prod-kdpos.
+    ls_node-matnr    = is_prod-matnr.
+    ls_node-aufnr    = is_prod-aufnr.
+    ls_node-qty_out  = is_prod-psmng.
+    ls_node-dispo    = is_prod-dispo.
+    ls_node-note     = iv_note.
+    stn_of_order( EXPORTING iv_pwerk = is_prod-pwerk iv_dispo = is_prod-dispo
+                  IMPORTING ev_seq   = ls_node-stn_seq
+                            ev_txt   = ls_node-stn_txt
+                            ev_in_scope = ls_node-in_scope ).
+    APPEND ls_node TO ct_node.
+    APPEND is_prod-matnr TO ct_seen.
+
+    CLEAR lt_path.
+    APPEND is_prod-matnr TO lt_path.
+    descend( EXPORTING is_parent  = ls_node
+                       it_prod    = it_prod
+                       it_res_agg = it_res_agg
+                       it_path    = lt_path
+             CHANGING  ct_node    = ct_node
+                       ct_seen    = ct_seen ).
+  ENDMETHOD.
+
   METHOD assemble.
     DATA: lt_res_agg TYPE tt_res,
           ls_res     TYPE ty_res,
           ls_ord     TYPE ty_ord,
-          ls_node    TYPE ty_node,
-          lt_path    TYPE string_table,
           lt_seen    TYPE string_table.
     FIELD-SYMBOLS <r> TYPE ty_res.
 
@@ -377,36 +417,36 @@ CLASS zcl_cs_peg IMPLEMENTATION.
     DELETE ADJACENT DUPLICATES FROM lt_used COMPARING matnr kdpos.
 
     " --- 4. Akar = order yang materialnya tidak dipakai order lain ---
-    DATA: lv_key TYPE string.
     LOOP AT lt_prod ASSIGNING <p>.
       READ TABLE lt_used TRANSPORTING NO FIELDS
         WITH KEY matnr = <p>-matnr kdpos = <p>-kdpos BINARY SEARCH.
       IF sy-subrc = 0.
         CONTINUE.             " bukan akar, dia dipakai order lain
       ENDIF.
-      CLEAR ls_node.
-      lv_key = <p>-kdpos && '/' && <p>-matnr.
-      ls_node-node_key = lv_key.
-      ls_node-kdpos    = <p>-kdpos.
-      ls_node-matnr    = <p>-matnr.
-      ls_node-aufnr    = <p>-aufnr.
-      ls_node-qty_out  = <p>-psmng.
-      ls_node-dispo    = <p>-dispo.
-      stn_of_order( EXPORTING iv_pwerk = <p>-pwerk iv_dispo = <p>-dispo
-                    IMPORTING ev_seq   = ls_node-stn_seq
-                              ev_txt   = ls_node-stn_txt
-                              ev_in_scope = ls_node-in_scope ).
-      APPEND ls_node TO rt_node.
-      APPEND <p>-matnr TO lt_seen.
-      CLEAR lt_path.
-      APPEND <p>-matnr TO lt_path.
-      descend( EXPORTING is_parent  = ls_node
-                         it_prod    = lt_prod
-                         it_res_agg = lt_res_agg
-                         it_path    = lt_path
-               CHANGING  ct_node    = rt_node
-                         ct_seen    = lt_seen ).
+      build_root( EXPORTING is_prod    = <p>
+                            it_prod    = lt_prod
+                            it_res_agg = lt_res_agg
+                  CHANGING  ct_node    = rt_node
+                            ct_seen    = lt_seen ).
     ENDLOOP.
+
+    " --- 5. K3: pohon tidak boleh kosong diam-diam ---
+    "     Kalau lt_prod tidak kosong tapi Langkah 4 tidak menemukan SATU
+    "     PUN kandidat akar (mis. siklus tertutup A<->B: A "dipakai" B dan
+    "     B "dipakai" A, jadi keduanya tersisih), jangan biarkan rt_node
+    "     kosong tanpa penjelasan. Perlakukan SEMUA order pembuat sbg akar
+    "     fallback; descend( )-lah yang lantas menghentikan rekursinya
+    "     lewat penjaga siklus (note 'rekursi dihentikan').
+    IF rt_node IS INITIAL AND lt_prod IS NOT INITIAL.
+      LOOP AT lt_prod ASSIGNING <p>.
+        build_root( EXPORTING is_prod    = <p>
+                              it_prod    = lt_prod
+                              it_res_agg = lt_res_agg
+                              iv_note    = 'akar tidak terdeteksi (kemungkinan siklus)'
+                    CHANGING  ct_node    = rt_node
+                              ct_seen    = lt_seen ).
+      ENDLOOP.
+    ENDIF.
   ENDMETHOD.
 
   METHOD build.
