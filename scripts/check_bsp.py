@@ -50,13 +50,20 @@ if stray:
 else:
     print('OK    delimiter nyasar di blok ABAP: tidak ada')
 
-# Untuk hitungan kata kunci ABAP: buang baris komentar, dan buang
-# "TO UPPER/LOWER CASE" yang bukan pernyataan CASE.
-code = '\n'.join(
-    l for l in raw.split('\n')
-    if not (l.lstrip().startswith('*&') or l.lstrip().startswith('*')
-            or l.lstrip().startswith('"'))
-)
+# Kata kunci ABAP dihitung HANYA dari isi scriptlet <% ... %>, bukan dari
+# seluruh berkas. Percobaan sebelumnya menghitung dari seluruh berkas lalu
+# membuang komentar ekor ABAP ("..." sampai akhir baris) — dan itu MERUSAK
+# atribut HTML, membuat IF/ENDIF meleset di routing_map.htm & diag_routing.htm.
+# <%-- komentar --%>, <%= ekspresi %>, dan <%@ direktif %> dikecualikan.
+scriptlets = re.findall(r'<%(?![-=@])(.*?)%>', raw, flags=re.S)
+code = '\n'.join(scriptlets)
+# Dalam ABAP: baris diawali * = komentar; " = komentar sampai akhir baris.
+_cl = []
+for l in code.split('\n'):
+    if l.lstrip().startswith('*'):
+        continue
+    _cl.append(re.sub(r'".*$', '', l))
+code = '\n'.join(_cl)
 code = re.sub(r'TO\s+(UPPER|LOWER)\s+CASE', '', code)
 
 chk('<% vs %>',         raw.count('<%'), raw.count('%>'))
@@ -82,5 +89,53 @@ if tags_in_comment:
     print('      (tulis tanpa kurung sudut - mis. "script", bukan tag utuh)')
 else:
     print('OK    tag HTML literal di komentar ABAP: tidak ada')
+
+# Komentar ABAP yang KEHILANGAN tanda kutip pembukanya. Terjadi 2026-08-01
+# (index2.htm baris 62) dan menggagalkan aktivasi dengan pesan menyesatkan:
+# "statement DAFTAR is not expected".
+#
+# Ciri yang dipakai: baris BUKAN komentar tetapi DIAPIT komentar di atas dan
+# di bawahnya, isinya berupa prosa (tanpa '=', '(', tanda kutip), dan kata
+# pertamanya bukan kata kunci ABAP.
+#
+# Percobaan pertama memakai syarat "tidak diakhiri titik" dan itu JUSTRU
+# meleset — baris yang rusak kebetulan berakhir dengan titik. Syarat itu
+# juga menandai baris lanjutan pernyataan multi-baris di routing_map.htm
+# sebagai cacat padahal sehat.
+KEYWORDS = set("""DATA TYPES CONSTANTS FIELD-SYMBOLS CLEAR REFRESH FREE APPEND
+INSERT MODIFY DELETE READ LOOP ENDLOOP SORT COLLECT SELECT ENDSELECT IF ELSE
+ELSEIF ENDIF CASE WHEN ENDCASE DO ENDDO WHILE ENDWHILE CHECK EXIT CONTINUE
+RETURN CALL PERFORM FORM ENDFORM METHOD ENDMETHOD CLASS ENDCLASS MOVE ADD
+SUBTRACT MULTIPLY DIVIDE CONCATENATE SPLIT REPLACE TRANSLATE CONDENSE SHIFT
+DESCRIBE ASSIGN UNASSIGN CREATE RAISE MESSAGE EXPORT IMPORT GET SET COMMIT
+ROLLBACK TRY CATCH ENDTRY WRITE SKIP ULINE FORMAT""".split())
+
+
+def _is_cmt(t):
+    t = t.strip()
+    return t.startswith('*&') or t.startswith('*') or t.startswith('"')
+
+
+_lines = abap.split('\n')
+orphan = []
+for i in range(1, len(_lines) - 1):
+    cur = _lines[i].strip()
+    if not cur or _is_cmt(cur):
+        continue
+    if not (_is_cmt(_lines[i - 1]) and _is_cmt(_lines[i + 1])):
+        continue
+    if '=' in cur or '(' in cur or "'" in cur:
+        continue
+    if re.split(r'[\s:.]', cur)[0].upper() in KEYWORDS:
+        continue
+    orphan.append((i + 2, cur[:60]))
+
+if orphan:
+    ok = False
+    print('GAGAL komentar ABAP tanpa tanda kutip pembuka:')
+    for ln, txt in orphan:
+        print('      baris {}: {}'.format(ln, txt))
+else:
+    print('OK    komentar ABAP tanpa tanda kutip pembuka: tidak ada')
 
 sys.exit(0 if ok else 1)
