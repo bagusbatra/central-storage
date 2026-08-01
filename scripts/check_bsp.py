@@ -156,6 +156,11 @@ for k in range(1, len(abap_lines) - 1):
         continue
     if '=' in cur or '(' in cur or "'" in cur:
         continue
+    # Baris lanjutan deklarasi (DATA:/CONSTANTS:/TYPES: berkoma) sering
+    # terapit komentar dan bukan cacat. Ciri: mengandung ' TYPE ' atau
+    # diakhiri koma.
+    if ' TYPE ' in cur.upper() or cur.endswith(','):
+        continue
     if re.split(r'[\s:.]', cur)[0].upper() in KEYWORDS:
         continue
     orphan.append((lineno, cur[:60]))

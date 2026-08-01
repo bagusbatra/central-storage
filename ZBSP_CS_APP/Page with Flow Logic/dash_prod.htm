@@ -36,6 +36,7 @@
 *& Balas JSON:
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
 *&                  "prod":n,"done":n,"mcq":n,"mcp":n,"ebq":n,"ebp":n,
+*&                  "solist_more":n,"solist":[{so,item,bid,buyer,komp,pcs,cs,mc,eb}],
 *&                  "buyer":[{id,name,pct,komp,so},...],"ms":n}
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,"queue":n,
 *&                  "ord":n,"trunc":0|1,"ms":n}
@@ -48,7 +49,10 @@ CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
            " ada batas — tanpa batas itulah halaman ini sempat timeout.
            " Bila terpotong, ev trunc=1 dan UI WAJIB memberi tahu bahwa
            " angkanya tidak lengkap. Jangan menaikkan diam-diam.
-           lc_maxord TYPE i          VALUE 1500.
+           lc_maxord TYPE i          VALUE 1500,
+           " Batas daftar SO+Item yang dikirim ke browser. Sisanya DIHITUNG
+           " dan diberitahukan lewat solist_more — tidak dibuang diam-diam.
+           lc_maxso  TYPE i          VALUE 500.
 
 TYPES: BEGIN OF ty_soit,
          vbeln TYPE mska-vbeln,
@@ -307,6 +311,52 @@ IF lv_part = 'stock'.
     ENDIF.
   ENDLOOP.
 
+  " ===== Daftar SO + Item =====
+  "   Ketentuan user: tampilkan SEMUA SO dan Item-nya, urutan jangan
+  "   berantakan -> diurut SO lalu Item menaik, tegas.
+  TYPES: BEGIN OF ty_solist,
+           vbeln TYPE mska-vbeln,
+           posnr TYPE mska-posnr,
+           komp  TYPE i,
+           at_cs TYPE i,
+           at_mc TYPE i,
+           at_eb TYPE i,
+           pcs   TYPE p LENGTH 15 DECIMALS 3,
+         END OF ty_solist.
+  DATA: lt_solist TYPE STANDARD TABLE OF ty_solist WITH DEFAULT KEY.
+  FIELD-SYMBOLS <sl> TYPE ty_solist.
+
+  LOOP AT lt_kmp ASSIGNING <km>.
+    READ TABLE lt_solist ASSIGNING <sl>
+      WITH KEY vbeln = <km>-vbeln posnr = <km>-posnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_solist ASSIGNING <sl>.
+      <sl>-vbeln = <km>-vbeln.
+      <sl>-posnr = <km>-posnr.
+    ENDIF.
+    <sl>-komp = <sl>-komp + 1.
+    IF <km>-at_cs = abap_true.
+      <sl>-at_cs = <sl>-at_cs + 1.
+    ENDIF.
+    IF <km>-at_mc = abap_true.
+      <sl>-at_mc = <sl>-at_mc + 1.
+    ENDIF.
+    IF <km>-at_eb = abap_true.
+      <sl>-at_eb = <sl>-at_eb + 1.
+    ENDIF.
+  ENDLOOP.
+
+  " qty diambil dari lt_stok (lt_kmp tidak menyimpan qty)
+  LOOP AT lt_stok ASSIGNING <st>.
+    READ TABLE lt_solist ASSIGNING <sl>
+      WITH KEY vbeln = <st>-vbeln posnr = <st>-posnr.
+    IF sy-subrc = 0.
+      <sl>-pcs = <sl>-pcs + <st>-qty.
+    ENDIF.
+  ENDLOOP.
+
+  SORT lt_solist BY vbeln ASCENDING posnr ASCENDING.
+
   " (b) Nama buyer: VBAK-KUNNR -> KNA1-NAME1 (pola dash_cs.htm)
   TYPES: BEGIN OF ty_kna1, kunnr TYPE kna1-kunnr, name1 TYPE kna1-name1, END OF ty_kna1.
   DATA: lt_kna1  TYPE STANDARD TABLE OF ty_kna1 WITH DEFAULT KEY, ls_kna1 TYPE ty_kna1,
@@ -406,6 +456,50 @@ IF lv_part = 'stock'.
   ENDLOOP.
   lv_buyers = '[' && lv_buyers && ']'.
 
+  " rakit array JSON daftar SO
+  DATA: lv_solist TYPE string, lv_sofirst TYPE abap_bool VALUE abap_true,
+        lv_so_shown TYPE i, lv_so_more TYPE i, lv_pcs_so TYPE i,
+        lv_sbuyer TYPE kna1-name1, lv_sbname TYPE string,
+        lv_skunnr TYPE kna1-kunnr.
+  LOOP AT lt_solist ASSIGNING <sl>.
+    lv_so_shown = lv_so_shown + 1.
+    IF lv_so_shown > lc_maxso.
+      EXIT.
+    ENDIF.
+    CLEAR: lv_skunnr, lv_sbuyer.
+    READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = <sl>-vbeln BINARY SEARCH.
+    IF sy-subrc = 0.
+      lv_skunnr = ls_vbak-kunnr.
+      READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = lv_skunnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        lv_sbuyer = ls_kna1-name1.
+      ELSE.
+        lv_sbuyer = lv_skunnr.
+      ENDIF.
+    ENDIF.
+    lv_sbname = lv_sbuyer.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_sbname WITH ' '.
+    lv_pcs_so = round( val = <sl>-pcs dec = 0 ).
+    IF lv_sofirst = abap_false.
+      lv_solist = lv_solist && ','.
+    ENDIF.
+    lv_sofirst = abap_false.
+    lv_solist = lv_solist
+             && '{"so":"'    && <sl>-vbeln && '"'
+             && ',"item":"'  && <sl>-posnr && '"'
+             && ',"bid":"'   && lv_skunnr  && '"'
+             && ',"buyer":"' && lv_sbname  && '"'
+             && ',"komp":'   && |{ <sl>-komp }|
+             && ',"pcs":'    && |{ lv_pcs_so }|
+             && ',"cs":'     && |{ <sl>-at_cs }|
+             && ',"mc":'     && |{ <sl>-at_mc }|
+             && ',"eb":'     && |{ <sl>-at_eb }| && '}'.
+  ENDLOOP.
+  lv_solist = '[' && lv_solist && ']'.
+  IF lines( lt_solist ) > lc_maxso.
+    lv_so_more = lines( lt_solist ) - lc_maxso.
+  ENDIF.
+
   DATA: lv_buy_cnt   TYPE i,
         lv_buy_cnt_c TYPE string.
   lv_buy_cnt   = lines( lt_buy ).
@@ -424,7 +518,9 @@ IF lv_part = 'stock'.
          && ',"mcp":'         && |{ lv_mc_p }|
          && ',"ebq":'         && |{ lv_eb_q }|
          && ',"ebp":'         && |{ lv_eb_p }|
+         && ',"solist_more":' && |{ lv_so_more }|
          && ',"buyer":'       && lv_buyers
+         && ',"solist":'      && lv_solist
          && ',"ms":'          && |{ lv_ms }| && '}'.
 
 *&---------------------------------------------------------------------*

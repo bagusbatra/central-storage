@@ -801,7 +801,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <section class="so-section">
         <div class="section-title-container">
             <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> Sales Order</h2>
-            <span id="so-buyer-label" class="sub">Semua Buyer</span>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span id="so-buyer-label" class="sub">Semua Buyer</span>
+                <div class="search-box-container" style="width:190px;">
+                    <svg class="ic"><use xlink:href="#fa-magnifying-glass"></use></svg>
+                    <input type="text" placeholder="cari SO / item" id="search-so">
+                </div>
+            </div>
         </div>
 
         <div class="so-list-container" id="so-list-container">
@@ -887,14 +893,8 @@ function buildWC(prefix, count, maxVal) {
 var WORK_CENTERS_MC = buildWC('MC', 40, 12);
 var WORK_CENTERS_EBS = buildWC('EBS', 20, 5);
 
-var SO_DATA = [
-    { id: 'SO-2401', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Wardrobe 3-Pintu - Aurora', pct: 88, compCount: 60, pcsCount: 120, selesai: 51, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['30%', '40%', '18%', '12%'] },
-    { id: 'SO-2402', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Credenza - Aurora', pct: 79, compCount: 50, pcsCount: 97, selesai: 41, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['25%', '35%', '19%', '21%'] },
-    { id: 'SO-2403', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'TV Cabinet - Nordic', pct: 71, compCount: 55, pcsCount: 112, selesai: 37, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['40%', '20%', '11%', '29%'] },
-    { id: 'SO-2404', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'Sideboard - Nordic', pct: 28, compCount: 60, pcsCount: 135, selesai: 6, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['50%', '30%', '5%', '15%'] },
-    { id: 'SO-2405', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Kitchen Upper Set - Lumen', pct: 52, compCount: 62, pcsCount: 129, selesai: 24, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['42%', '30%', '10%', '18%'] },
-    { id: 'SO-2406', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Dresser 6-Laci - Lumen', pct: 18, compCount: 58, pcsCount: 121, selesai: 2, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['20%', '20%', '5%', '55%'] }
-];
+/* Diisi dari dash_prod.htm?part=stock. Kosong sampai data tiba. */
+var SO_DATA = [];
 
 var COMPONENT_DATA = [
     { name: 'Ambalan #8', code: 'SD-2401-C005', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-01', status: 'antri', pos: '0%' },
@@ -919,6 +919,8 @@ var COMPONENT_DATA = [
 var selectedBuyer = null;
 var selectedCenter = 'MC';
 var selectedTab = 'semua';
+var soQuery = '';
+var soMore = 0;
 var searchQuery = '';
 
 /* DOM */
@@ -1041,37 +1043,60 @@ function renderWCLoadGrid() {
 function renderSOList() {
     soListContainer.innerHTML = '';
 
-    var allBar = document.createElement('div');
-    allBar.className = 'so-all-bar';
-    allBar.innerHTML = '<span>SEMUA SO</span> <span class="color-green">46%</span>';
-    soListContainer.appendChild(allBar);
-
+    var q = (soQuery || '').toLowerCase();
+    var shown = 0;
     for (var i = 0; i < SO_DATA.length; i++) {
         var so = SO_DATA[i];
-        if (selectedBuyer && so.buyerId !== selectedBuyer) { continue; }
+        if (selectedBuyer && so.bid !== selectedBuyer) { continue; }
+        if (q && (so.so + ' ' + so.item + ' ' + so.buyer).toLowerCase().indexOf(q) < 0) { continue; }
 
-        var barSegments = '';
-        for (var j = 0; j < so.widths.length; j++) {
-            barSegments += '<div class="so-bar-part" style="width: ' + so.widths[j] +
-                           '; background: ' + so.colors[j] + ';"></div>';
-        }
+        var tot = so.komp || 1;
+        var wCs = Math.round((so.cs || 0) * 100 / tot);
+        var wMc = Math.round((so.mc || 0) * 100 / tot);
+        var wEb = Math.round((so.eb || 0) * 100 / tot);
 
         var item = document.createElement('div');
         item.className = 'so-item-box';
         item.innerHTML =
             '<div class="so-item-header">' +
-                '<div>' + so.id +
-                    '<div class="so-meta">' + icon('fa-user') + ' ' + so.buyerName + '</div>' +
+                '<div>' + so.so +
+                    ' <span style="color:#64748b; font-weight:400;">/ ' + so.item + '</span>' +
+                    '<div class="so-meta">' + icon('fa-user') + ' ' + so.buyer + '</div>' +
                 '</div>' +
-                '<div class="so-pct-val">' + so.pct + '%</div>' +
+                '<div class="so-pct-val" style="font-size:11px; color:#64748b;">' +
+                    so.komp + ' komp</div>' +
             '</div>' +
-            '<div class="so-meta" style="color:#1e293b; font-weight:500;">' + so.desc + '</div>' +
-            '<div class="so-progress-bar">' + barSegments + '</div>' +
+            '<div class="so-progress-bar">' +
+                '<div class="so-bar-part" style="width:' + wCs + '%; background:#f59e0b;"></div>' +
+                '<div class="so-bar-part" style="width:' + wMc + '%; background:#2563eb;"></div>' +
+                '<div class="so-bar-part" style="width:' + wEb + '%; background:#10b981;"></div>' +
+            '</div>' +
             '<div class="so-item-footer">' +
-                '<span>' + so.compCount + ' komp - ' + so.pcsCount + ' pcs</span>' +
-                '<span class="color-green" style="font-weight:600;">' + so.selesai + ' selesai</span>' +
+                '<span>' + so.pcs + ' pcs</span>' +
+                '<span>2KCS ' + (so.cs || 0) + ' &middot; MC ' + (so.mc || 0) +
+                    ' &middot; EBS ' + (so.eb || 0) + '</span>' +
             '</div>';
         soListContainer.appendChild(item);
+        shown++;
+    }
+
+    if (shown === 0) {
+        soListContainer.innerHTML =
+            '<div style="padding:16px; text-align:center; color:var(--text-muted); font-size:11px;">' +
+            'Tidak ada Sales Order yang cocok</div>';
+        return;
+    }
+
+    /* Kalau daftar dipotong batas, katakan terus terang berapa yang tidak
+       dimuat. Daftar yang diam-diam terpotong lebih berbahaya daripada
+       daftar yang mengaku tidak lengkap. */
+    if (soMore > 0) {
+        var note = document.createElement('div');
+        note.style.cssText = 'font-size:10px; color:#92400e; background:#fef3c7;' +
+            'border:1px solid #fde68a; border-radius:4px; padding:5px 8px; margin-top:4px;';
+        note.innerHTML = 'Menampilkan ' + SO_DATA.length + ' SO+Item pertama; ' +
+                         soMore + ' lainnya tidak dimuat.';
+        soListContainer.appendChild(note);
     }
 }
 
@@ -1131,6 +1156,11 @@ function setupEventListeners() {
                 renderComponentTable();
             };
         })(tabs[i]);
+    }
+
+    var soBox = document.getElementById('search-so');
+    if (soBox) {
+        soBox.onkeyup = function () { soQuery = soBox.value || ''; renderSOList(); };
     }
 
     searchComponent.onkeyup = function () {
@@ -1229,8 +1259,13 @@ function loadKpi() {
         if (d.buyer && d.buyer.length) {
             BUYERS = d.buyer;
             renderBuyerFilters();
-            updateLabels();
         }
+        if (d.solist) {
+            SO_DATA = d.solist;
+            soMore = d.solist_more || 0;
+        }
+        updateLabels();
+        renderSOList();
     });
 
     kpiGet('dash_prod.htm?part=ops', function (d) {
