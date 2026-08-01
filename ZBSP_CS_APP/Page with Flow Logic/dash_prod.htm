@@ -23,7 +23,7 @@
 *& menentukan seluruh halaman.
 *&
 *& ===== CACHE =====
-*& SHARED BUFFER indx(zc), TTL 90 detik, ID terpisah per bagian.
+*& SHARED BUFFER indx(zc), TTL 5 MENIT (300 dtk), ID terpisah per bagian.
 *& ?fresh=1 memaksa hitung ulang.
 *& ⚠️ AKTIVASI: bila relid 'ZC' ditolak sistem, ganti ke relid valid lain,
 *&    atau ke 'TO/FROM DATABASE indx(zc)'. Sama seperti catatan dash_cs.htm.
@@ -40,7 +40,7 @@
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
            lc_sample TYPE kna1-kunnr VALUE '2000000004',
-           lc_ttl    TYPE i          VALUE 90,
+           lc_ttl    TYPE i          VALUE 300,   " 5 menit (semula 90 dtk)
            " Pengaman rantai operasi. diag_routing.htm memakai 500 untuk
            " sekali-pakai; di sini lebih longgar karena dashboard, tapi TETAP
            " ada batas — tanpa batas itulah halaman ini sempat timeout.

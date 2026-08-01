@@ -231,6 +231,37 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .bottleneck-card {
         border-left: 4px solid var(--color-red);
     }
+
+    /* ---- tooltip kartu ----
+       Dipakai untuk menjelaskan ARTI angka di tempat orang melihatnya.
+       Murni CSS; .card diberi overflow visible supaya tidak terpotong. */
+    .card.has-tip { overflow: visible; }
+    .card.has-tip:hover { z-index: 40; }
+    .tip-anchor { cursor: help; position: relative; }
+    .tip-anchor .ic { color: #94a3b8; }
+    .card-tip {
+        position: absolute; top: 100%; left: -8px; margin-top: 8px;
+        width: 300px; background: #161a23; color: #fff;
+        border-radius: 10px; padding: 12px 13px; z-index: 50;
+        box-shadow: 0 12px 34px rgba(0,0,0,0.22), 0 4px 10px rgba(0,0,0,0.12);
+        opacity: 0; visibility: hidden; transform: translateY(-4px);
+        transition: opacity .14s, transform .14s; pointer-events: none;
+        text-align: left; font-weight: 400;
+    }
+    .tip-anchor:hover .card-tip { opacity: 1; visibility: visible; transform: translateY(0); }
+    .card-tip:before {
+        content: ''; position: absolute; bottom: 100%; left: 14px;
+        border: 6px solid transparent; border-bottom-color: #161a23;
+    }
+    .ct-h { display: block; font-size: 11px; font-weight: 700; margin-bottom: 6px;
+            padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.14); }
+    .ct-r { display: block; font-size: 10.5px; line-height: 1.5; color: #cbd5e1;
+            margin-bottom: 4px; }
+    .ct-r b { color: #fff; font-weight: 600; }
+    .ct-src { display: block; font-family: monospace; font-size: 9.5px;
+              color: #93a3b8; margin-top: 7px; padding-top: 6px;
+              border-top: 1px solid rgba(255,255,255,0.14); }
+    .ct-warn { display: block; font-size: 10px; color: #fbbf24; margin-top: 6px; }
     .color-green { color: var(--color-green); }
     .color-blue { color: var(--color-blue); }
     .color-red { color: var(--color-red); }
@@ -627,13 +658,34 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <div class="card-value">10</div>
             <div class="card-sub">16 PLO</div>
         </div>
-        <div class="card">
-            <div class="card-title">KOMPONEN <svg class="ic icon-top-right"><use xlink:href="#fa-cubes"></use></svg></div>
+        <div class="card has-tip">
+            <div class="card-title">KOMPONEN
+                <span class="tip-anchor icon-top-right"><svg class="ic"><use xlink:href="#fa-cubes"></use></svg>
+                    <span class="card-tip">
+                        <span class="ct-h">Komponen ber-stok nyata</span>
+                        <span class="ct-r">Jumlah kombinasi unik <b>SO + Item + Material</b> yang punya stok di salah satu dari enam storage location.</span>
+                        <span class="ct-r">Material yang sama di dua SO dihitung <b>dua kali</b> &mdash; stoknya memang fisik terpisah per SO.</span>
+                        <span class="ct-r">Material yang sama tersebar di beberapa SLoc dihitung <b>sekali</b>.</span>
+                        <span class="ct-src">MSKA &middot; 2KCS 2261 2262 22E2 22E3 229K<br>SOBKZ=E &middot; KALAB&gt;0 &middot; tanpa sample customer</span>
+                        <span class="ct-warn">Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>
+                    </span>
+                </span>
+            </div>
             <div class="card-value" id="kpi-komp">-</div>
             <div class="card-sub" id="kpi-pcs">memuat&hellip;</div>
         </div>
-        <div class="card">
-            <div class="card-title">CONFIRMED <svg class="ic icon-top-right"><use xlink:href="#fa-circle-check"></use></svg></div>
+        <div class="card has-tip">
+            <div class="card-title">CONFIRMED
+                <span class="tip-anchor icon-top-right"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg>
+                    <span class="card-tip">
+                        <span class="ct-h">Operasi ter-konfirmasi</span>
+                        <span class="ct-r">Persentase <b>operasi</b> yang sudah dikonfirmasi selesai, dari seluruh operasi milik order SO dalam cakupan.</span>
+                        <span class="ct-r">&Sigma;LMNGA = 0 &rarr; antre<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; selesai</span>
+                        <span class="ct-src">AFRU vs AFVV &middot; baris STOKZ=X dibuang<br>order: Plant 1000 WM/PN &middot; Plant 2000 GA/EB</span>
+                        <span class="ct-warn">Basisnya OPERASI, bukan komponen diterima. Prototype memaksudkan yang kedua &mdash; definisi finalnya belum diputuskan.</span>
+                    </span>
+                </span>
+            </div>
             <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span></div>
             <div class="card-sub" id="kpi-conf-sub">memuat&hellip;</div>
         </div>
