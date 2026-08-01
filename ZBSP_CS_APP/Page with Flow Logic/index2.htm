@@ -13,7 +13,7 @@
 *&   pusat produksi: 2 center — Machining Center (40 WC) & Edge Banding
 *&                   & Sanding (20 WC). Dulu 3 section.
 *&   alur         : Storage -> Machining -> Edge Banding -> Storage
-*&   panel baru   : Filter Buyer, daftar SO/PLO
+*&   panel baru   : Filter Buyer, daftar SO
 *&
 *& ===== IKON =====
 *& Prototype memakai Font Awesome dari CDN. Jaringan SAP tertutup, jadi
@@ -24,7 +24,7 @@
 *& ===== STATUS DATA =====
 *& LIVE  : kartu KOMPONEN & CONFIRMED — diambil ASINKRON dari dash_prod.htm
 *& DUMMY : kartu BUYER / DI PRODUKSI / SELESAI PROD. / BOTTLENECK, filter
-*&         buyer, dua kotak center, peta work center, daftar SO/PLO, tabel
+*&         buyer, dua kotak center, peta work center, daftar SO, tabel
 *&         Detail Komponen.
 *& Data dummy dikirim ke JS sebagai array di blok "DATA DUMMY UNTUK JS".
 *& Saat fase data nanti: cukup ganti isi array itu dengan hasil SELECT —
@@ -442,7 +442,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .wc-value { font-size: 13px; font-weight: 700; }
     .wc-sub { font-size: 8px; color: var(--text-muted); display: block; opacity: 0.7; }
 
-    /* MONITORING SO / PLO */
+    /* MONITORING SO */
     .so-section {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
@@ -648,15 +648,15 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         </div>
         <div class="header-right">
             <span class="flow-info">Alur: Storage &rarr; Machining &rarr; Edge Banding &rarr; Storage</span>
-            <span class="status-indicator"><span class="dot green"></span> 10 Buyer | 60 WC (40 MC - 20 EBS)</span>
+            <span class="status-indicator"><span class="dot green"></span> <span id="hdr-stat">memuat&hellip;</span></span>
         </div>
     </header>
 
     <section class="summary-cards">
         <div class="card">
             <div class="card-title">BUYER <svg class="ic icon-top-right"><use xlink:href="#fa-users"></use></svg></div>
-            <div class="card-value">10</div>
-            <div class="card-sub">16 PLO</div>
+            <div class="card-value" id="kpi-buyer">-</div>
+            <div class="card-sub" id="kpi-buyer-sub">memuat&hellip;</div>
         </div>
         <div class="card has-tip">
             <div class="card-title">KOMPONEN
@@ -800,8 +800,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
     <section class="so-section">
         <div class="section-title-container">
-            <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> SO / PLO</h2>
-            <span id="so-buyer-label" class="sub">Semua Buyer &bull; 15 PLO</span>
+            <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> Sales Order</h2>
+            <span id="so-buyer-label" class="sub">Semua Buyer</span>
         </div>
 
         <div class="so-list-container" id="so-list-container">
@@ -864,18 +864,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
    ==================================================================== */
 
 /* ---------- DATA DUMMY UNTUK JS ---------- */
-var BUYERS = [
-    { id: 'nordic', name: 'Nordic Living', pct: 64 },
-    { id: 'maison', name: 'Maison Clair', pct: 58 },
-    { id: 'westfield', name: 'Westfield Home', pct: 40 },
-    { id: 'sakura', name: 'Sakura Interior', pct: 16 },
-    { id: 'aussie', name: 'Aussie Timber', pct: 36 },
-    { id: 'kastel', name: 'Kastel Mobel', pct: 88 },
-    { id: 'green', name: 'Green Valley', pct: 20 },
-    { id: 'oakhouse', name: 'Oakhouse Ltd', pct: 45 },
-    { id: 'bella', name: 'Bella Casa', pct: 59 },
-    { id: 'lotus', name: 'Lotus Home', pct: 14 }
-];
+/* Diisi dari dash_prod.htm?part=stock. Sampai data tiba, kosong —
+   tombol buyer tidak dirender sama sekali, bukan menampilkan nama palsu. */
+var BUYERS = [];
 
 function buildWC(prefix, count, maxVal) {
     var out = [];
@@ -897,12 +888,12 @@ var WORK_CENTERS_MC = buildWC('MC', 40, 12);
 var WORK_CENTERS_EBS = buildWC('EBS', 20, 5);
 
 var SO_DATA = [
-    { id: 'SO-2401', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Wardrobe 3-Pintu - Aurora', plonum: 'PLO-24-0037', pct: 88, compCount: 60, pcsCount: 120, selesai: 51, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['30%', '40%', '18%', '12%'] },
-    { id: 'SO-2402', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Credenza - Aurora', plonum: 'PLO-24-0039', pct: 79, compCount: 50, pcsCount: 97, selesai: 41, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['25%', '35%', '19%', '21%'] },
-    { id: 'SO-2403', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'TV Cabinet - Nordic', plonum: 'PLO-24-0021', pct: 71, compCount: 55, pcsCount: 112, selesai: 37, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['40%', '20%', '11%', '29%'] },
-    { id: 'SO-2404', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'Sideboard - Nordic', plonum: 'PLO-24-0035', pct: 28, compCount: 60, pcsCount: 135, selesai: 6, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['50%', '30%', '5%', '15%'] },
-    { id: 'SO-2405', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Kitchen Upper Set - Lumen', plonum: 'PLO-24-0015', pct: 52, compCount: 62, pcsCount: 129, selesai: 24, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['42%', '30%', '10%', '18%'] },
-    { id: 'SO-2406', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Dresser 6-Laci - Lumen', plonum: 'PLO-24-0078', pct: 18, compCount: 58, pcsCount: 121, selesai: 2, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['20%', '20%', '5%', '55%'] }
+    { id: 'SO-2401', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Wardrobe 3-Pintu - Aurora', pct: 88, compCount: 60, pcsCount: 120, selesai: 51, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['30%', '40%', '18%', '12%'] },
+    { id: 'SO-2402', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Credenza - Aurora', pct: 79, compCount: 50, pcsCount: 97, selesai: 41, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['25%', '35%', '19%', '21%'] },
+    { id: 'SO-2403', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'TV Cabinet - Nordic', pct: 71, compCount: 55, pcsCount: 112, selesai: 37, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['40%', '20%', '11%', '29%'] },
+    { id: 'SO-2404', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'Sideboard - Nordic', pct: 28, compCount: 60, pcsCount: 135, selesai: 6, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['50%', '30%', '5%', '15%'] },
+    { id: 'SO-2405', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Kitchen Upper Set - Lumen', pct: 52, compCount: 62, pcsCount: 129, selesai: 24, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['42%', '30%', '10%', '18%'] },
+    { id: 'SO-2406', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Dresser 6-Laci - Lumen', pct: 18, compCount: 58, pcsCount: 121, selesai: 2, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['20%', '20%', '5%', '55%'] }
 ];
 
 var COMPONENT_DATA = [
@@ -1029,11 +1020,7 @@ function updateLabels() {
     detailSubLabel.innerHTML = buyerName + ' • ' +
         (selectedCenter === 'MC' ? 'Machining Center' : 'Edge Banding &amp; Sanding');
 
-    var n = 0;
-    for (var i = 0; i < SO_DATA.length; i++) {
-        if (!selectedBuyer || SO_DATA[i].buyerId === selectedBuyer) { n++; }
-    }
-    soBuyerLabel.innerHTML = buyerName + ' • ' + n + ' PLO';
+    soBuyerLabel.innerHTML = buyerName;
 }
 
 function renderWCLoadGrid() {
@@ -1079,7 +1066,6 @@ function renderSOList() {
                 '<div class="so-pct-val">' + so.pct + '%</div>' +
             '</div>' +
             '<div class="so-meta" style="color:#1e293b; font-weight:500;">' + so.desc + '</div>' +
-            '<div class="so-meta" style="font-family:monospace;">' + so.plonum + '</div>' +
             '<div class="so-progress-bar">' + barSegments + '</div>' +
             '<div class="so-item-footer">' +
                 '<span>' + so.compCount + ' komp - ' + so.pcsCount + ' pcs</span>' +
@@ -1199,6 +1185,19 @@ function loadKpi() {
         }
         kpiText('kpi-komp', kpiNum(d.komp));
         kpiText('kpi-pcs', kpiNum(d.pcs) + ' pcs');
+
+        kpiText('kpi-buyer', kpiNum(d.buyers));
+        kpiText('kpi-buyer-sub', kpiNum(d.so) + ' sales order');
+        kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
+
+        /* Filter buyer diisi dari data, lalu seluruh panel dirender ulang.
+           Sebelum ini BUYERS kosong sehingga tidak ada tombol sama sekali —
+           lebih baik kosong daripada menampilkan nama buyer palsu. */
+        if (d.buyer && d.buyer.length) {
+            BUYERS = d.buyer;
+            renderBuyerFilters();
+            updateLabels();
+        }
     });
 
     kpiGet('dash_prod.htm?part=ops', function (d) {
