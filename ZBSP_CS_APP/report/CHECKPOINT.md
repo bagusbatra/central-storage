@@ -1,7 +1,7 @@
 # Checkpoint Rencana Pengembangan — ZBSP_CS_APP
 
 Ringkasan status setiap jalur pengembangan aplikasi Central Storage.
-Diperbarui: 2026-08-01 (setelah perubahan UI index2.htm & penataan folder)
+Diperbarui: 2026-08-01 (UI index2.htm selesai & aktif; roadmap fase data dibuat)
 
 **Aturan folder:** `ZBSP_CS_APP/` adalah cermin objek SAP — apa pun di dalamnya
 ada atau akan ada di sistem. Bahan rujukan yang tidak diaktifkan ada di
@@ -29,7 +29,7 @@ status tanpa bukti.
 | 1 | Dashboard Central Storage | ✅ Jalan | `index.htm`, `dash_*.htm` | Restrukturisasi 2026-07-24 |
 | 2 | Monitoring / Pelacakan SO | ✅ Jalan | `monitoring.htm` | Perbaikan status SO 2026-07-23 |
 | 3 | Diagnostik Routing (Fase 0) | ✅ Selesai | `diag_routing.htm` | Dijalankan 2026-07-30, hasil terkunci |
-| 4 | Dashboard Production | 🟡 Sebagian | `index2.htm` | UI diganti mengikuti `prototype/`, 2026-08-01 |
+| 4 | Dashboard Production | 🟡 Sebagian | `index2.htm` | UI **aktif di SAP**; fase data mulai tahap 1, 2026-08-01 |
 | 5 | Peta Perjalanan SO | 🟡 Sebagian | `routing_map.htm` | Dot map + stok real, 2026-07-31 |
 | 6 | Pohon Konvergensi Material | 🔧 Dikerjakan | `ZCL_CS_PEG.abap` | Task 3 dari 11, 2026-08-01 |
 | 7 | Pemetaan Cost Center (`map_sec`) | 🚧 Terhalang | — | 64 cost center menunggu diberi nama |
@@ -103,6 +103,15 @@ sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti t
   konsekuensi langsung temuan diagnostik bagian B
 - **Menunggu Task 11:** rumus status operasi dialihkan memanggil
   `ZCL_CS_PEG=>op_status( )`
+- **UI sudah diaktifkan di SE80 dan dikonfirmasi sesuai** (2026-08-01). Ikon
+  SVG inline pengganti Font Awesome terbukti tampil di browser SAP
+- **Dependensi aktivasi: TIDAK ADA.** Halaman berdiri sendiri — tanpa link ke
+  halaman lain, tanpa panggilan class, tanpa MIMEs, CSS/JS inline seluruhnya.
+  Cukup aktifkan `index2.htm` saja
+- **Tabel yang dibaca:** MSKA, VBAK, AFKO⨝AFPO, AFVC, AFVV, AFRU
+- 📍 **Fase data punya roadmap sendiri:** `report/ROADMAP-index2-data.md` —
+  7 tahap berurutan, 6 keputusan yang harus diambil saat tahapnya tiba, dan
+  tiga ketidakcocokan prototype vs data nyata yang sudah diketahui di muka
 
 ## 5. Peta Perjalanan SO — 🟡 Sebagian
 
