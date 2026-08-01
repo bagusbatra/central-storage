@@ -23,6 +23,7 @@ Nilai-nilai berikut disalin verbatim dari spec dan berlaku di SEMUA task:
 - Form/link GET WAJIB `action="routing_map.htm"` eksplisit (bug lama: action kosong mengembalikan seluruh data).
 - Jangan menjumlahkan qty lintas material (campur UoM). Angka ringkasan stasiun = COUNT material.
 - Setiap pencarian order pembuat di `lt_prod`/`it_prod` WAJIB memakai kunci **(matnr, kdpos)**, bukan matnr saja — `assemble( )` bisa dipanggil untuk seluruh item SO sekaligus.
+- **Pohon tidak boleh kosong secara diam-diam.** Bila ada order tetapi deteksi akar tidak menemukan satu pun (khas pada siklus RESB tertutup), SEMUA order pembuat diperlakukan sebagai akar dan diberi `note` = `'akar tidak terdeteksi (kemungkinan siklus)'`. Penjaga siklus di `descend( )` yang menghentikan rekursinya. Halaman kosong tanpa penjelasan adalah cacat, bukan hasil yang sah.
 
 ## Cara Verifikasi di Proyek Ini
 
