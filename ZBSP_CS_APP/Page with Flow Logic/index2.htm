@@ -22,10 +22,10 @@
 *& JANGAN menambahkan link atau script ke domain luar di file ini.
 *&
 *& ===== STATUS DATA =====
-*& LIVE  : kartu KOMPONEN & CONFIRMED — diambil ASINKRON dari dash_prod.htm
-*& DUMMY : kartu BUYER / DI PRODUKSI / SELESAI PROD. / BOTTLENECK, filter
-*&         buyer, dua kotak center, peta work center, daftar SO, tabel
-*&         Detail Komponen.
+*& LIVE  : kartu SALES ORDER, BUYER, CONFIRMED — diambil ASINKRON dari
+*&         dash_prod.htm
+*& DUMMY : kartu DI PRODUKSI / SELESAI PROD. / BOTTLENECK, dua kotak center,
+*&         peta work center, daftar SO, tabel Detail Komponen.
 *& Data dummy dikirim ke JS sebagai array di blok "DATA DUMMY UNTUK JS".
 *& Saat fase data nanti: cukup ganti isi array itu dengan hasil SELECT —
 *& logika filter/render di JS tidak perlu diubah.
@@ -55,7 +55,7 @@
 "     Edge Banding & Sanding  : 22E2, 22E3, 229K
 "
 "   ⚠️ Sebelumnya halaman ini hanya memfilter 2KCS. Perluasan ini MENAIKKAN
-"      angka kartu KOMPONEN — itu benar, bukan regresi.
+"      angka komponen di kartu SALES ORDER — itu benar, bukan regresi.
 "   ⚠️ lt_stok kini menyimpan LGORT. Panel berikutnya butuh tahu material
 "      ada di SLoc mana, bukan sekadar ada atau tidak — arti tiga warna di
 "      Lintasan Produksi bergantung penuh pada itu.
@@ -82,7 +82,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 *& Pola yang sama menyelamatkan index.htm dari TTFB 15 detik.
 *&
 *& ⚠️ dash_prod.htm WAJIB ikut diaktifkan di SE80. Tanpa itu, kartu
-*&    KOMPONEN & CONFIRMED akan tetap menampilkan tanda "-".
+*&    SALES ORDER / BUYER / CONFIRMED tetap menampilkan tanda "-".
 *& ⚠️ JANGAN menambahkan SELECT baru di halaman ini. Kalau butuh data,
 *&    tambahkan di dash_prod.htm supaya ikut ter-cache dan tidak
 *&    memblokir tampilan.
@@ -659,20 +659,20 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <div class="card-sub" id="kpi-buyer-sub">memuat&hellip;</div>
         </div>
         <div class="card has-tip">
-            <div class="card-title">KOMPONEN
-                <span class="tip-anchor icon-top-right"><svg class="ic"><use xlink:href="#fa-cubes"></use></svg>
+            <div class="card-title">SALES ORDER
+                <span class="tip-anchor icon-top-right"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg>
                     <span class="card-tip">
-                        <span class="ct-h">Komponen ber-stok nyata</span>
-                        <span class="ct-r">Jumlah kombinasi unik <b>SO + Item + Material</b> yang punya stok di salah satu dari enam storage location.</span>
-                        <span class="ct-r">Material yang sama di dua SO dihitung <b>dua kali</b> &mdash; stoknya memang fisik terpisah per SO.</span>
-                        <span class="ct-r">Material yang sama tersebar di beberapa SLoc dihitung <b>sekali</b>.</span>
+                        <span class="ct-h">Sales Order ber-stok nyata</span>
+                        <span class="ct-r">Jumlah <b>SO berbeda</b> yang punya stok di salah satu dari enam storage location.</span>
+                        <span class="ct-r">Sub-teks memerinci isinya: berapa <b>komponen</b> (kombinasi unik SO + Item + Material) dan berapa pcs.</span>
+                        <span class="ct-r">Material sama di dua SO dihitung <b>dua kali</b> &mdash; stoknya fisik terpisah per SO. Material sama lintas SLoc dihitung <b>sekali</b>.</span>
                         <span class="ct-src">MSKA &middot; 2KCS 2261 2262 22E2 22E3 229K<br>SOBKZ=E &middot; KALAB&gt;0 &middot; tanpa sample customer</span>
                         <span class="ct-warn">Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>
                     </span>
                 </span>
             </div>
-            <div class="card-value" id="kpi-komp">-</div>
-            <div class="card-sub" id="kpi-pcs">memuat&hellip;</div>
+            <div class="card-value" id="kpi-so">-</div>
+            <div class="card-sub" id="kpi-so-sub">memuat&hellip;</div>
         </div>
         <div class="card has-tip">
             <div class="card-title">CONFIRMED
@@ -1179,15 +1179,17 @@ function kpiNum(n) {
 function loadKpi() {
     kpiGet('dash_prod.htm?part=stock', function (d) {
         if (!d || !d.ok) {
-            kpiText('kpi-komp', '-');
-            kpiText('kpi-pcs', 'gagal memuat');
+            kpiText('kpi-so', '-');
+            kpiText('kpi-so-sub', 'gagal memuat');
+            kpiText('kpi-buyer', '-');
+            kpiText('kpi-buyer-sub', 'gagal memuat');
             return;
         }
-        kpiText('kpi-komp', kpiNum(d.komp));
-        kpiText('kpi-pcs', kpiNum(d.pcs) + ' pcs');
+        kpiText('kpi-so', kpiNum(d.so));
+        kpiText('kpi-so-sub', kpiNum(d.komp) + ' komponen &middot; ' + kpiNum(d.pcs) + ' pcs');
 
         kpiText('kpi-buyer', kpiNum(d.buyers));
-        kpiText('kpi-buyer-sub', kpiNum(d.so) + ' sales order');
+        kpiText('kpi-buyer-sub', 'punya stok di enam SLoc');
         kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
 
         /* Filter buyer diisi dari data, lalu seluruh panel dirender ulang.
