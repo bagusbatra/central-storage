@@ -691,13 +691,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         </div>
         <div class="card">
             <div class="card-title">DI PRODUKSI <svg class="ic icon-top-right"><use xlink:href="#fa-gear"></use></svg></div>
-            <div class="card-value color-blue">380</div>
-            <div class="card-sub">WIP di lantai</div>
+            <div class="card-value color-blue" id="kpi-prod">-</div>
+            <div class="card-sub" id="kpi-prod-sub">memuat&hellip;</div>
         </div>
         <div class="card">
             <div class="card-title">SELESAI PROD. <svg class="ic icon-top-right"><use xlink:href="#fa-square-check"></use></svg></div>
-            <div class="card-value color-green">268</div>
-            <div class="card-sub">kembali ke storage</div>
+            <div class="card-value color-green" id="kpi-done">-</div>
+            <div class="card-sub" id="kpi-done-sub">memuat&hellip;</div>
         </div>
         <div class="card bottleneck-card">
             <div class="card-title">BOTTLENECK <svg class="ic icon-top-right"><use xlink:href="#fa-triangle-exclamation"></use></svg></div>
@@ -735,16 +735,16 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                     <span class="sub">40 WC</span>
                 </div>
                 <div class="center-body">
-                    <span class="wip-number" id="mc-wip-text">213</span> <span class="wip-lbl">WIP</span>
+                    <span class="wip-number" id="mc-wip-text">-</span> <span class="wip-lbl">WIP</span>
                 </div>
                 <div class="center-footer">
-                    <span>897 pcs</span>
-                    <span class="color-green">&#10003; 420</span>
+                    <span id="mc-foot">&mdash;</span>
+                    <span class="color-green" id="mc-done">&mdash;</span>
                 </div>
                 <div class="progress-bar-container">
-                    <div class="pb-done" style="width: 45%;"></div>
-                    <div class="pb-wip" style="width: 35%;"></div>
-                    <div class="pb-queue" style="width: 20%;"></div>
+                    <div class="pb-done" id="mc-bar-done" style="width: 0%;"></div>
+                    <div class="pb-wip" id="mc-bar-wip" style="width: 0%;"></div>
+                    <div class="pb-queue" id="mc-bar-queue" style="width: 0%;"></div>
                 </div>
             </div>
 
@@ -756,16 +756,16 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                     <span class="sub">20 WC</span>
                 </div>
                 <div class="center-body">
-                    <span class="wip-number" id="ebs-wip-text">167</span> <span class="wip-lbl">WIP</span>
+                    <span class="wip-number" id="ebs-wip-text">-</span> <span class="wip-lbl">WIP</span>
                 </div>
                 <div class="center-footer">
-                    <span>869 pcs</span>
-                    <span class="color-green">&#10003; 269</span>
+                    <span id="ebs-foot">&mdash;</span>
+                    <span class="color-green" id="ebs-done">&mdash;</span>
                 </div>
                 <div class="progress-bar-container">
-                    <div class="pb-done" style="width: 30%;"></div>
-                    <div class="pb-wip" style="width: 50%;"></div>
-                    <div class="pb-queue" style="width: 20%;"></div>
+                    <div class="pb-done" id="ebs-bar-done" style="width: 0%;"></div>
+                    <div class="pb-wip" id="ebs-bar-wip" style="width: 0%;"></div>
+                    <div class="pb-queue" id="ebs-bar-queue" style="width: 0%;"></div>
                 </div>
             </div>
 
@@ -1176,15 +1176,21 @@ function kpiNum(n) {
     return out;
 }
 
+function setBar(id, pct) {
+    var el = document.getElementById(id);
+    if (el) { el.style.width = pct + '%'; }
+}
+
 function loadKpi() {
     kpiGet('dash_prod.htm?part=stock', function (d) {
         if (!d || !d.ok) {
-            kpiText('kpi-so', '-');
-            kpiText('kpi-so-sub', 'gagal memuat');
-            kpiText('kpi-buyer', '-');
-            kpiText('kpi-buyer-sub', 'gagal memuat');
+            kpiText('kpi-so', '-');     kpiText('kpi-so-sub', 'gagal memuat');
+            kpiText('kpi-buyer', '-');  kpiText('kpi-buyer-sub', 'gagal memuat');
+            kpiText('kpi-prod', '-');   kpiText('kpi-prod-sub', 'gagal memuat');
+            kpiText('kpi-done', '-');   kpiText('kpi-done-sub', 'gagal memuat');
             return;
         }
+
         kpiText('kpi-so', kpiNum(d.so));
         kpiText('kpi-so-sub', kpiNum(d.komp) + ' komponen &middot; ' + kpiNum(d.pcs) + ' pcs');
 
@@ -1192,9 +1198,34 @@ function loadKpi() {
         kpiText('kpi-buyer-sub', 'punya stok di enam SLoc');
         kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
 
-        /* Filter buyer diisi dari data, lalu seluruh panel dirender ulang.
-           Sebelum ini BUYERS kosong sehingga tidak ada tombol sama sekali —
-           lebih baik kosong daripada menampilkan nama buyer palsu. */
+        kpiText('kpi-prod', kpiNum(d.prod));
+        kpiText('kpi-prod-sub', 'komponen di SLoc proses');
+
+        kpiText('kpi-done', kpiNum(d.done));
+        kpiText('kpi-done-sub', 'sampai 229K (sementara)');
+
+        /* ---- dua kotak center ----
+           Kuning = antre, biru = dikerjakan. HIJAU sengaja 0 dan diberi
+           keterangan "belum tersedia": barang yang sudah selesai tidak punya
+           stok lagi, jadi saldo stok tidak bisa menjawabnya. Mengisinya nol
+           akan terbaca "tidak ada yang lewat", padahal "belum dihitung". */
+        var mcTot = (d.mcq || 0) + (d.mcp || 0);
+        var ebTot = (d.ebq || 0) + (d.ebp || 0);
+
+        kpiText('mc-wip-text', kpiNum(d.mcp));
+        kpiText('mc-foot', kpiNum(d.mcq) + ' antre di 2KCS');
+        kpiText('mc-done', 'sudah lewat: belum tersedia');
+        setBar('mc-bar-done', 0);
+        setBar('mc-bar-wip', mcTot ? Math.round(d.mcp * 100 / mcTot) : 0);
+        setBar('mc-bar-queue', mcTot ? Math.round(d.mcq * 100 / mcTot) : 0);
+
+        kpiText('ebs-wip-text', kpiNum(d.ebp));
+        kpiText('ebs-foot', kpiNum(d.ebq) + ' antre di 2261/2262');
+        kpiText('ebs-done', 'sudah lewat: belum tersedia');
+        setBar('ebs-bar-done', 0);
+        setBar('ebs-bar-wip', ebTot ? Math.round(d.ebp * 100 / ebTot) : 0);
+        setBar('ebs-bar-queue', ebTot ? Math.round(d.ebq * 100 / ebTot) : 0);
+
         if (d.buyer && d.buyer.length) {
             BUYERS = d.buyer;
             renderBuyerFilters();
@@ -1210,10 +1241,7 @@ function loadKpi() {
         }
         kpiText('kpi-conf', d.pct);
         var sub = kpiNum(d.conf) + ' / ' + kpiNum(d.total) + ' op';
-        /* Kalau hasil dipotong batas order, WAJIB diberitahu — angka yang
-           tidak lengkap tapi tampil meyakinkan lebih berbahaya daripada
-           angka yang jelas ditandai. */
-        if (d.trunc) { sub += ' — TIDAK LENGKAP (dibatasi ' + kpiNum(d.ord) + ' order)'; }
+        if (d.trunc) { sub += ' &mdash; TIDAK LENGKAP (dibatasi ' + kpiNum(d.ord) + ' order)'; }
         kpiText('kpi-conf-sub', sub);
     });
 }

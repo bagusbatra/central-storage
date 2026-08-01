@@ -35,6 +35,7 @@
 *&
 *& Balas JSON:
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
+*&                  "prod":n,"done":n,"mcq":n,"mcp":n,"ebq":n,"ebp":n,
 *&                  "buyer":[{id,name,pct,komp,so},...],"ms":n}
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,"queue":n,
 *&                  "ord":n,"trunc":0|1,"ms":n}
@@ -236,6 +237,10 @@ IF lv_part = 'stock'.
            posnr TYPE mska-posnr,
            matnr TYPE mska-matnr,
            moved TYPE abap_bool,
+           at_cs TYPE abap_bool,
+           at_mc TYPE abap_bool,
+           at_eb TYPE abap_bool,
+           at_sd TYPE abap_bool,
          END OF ty_kmp.
   DATA: lt_kmp TYPE STANDARD TABLE OF ty_kmp WITH DEFAULT KEY.
   FIELD-SYMBOLS <km> TYPE ty_kmp.
@@ -251,6 +256,54 @@ IF lv_part = 'stock'.
     ENDIF.
     IF <st>-lgort <> '2KCS'.
       <km>-moved = abap_true.
+    ENDIF.
+    IF <st>-lgort = '2KCS'.
+      <km>-at_cs = abap_true.
+    ELSEIF <st>-lgort = '2261' OR <st>-lgort = '2262'.
+      <km>-at_mc = abap_true.
+    ELSE.
+      <km>-at_eb = abap_true.
+      IF <st>-lgort = '229K'.
+        <km>-at_sd = abap_true.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  " ===== Rekap posisi: kartu DI PRODUKSI / SELESAI PROD. + dua kotak center
+  "
+  " Arti warna (ketetapan user 2026-08-01):
+  "   Machining Center   kuning = masih di 2KCS
+  "                      biru   = ada di 2261/2262
+  "   Edge Banding&Sand  kuning = belum masuk EB/sanding (masih di 2261/2262)
+  "                      biru   = ada di 22E2/22E3/229K
+  "
+  " HIJAU ("sudah lewat") TIDAK dihitung di sini. Barang yang selesai
+  " diproses otomatis tidak punya stok lagi, jadi saldo stok tidak bisa
+  " menjawabnya — jawabannya ada di riwayat pergerakan (MSEG). Itu K3 yang
+  " belum diputuskan. UI menampilkannya sebagai "belum tersedia", BUKAN nol;
+  " nol berarti "tidak ada yang lewat", padahal yang benar "belum dihitung".
+  DATA: lv_prod TYPE i,
+        lv_done TYPE i,
+        lv_mc_q TYPE i,
+        lv_mc_p TYPE i,
+        lv_eb_q TYPE i,
+        lv_eb_p TYPE i.
+  LOOP AT lt_kmp ASSIGNING <km>.
+    IF <km>-at_mc = abap_true OR <km>-at_eb = abap_true.
+      lv_prod = lv_prod + 1.
+    ENDIF.
+    IF <km>-at_sd = abap_true.
+      lv_done = lv_done + 1.
+    ENDIF.
+    IF <km>-at_cs = abap_true.
+      lv_mc_q = lv_mc_q + 1.
+    ENDIF.
+    IF <km>-at_mc = abap_true.
+      lv_mc_p = lv_mc_p + 1.
+      lv_eb_q = lv_eb_q + 1.
+    ENDIF.
+    IF <km>-at_eb = abap_true.
+      lv_eb_p = lv_eb_p + 1.
     ENDIF.
   ENDLOOP.
 
@@ -365,8 +418,14 @@ IF lv_part = 'stock'.
          && ',"pcs":'          && |{ lv_pcs_i }|
          && ',"so":'           && |{ lv_so_cnt }|
          && ',"buyers":'       && lv_buy_cnt_c
-         && ',"buyer":'        && lv_buyers
-         && ',"ms":'           && |{ lv_ms }| && '}'.
+         && ',"prod":'        && |{ lv_prod }|
+         && ',"done":'        && |{ lv_done }|
+         && ',"mcq":'         && |{ lv_mc_q }|
+         && ',"mcp":'         && |{ lv_mc_p }|
+         && ',"ebq":'         && |{ lv_eb_q }|
+         && ',"ebp":'         && |{ lv_eb_p }|
+         && ',"buyer":'       && lv_buyers
+         && ',"ms":'          && |{ lv_ms }| && '}'.
 
 *&---------------------------------------------------------------------*
 *& BAGIAN OPS
