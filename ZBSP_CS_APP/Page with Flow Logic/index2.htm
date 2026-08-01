@@ -1,175 +1,70 @@
 <%@ page language="abap" %>
 <%
 *&---------------------------------------------------------------------*
-*& BSP Page — Lintasan Routing & Confirmation (index2.htm)
+*& BSP Page — Dashboard Production (index2.htm)
 *&---------------------------------------------------------------------*
-*& Porting dari prototype.html (Unit Wood Furniture Assembling).
-*& STATUS: SEBAGIAN LIVE. Yang sudah ambil data SAP: KPI "SO Aktif" &
-*&         "Komponen" (blok DATA LIVE di bawah). Sisanya masih dummy —
-*&         lihat blok "=== DATA DUMMY ===".
+*& UI DISALIN PERSIS dari prototype/ (index.html + style.css + script.js).
+*& Versi sebelumnya (porting prototype.html lama, "Lintasan Routing &
+*& Confirmation") DIGANTI TOTAL atas permintaan user 2026-08-01; isinya
+*& masih ada di git bila perlu dilihat lagi.
 *&
-*& ===== ATURAN DASAR HALAMAN INI (disepakati, jangan diubah diam-diam) =====
-*& SO yang ditampilkan/ dihitung halaman ini HANYA SO yang PUNYA REAL STOCK
-*& di Central Storage. Definisi real stock (sama persis dgn dash_cs.htm):
-*&     MSKA  WERKS = 2000, LGORT = 2KCS, SOBKZ = 'E', KALAB > 0
-*&     dikurangi sample customer 2000000004 (dicek lewat VBAK-KUNNR)
-*& Free stock MARD (stok tanpa SO) TIDAK ikut — halaman ini berbasis SO.
-*& Satuan hitung yang disepakati:
-*&     SO Aktif = COUNT DISTINCT VBELN
-*&     Komponen = COUNT DISTINCT (VBELN + POSNR + MATNR)
-*&                -> material sama di 2 SO dihitung 2x, karena stoknya
-*&                   memang fisik terpisah per SO
-*&     pcs      = SUM( KALAB )
-*& Aturan ini berlaku utk SEMUA panel halaman ini (KPI, SO Outstanding,
-*& Detail Komponen) — panel yang masih dummy wajib menyusul definisi ini.
+*& ===== BEDA UTAMA DARI VERSI LAMA =====
+*&   sumbu filter : BUYER (dulu: SO)
+*&   pusat produksi: 2 center — Machining Center (40 WC) & Edge Banding
+*&                   & Sanding (20 WC). Dulu 3 section.
+*&   alur         : Storage -> Machining -> Edge Banding -> Storage
+*&   panel baru   : Filter Buyer, daftar SO/PLO
 *&
-*& Susunan halaman:
-*&   (1) KPI ROW          — 6 kartu ringkasan (lt_kpi)
-*&   (2) SECTION PIPELINE — tombol per section (Machining / Edge Banding /
-*&       Assembling) berisi WIP komponen + bar Dikerjakan vs Antre (lt_sec)
-*&   (3) PETA WORK CENTER — heatmap kotak per WC utk section terpilih,
-*&       warna = beban (lt_wc); ambang beban di lc_load_med / lc_load_hi
-*&   (4) SO OUTSTANDING (lt_so) + DETAIL KOMPONEN (lt_comp)
+*& ===== IKON =====
+*& Prototype memakai Font Awesome dari CDN. Jaringan SAP tertutup, jadi
+*& ikon diganti <symbol> SVG inline di awal <body> — bentuknya menyerupai,
+*& kelas pemakainya .ic (ukuran ikut font-size induknya, seperti FA).
+*& JANGAN menambahkan <link> atau <script> ke domain luar di file ini.
 *&
-*& Navigasi memakai LINK GET ke halaman ini sendiri dgn parameter:
-*&   sec = id section (MC/EB/ASM), so = nomor SO (ALL = semua).
-*& Filter teks & filter status di panel Detail Komponen dikerjakan
-*& CLIENT-SIDE (JS) supaya tidak bolak-balik ke server.
+*& ===== STATUS DATA =====
+*& LIVE  : kartu KOMPONEN & CONFIRMED (blok "DATA LIVE" di bawah, dibawa
+*&         utuh dari versi sebelumnya — query MSKA & AFRU yang sudah jalan)
+*& DUMMY : kartu BUYER / DI PRODUKSI / SELESAI PROD. / BOTTLENECK, filter
+*&         buyer, dua kotak center, peta work center, daftar SO/PLO, tabel
+*&         Detail Komponen.
+*& Data dummy dikirim ke JS sebagai array di blok "DATA DUMMY UNTUK JS".
+*& Saat fase data nanti: cukup ganti isi array itu dengan hasil SELECT —
+*& logika filter/render di JS tidak perlu diubah.
 *&
-*& CATATAN saat menyambung data asli:
-*&   - Semua field tabel internal bertipe STRING (nilai SIAP TAMPIL);
-*&     konversi/format angka dikerjakan di ABAP, bukan di layout.
-*&   - Tag output BSP (kurung-persen sama-dengan) TIDAK meng-escape HTML.
-*&     Begitu isinya teks dari tabel SAP (MAKTX, KTEXT, dsb.), bungkus
-*&     cl_http_utility=>escape_html( ).
-*&     PENTING: JANGAN pernah menulis delimiter BSP (kurung-persen buka /
-*&     tutup) di dalam komentar ABAP blok ini — parser BSP berhenti pada
-*&     delimiter TUTUP yang pertama ditemukan, jadi scriptlet akan terpotong
-*&     di tengah dan aktivasi gagal dgn pesan
-*&     "Closing without opening" di baris penutup blok.
-*&   - JANGAN pakai <form action=""> kosong utk filter (bug lama aplikasi
-*&     ini: filter malah mengembalikan SELURUH data). Selalu tulis
-*&     action="index2.htm" / href="index2.htm?..." secara eksplisit.
-*&   - Tidak ada resource eksternal (font/CDN) — jaringan SAP tertutup.
-*&     Ikon = <symbol> SVG inline di awal <body> (pengganti lucide).
+*& ⚠️ CATATAN DEFINISI (dibereskan di fase data, jangan dianggap beres):
+*&    Prototype menulis CONFIRMED = "basis komponen diterima". Angka yang
+*&    kita hitung sekarang berbasis OPERASI ter-konfirmasi (AFRU), bukan
+*&    komponen diterima. Sub-teks kartu sengaja tetap menyebut "op" supaya
+*&    tidak mengklaim hal yang belum dihitung.
+*&
+*& ⚠️ Saat array JS diisi data SAP nanti, teks dari tabel (MAKTX, NAME1)
+*&    WAJIB di-escape sebelum masuk string JS — tanda kutip tunggal akan
+*&    mematahkan array-nya.
+*&
+*& CATATAN: blok DATA LIVE ikut menghitung lv_t_so / lv_so_cnt (jumlah SO
+*& ber-real-stock) dan lv_op_act / lv_op_queue (operasi sedang dikerjakan /
+*& antre). Keempatnya BELUM dipakai layout karena kartu yang memakainya di
+*& versi lama sudah tidak ada. Sengaja DIPERTAHANKAN, bukan kode mati:
+*& lv_op_act adalah kandidat langsung untuk kartu "DI PRODUKSI" dan
+*& lv_so_cnt untuk label panel SO/PLO — keduanya menunggu fase data
+*& memastikan definisinya cocok (prototype menghitung berbasis komponen,
+*& angka kita berbasis operasi).
 *&---------------------------------------------------------------------*
 
-" ===== Ambang warna beban Work Center (dipakai juga utk data asli nanti) =====
-CONSTANTS: lc_load_med TYPE i VALUE 6,    " WIP >= 6  -> beban sedang
-           lc_load_hi  TYPE i VALUE 13.   " WIP >= 13 -> beban tinggi
-
-" ===== Cakupan real stock — lihat "ATURAN DASAR HALAMAN INI" di atas =====
+" ===== Cakupan real stock — aturan tetap halaman ini =====
+"   SO yang dihitung HANYA yang punya real stock di Central Storage.
+"   Definisi sama dengan dash_cs.htm.
 CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
            lc_lgort  TYPE lgort_d    VALUE '2KCS',
            lc_sample TYPE kna1-kunnr VALUE '2000000004'.
 
-" ===== Tipe-tipe tampilan =====
-TYPES: BEGIN OF ty_kpi,
-         icon  TYPE string,   " nama <symbol> ikon (tanpa awalan 'i-')
-         label TYPE string,
-         value TYPE string,
-         unit  TYPE string,
-         color TYPE string,   " '' | 'var(--green)' | 'var(--blue)' | 'var(--red)'
-         sub   TYPE string,
-       END OF ty_kpi,
-
-       BEGIN OF ty_sec,
-         id       TYPE string,   " kunci filter (?sec=)
-         icon     TYPE string,
-         title    TYPE string,
-         wc_cnt   TYPE string,   " '8 WC'
-         wip      TYPE string,   " jumlah komponen WIP
-         pcs      TYPE string,   " '520 pcs'
-         passed   TYPE string,   " '15 lewat'
-         w_active TYPE string,   " lebar bar 'Dikerjakan' dlm % (angka saja)
-         w_queue  TYPE string,   " lebar bar 'Antre' dlm % (angka saja)
-       END OF ty_sec,
-
-       BEGIN OF ty_wc,
-         grp     TYPE string,   " judul kelompok; judul dicetak saat GRP berubah
-         grp_cnt TYPE string,
-         num     TYPE string,   " '01'
-         name    TYPE string,   " utk tooltip
-         wip     TYPE string,
-         passed  TYPE string,
-         cls     TYPE string,   " '' | light-load | medium-load | heavy-load
-       END OF ty_wc,
-
-       BEGIN OF ty_so,
-         id      TYPE string,   " kunci filter (?so=); 'ALL' = kartu Semua SO
-         pct     TYPE string,
-         pct_cls TYPE string,   " '' | 'done'
-         product TYPE string,
-         sonum   TYPE string,
-         mix_a   TYPE string,   " % segmen amber  (belum jalan)
-         mix_b   TYPE string,   " % segmen biru   (dikerjakan)
-         mix_c   TYPE string,   " % segmen hijau  (selesai)
-         stat_l  TYPE string,   " '60 komp - 420 pcs'
-         stat_r  TYPE string,   " '49 selesai'
-       END OF ty_so,
-
-       BEGIN OF ty_comp,
-         name     TYPE string,
-         sub      TYPE string,   " 'SO-2401-C001 - Panel Pintu'
-         matnr    TYPE string,
-         maktx    TYPE string,
-         qty      TYPE string,
-         op1      TYPE string,   " label operasi 1 (mis. 'CNC')
-         op1_cls  TYPE string,   " op-done | op-now | op-todo
-         op2      TYPE string,
-         op2_cls  TYPE string,
-         status   TYPE string,   " done | active | queue (dipakai filter JS)
-         stat_txt TYPE string,
-         stat_ico TYPE string,
-         pos      TYPE string,   " '100%'
-         pos_cls  TYPE string,   " '' | 'is-done'
-       END OF ty_comp.
-
-DATA: lt_kpi  TYPE STANDARD TABLE OF ty_kpi  WITH DEFAULT KEY,
-      lt_sec  TYPE STANDARD TABLE OF ty_sec  WITH DEFAULT KEY,
-      lt_wc   TYPE STANDARD TABLE OF ty_wc   WITH DEFAULT KEY,
-      lt_so   TYPE STANDARD TABLE OF ty_so   WITH DEFAULT KEY,
-      lt_comp TYPE STANDARD TABLE OF ty_comp WITH DEFAULT KEY,
-      ls_wc   TYPE ty_wc.
-
-" Field-symbol LOOP di bagian layout — sengaja dideklarasikan di sini
-" (bukan inline) supaya aman di semua release.
-FIELD-SYMBOLS: <k> TYPE ty_kpi,
-               <s> TYPE ty_sec,
-               <w> TYPE ty_wc,
-               <o> TYPE ty_so,
-               <c> TYPE ty_comp.
-
-DATA: lv_user     TYPE string,
-      lv_sec      TYPE string,   " section terpilih (dari URL, default 'MC')
-      lv_so       TYPE string,   " SO terpilih (dari URL, default 'ALL')
-      lv_sec_txt  TYPE string,   " nama section terpilih (utk judul)
-      lv_so_txt   TYPE string,   " label SO terpilih (utk chip judul)
-      lv_ts_date  TYPE string,
-      lv_ts_time  TYPE string,
-      lv_grp_prev TYPE string.
+DATA: lv_user    TYPE string,
+      lv_ts_date TYPE string,
+      lv_ts_time TYPE string.
 
 lv_user    = sy-uname.
 lv_ts_date = sy-datum+6(2) && '.' && sy-datum+4(2) && '.' && sy-datum(4).
 lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
-
-" ===== Parameter URL (klik tombol section / SO) =====
-lv_sec = request->get_form_field( 'sec' ).
-lv_so  = request->get_form_field( 'so' ).
-IF lv_sec IS INITIAL. lv_sec = 'MC'.  ENDIF.
-IF lv_so  IS INITIAL. lv_so  = 'ALL'. ENDIF.
-
-CASE lv_sec.
-  WHEN 'EB'.   lv_sec_txt = 'Edge Banding'.
-  WHEN 'ASM'.  lv_sec_txt = 'Assembling'.
-  WHEN OTHERS. lv_sec = 'MC'. lv_sec_txt = 'Machining Center'.
-ENDCASE.
-
-IF lv_so = 'ALL'.
-  lv_so_txt = 'Semua SO'.
-ELSE.
-  lv_so_txt = lv_so.
-ENDIF.
 
 *&---------------------------------------------------------------------*
 *& === DATA LIVE — SO & KOMPONEN BER-REAL-STOCK DI 2KCS ===
@@ -472,596 +367,1023 @@ lv_t_confsub = lv_t_conf && ' / ' && lv_t_optot && ' op'.
 
 *&--- === AKHIR DATA LIVE === -----------------------------------------*
 
-*&---------------------------------------------------------------------*
-*& === DATA DUMMY — GANTI SELURUH BLOK INI DENGAN SELECT SUNGGUHAN ===
-*&   rencana sumber: AFKO/AFPO (order), AFVC/AFVV (operasi), AFRU
-*&   (confirmation), CRHD (work center), VBAK/VBAP (SO), RESB (komponen).
-*&   Isi lt_* memakai kunci yg sama (lv_sec, lv_so) supaya filter langsung
-*&   bekerja tanpa mengubah bagian layout.
-*&---------------------------------------------------------------------*
-
-" --- (1) KPI ---
-"     Kartu 1 & 2 SUDAH LIVE (dari lt_stok / blok DATA LIVE di atas):
-"       SO Aktif = SO ber-real-stock 2KCS, Komponen = VBELN+POSNR+MATNR.
-"     Kartu 3-6 masih dummy.
-lt_kpi = VALUE #(
-  ( icon = 'clipboard' label = 'SO Aktif'    value = lv_t_so   unit = ''  color = ''             sub = lv_t_komp && ' komponen' )
-  ( icon = 'package'   label = 'Komponen'    value = lv_t_komp unit = ''  color = ''             sub = lv_t_pcs && ' pcs' )
-  ( icon = 'check'     label = 'Confirmed'   value = |{ lv_conf_pct }| unit = '%' color = 'var(--green)' sub = lv_t_confsub )
-  ( icon = 'building'  label = 'Work Center' value = '52'    unit = ''  color = ''             sub = '30 CNC - 18 EB - 4 Asm' )
-  ( icon = 'timer'     label = 'Bergerak'    value = '187'   unit = ''  color = 'var(--blue)'  sub = '113 selesai' )
-  ( icon = 'alert'     label = 'Bottleneck'  value = 'WC-25' unit = ''  color = 'var(--red)'   sub = '18 menunggu' ) ).
-
-" --- (2) Section pipeline ---
-lt_sec = VALUE #(
-  ( id = 'MC'  icon = 'gear'   title = 'Machining Center' wc_cnt = '8 WC'
-    wip = '42' pcs = '520 pcs' passed = '15 lewat' w_active = '60' w_queue = '40' )
-  ( id = 'EB'  icon = 'ruler'  title = 'Edge Banding'     wc_cnt = '18 WC'
-    wip = '58' pcs = '780 pcs' passed = '28 lewat' w_active = '50' w_queue = '50' )
-  ( id = 'ASM' icon = 'wrench' title = 'Assembling'       wc_cnt = '4 WC'
-    wip = '18' pcs = '320 pcs' passed = '70 lewat' w_active = '30' w_queue = '70' ) ).
-
-" --- (3) Peta Work Center ---
-"     Angka dibangkitkan pola sederhana (dummy), TAPI penentuan kelas warna
-"     di bawah adalah logika sungguhan — pertahankan saat ganti data asli.
-DATA: lv_i   TYPE i,
-      lv_wip TYPE i,
-      lv_pas TYPE i,
-      lv_n2  TYPE n LENGTH 2.
-
-DO 30 TIMES.
-  lv_i   = sy-index.
-  lv_wip = ( lv_i * 7 )  MOD 19.       " ganti: COUNT komponen WIP di WC
-  lv_pas = ( lv_i * 13 ) MOD 24.       " ganti: COUNT operasi confirmed di WC
-  lv_n2  = lv_i.
-
-  CLEAR ls_wc.
-  ls_wc-grp     = 'CNC ROUTER'.
-  ls_wc-grp_cnt = '30 WC'.
-  ls_wc-num     = lv_n2.
-  ls_wc-name    = |CNC Router { lv_n2 }|.
-  ls_wc-wip     = |{ lv_wip }|.
-  ls_wc-passed  = |{ lv_pas }|.
-  IF     lv_wip = 0.            ls_wc-cls = ''.
-  ELSEIF lv_wip >= lc_load_hi.  ls_wc-cls = 'heavy-load'.
-  ELSEIF lv_wip >= lc_load_med. ls_wc-cls = 'medium-load'.
-  ELSE.                         ls_wc-cls = 'light-load'.
-  ENDIF.
-  APPEND ls_wc TO lt_wc.
-ENDDO.
-
-DO 8 TIMES.
-  lv_i   = sy-index.
-  lv_wip = ( lv_i * 5 ) MOD 11.
-  lv_pas = ( lv_i * 9 ) MOD 18.
-  lv_n2  = lv_i + 30.
-
-  CLEAR ls_wc.
-  ls_wc-grp     = 'BORING / DRILLING'.
-  ls_wc-grp_cnt = '8 WC'.
-  ls_wc-num     = lv_n2.
-  ls_wc-name    = |Boring { lv_n2 }|.
-  ls_wc-wip     = |{ lv_wip }|.
-  ls_wc-passed  = |{ lv_pas }|.
-  IF     lv_wip = 0.            ls_wc-cls = ''.
-  ELSEIF lv_wip >= lc_load_hi.  ls_wc-cls = 'heavy-load'.
-  ELSEIF lv_wip >= lc_load_med. ls_wc-cls = 'medium-load'.
-  ELSE.                         ls_wc-cls = 'light-load'.
-  ENDIF.
-  APPEND ls_wc TO lt_wc.
-ENDDO.
-
-" --- (4a) SO Outstanding ---
-lt_so = VALUE #(
-  ( id = 'ALL' pct = '47%' pct_cls = 'done' )
-  ( id = 'SO-2401' pct = '82%' pct_cls = 'done'
-    product = 'Wardrobe 3-Pintu - Aurora' sonum = 'SO-24-0117'
-    mix_a = '10' mix_b = '40' mix_c = '50'
-    stat_l = '60 komp - 420 pcs' stat_r = '49 selesai' )
-  ( id = 'SO-2402' pct = '60%' pct_cls = ''
-    product = 'TV Cabinet - Nordic' sonum = 'SO-24-0121'
-    mix_a = '20' mix_b = '45' mix_c = '35'
-    stat_l = '58 komp - 435 pcs' stat_r = '21 selesai' )
-  ( id = 'SO-2403' pct = '38%' pct_cls = ''
-    product = 'Kitchen Set Bawah - Lumen' sonum = 'SO-24-0126'
-    mix_a = '35' mix_b = '40' mix_c = '25'
-    stat_l = '72 komp - 510 pcs' stat_r = '18 selesai' )
-  ( id = 'SO-2404' pct = '21%' pct_cls = ''
-    product = 'Meja Kerja - Bureau' sonum = 'SO-24-0130'
-    mix_a = '55' mix_b = '30' mix_c = '15'
-    stat_l = '44 komp - 285 pcs' stat_r = '9 selesai' ) ).
-
-" --- (4b) Detail komponen ---
-lt_comp = VALUE #(
-  ( name = 'Pintu Kiri #1'    sub = 'SO-2401-C001 - Panel Pintu'
-    matnr = 'HPL-3021'   maktx = 'HPL Grey Oak 3mm'         qty = '3'
-    op1 = 'CNC' op1_cls = 'op-done' op2 = 'EB' op2_cls = 'op-done'
-    status = 'done'   stat_txt = 'Selesai'    stat_ico = 'check'  pos = '100%' pos_cls = 'is-done' )
-  ( name = 'Samping Kiri #2'  sub = 'SO-2401-C002 - Panel Samping'
-    matnr = 'PB18-PTH'   maktx = 'Particle Board 18mm Putih' qty = '4'
-    op1 = 'CNC' op1_cls = 'op-now'  op2 = 'EB' op2_cls = 'op-todo'
-    status = 'active' stat_txt = 'Dikerjakan' stat_ico = 'loader' pos = '75%'  pos_cls = '' )
-  ( name = 'Rak Atas #3'      sub = 'SO-2401-C003 - Rak'
-    matnr = 'MDF15-NAT'  maktx = 'MDF 15mm Natural'         qty = '4'
-    op1 = 'CNC' op1_cls = 'op-todo' op2 = 'EB' op2_cls = 'op-todo'
-    status = 'queue'  stat_txt = 'Antre'      stat_ico = 'clock'  pos = '35%'  pos_cls = '' )
-  ( name = 'Pintu Kanan #4'   sub = 'SO-2401-C004 - Panel Pintu'
-    matnr = 'HPL-3021'   maktx = 'HPL Grey Oak 3mm'         qty = '3'
-    op1 = 'CNC' op1_cls = 'op-done' op2 = 'EB' op2_cls = 'op-now'
-    status = 'active' stat_txt = 'Dikerjakan' stat_ico = 'loader' pos = '82%'  pos_cls = '' )
-  ( name = 'Alas Bawah #5'    sub = 'SO-2402-C011 - Panel Alas'
-    matnr = 'PB18-PTH'   maktx = 'Particle Board 18mm Putih' qty = '2'
-    op1 = 'CNC' op1_cls = 'op-done' op2 = 'EB' op2_cls = 'op-done'
-    status = 'done'   stat_txt = 'Selesai'    stat_ico = 'check'  pos = '100%' pos_cls = 'is-done' )
-  ( name = 'Backing Panel #6' sub = 'SO-2402-C012 - Backing'
-    matnr = 'HB4-NAT'    maktx = 'Hardboard 4mm Natural'    qty = '6'
-    op1 = 'CNC' op1_cls = 'op-todo' op2 = 'EB' op2_cls = 'op-todo'
-    status = 'queue'  stat_txt = 'Antre'      stat_ico = 'clock'  pos = '12%'  pos_cls = '' )
-  ( name = 'Laci Depan #7'    sub = 'SO-2402-C013 - Front Laci'
-    matnr = 'MDF15-NAT'  maktx = 'MDF 15mm Natural'         qty = '8'
-    op1 = 'CNC' op1_cls = 'op-now'  op2 = 'EB' op2_cls = 'op-todo'
-    status = 'active' stat_txt = 'Dikerjakan' stat_ico = 'loader' pos = '58%'  pos_cls = '' )
-  ( name = 'Top Table #8'     sub = 'SO-2403-C021 - Top'
-    matnr = 'PLY18-MRN'  maktx = 'Plywood 18mm Meranti'     qty = '2'
-    op1 = 'CNC' op1_cls = 'op-todo' op2 = 'EB' op2_cls = 'op-todo'
-    status = 'queue'  stat_txt = 'Antre'      stat_ico = 'clock'  pos = '5%'   pos_cls = '' ) ).
-
-*&--- === AKHIR DATA DUMMY === ----------------------------------------*
 %>
 <html>
 <head>
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Central Storage - Lintasan Routing</title>
+  <title>Dashboard Production</title>
   <style type="text/css">
-    :root{
-      --bg:#ebebeb; --surface:#FFFFFF; --surface2:#F0F1F5; --hover:#E8E9F0;
-      --border:#E2E4EB; --border2:#D0D2DC;
-      --text:#1A1D26; --sub:#5E6678; --faint:#919AAD;
-      --amber:#D69A4C; --green:#16A34A; --blue:#2563EB; --slate:#6B7B8F;
-      --red:#DC2626; --purple:#7C6FD4;
-      --shadow:0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03);
-      --shadow-md:0 4px 16px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.03);
-      --radius:10px; --radius-sm:8px; --radius-lg:14px;
-      --mono: ui-monospace,'SF Mono',Consolas,'Courier New',monospace;
+    /* ================================================================
+       Disalin dari prototype/style.css. Perubahan HANYA pada pemilih
+       yang semula menyasar <i> Font Awesome -> kini menyasar .ic (SVG).
+       ================================================================ */
+    :root {
+        --bg-main: #f0f4f8;
+        --bg-card: #ffffff;
+        --border-color: #e2e8f0;
+        --text-main: #334155;
+        --text-muted: #64748b;
+
+        --color-blue: #2563eb;
+        --color-green: #10b981;
+        --color-orange: #f59e0b;
+        --color-red: #ef4444;
+
+        --load-low: #d1fae5;
+        --load-low-text: #065f46;
+        --load-med: #fef3c7;
+        --load-med-text: #92400e;
+        --load-high: #fee2e2;
+        --load-high-text: #991b1b;
     }
-    *{ margin:0; padding:0; box-sizing:border-box; }
-    body{
-      font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
-      background-color:var(--bg); color:var(--text); line-height:1.5;
-      padding:24px; -webkit-font-smoothing:antialiased;
+
+    * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    .container{ max-width:1240px; margin:0 auto; }
 
-    /* ---------- header ---------- */
-    .header{ display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between;
-             gap:20px; padding-bottom:24px; margin-bottom:24px; }
-    .header-left{ display:flex; align-items:center; gap:14px; }
-    .header-icon{ display:flex; align-items:center; justify-content:center; width:40px; height:40px;
-                  background:linear-gradient(135deg,var(--amber),#C8883A); color:#fff;
-                  border-radius:var(--radius-sm); box-shadow:0 2px 8px rgba(214,154,76,0.3); }
-    .header-title h1{ font-size:22px; font-weight:700; letter-spacing:-0.02em; margin-bottom:2px; }
-    .header-subtitle{ font-size:10px; letter-spacing:0.2em; color:var(--faint);
-                      text-transform:uppercase; font-weight:500; }
-    .header-right{ text-align:right; }
-    .header-meta{ font-size:11.5px; color:var(--sub); margin-bottom:3px; }
+    body {
+        background-color: var(--bg-main);
+        color: var(--text-main);
+        padding: 16px;
+        font-size: 13px;
+    }
 
-    /* ---------- KPI ---------- */
-    .kpi-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
-               gap:14px; margin-bottom:24px; }
-    .kpi{ background-color:var(--surface); border-radius:var(--radius); padding:18px 20px;
-          min-height:100px; display:flex; flex-direction:column; justify-content:space-between;
-          box-shadow:var(--shadow); transition:box-shadow .25s, transform .25s; }
-    .kpi:hover{ box-shadow:var(--shadow-md); transform:translateY(-1px); }
-    .kpi-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
-    .kpi-label{ font-size:10px; font-weight:600; letter-spacing:0.15em; text-transform:uppercase;
-                color:var(--faint); display:flex; align-items:center; gap:5px; }
-    .kpi-value{ font-size:30px; font-weight:700; line-height:1; display:flex; align-items:baseline;
-                gap:6px; margin-bottom:6px; letter-spacing:-0.03em; }
-    .kpi-unit{ font-size:14px; font-weight:500; color:var(--sub); }
-    .kpi-sub{ font-size:11.5px; color:var(--sub); }
+    /* ikon SVG inline pengganti Font Awesome: ukuran ikut font-size induk */
+    .ic { width: 1em; height: 1em; display: inline-block; vertical-align: -0.125em;
+          fill: currentColor; flex: 0 0 auto; }
 
-    /* ---------- section pipeline ---------- */
-    .section-pipeline{ background-color:var(--surface); border-radius:var(--radius-lg);
-                       padding:22px 24px; margin-bottom:24px; box-shadow:var(--shadow); }
-    .section-title{ display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
-    .section-title h2{ font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px; }
-    .section-meta{ font-size:11px; color:var(--sub); }
-    .section-buttons{ display:flex; gap:10px; overflow-x:auto; padding-bottom:4px; margin-bottom:14px; }
-    .sec-btn{ min-width:200px; background-color:var(--surface2); border:none; border-radius:var(--radius);
-              padding:14px 16px; cursor:pointer; transition:all .2s; text-align:left; flex:1;
-              box-shadow:var(--shadow); display:block; text-decoration:none; color:inherit; }
-    .sec-btn:hover{ background-color:var(--hover); box-shadow:var(--shadow-md); }
-    .sec-btn.active{ background-color:var(--surface); box-shadow:0 0 0 2px var(--amber), var(--shadow-md); }
-    .sec-btn-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
-    .sec-btn-title{ font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:6px; }
-    .sec-btn-wc{ font-size:10px; color:var(--faint); font-weight:500; }
-    .sec-btn-body{ display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:10px; }
-    .sec-btn-wip{ font-size:28px; font-weight:700; line-height:1; letter-spacing:-0.03em; }
-    .sec-btn-wip-label{ font-size:11px; color:var(--sub); }
-    .sec-btn-stat{ text-align:right; }
-    .sec-btn-stat-val{ font-size:13px; font-weight:600; color:var(--amber); }
-    .sec-btn-stat-label{ font-size:10px; font-weight:500; color:var(--green); }
-    .progress-bar{ display:flex; height:6px; background-color:var(--bg); border-radius:4px; overflow:hidden; }
-    .progress-active{ background:linear-gradient(90deg,var(--blue),#4B8BEF); }
-    .progress-queue{ background-color:var(--slate); }
+    .dashboard-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
 
-    /* ---------- heatmap work center ---------- */
-    .heatmap-section{ background-color:var(--surface); border-radius:var(--radius-lg);
-                      padding:20px 22px; margin-bottom:24px; box-shadow:var(--shadow); }
-    .heatmap-header{ display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between;
-                     gap:12px; margin-bottom:16px; }
-    .heatmap-title{ font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px; }
-    .legend{ display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
-    .legend-item{ display:flex; align-items:center; gap:6px; }
-    .legend-box{ width:10px; height:10px; border-radius:3px; }
-    .legend-text{ font-size:10.5px; color:var(--sub); }
-    .group-label{ font-size:9.5px; font-weight:600; letter-spacing:0.15em; color:var(--faint);
-                  margin-bottom:10px; text-transform:uppercase; }
-    .wc-grid{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
-    .wc-box{ width:54px; height:48px; border:1px solid var(--border); border-radius:var(--radius-sm);
-             background-color:var(--surface2); display:flex; flex-direction:column; align-items:center;
-             justify-content:center; cursor:pointer; transition:all .2s; }
-    .wc-box:hover{ transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--border2); }
-    .wc-box.light-load{  background-color:rgba(22,163,74,0.08);  border-color:rgba(22,163,74,0.30); }
-    .wc-box.light-load:hover{  background-color:rgba(22,163,74,0.13);  border-color:rgba(22,163,74,0.50); }
-    .wc-box.medium-load{ background-color:rgba(201,133,44,0.10); border-color:rgba(201,133,44,0.35); }
-    .wc-box.medium-load:hover{ background-color:rgba(201,133,44,0.16); border-color:rgba(201,133,44,0.55); }
-    .wc-box.heavy-load{  background-color:rgba(220,38,38,0.08);   border-color:rgba(220,38,38,0.30); }
-    .wc-box.heavy-load:hover{  background-color:rgba(220,38,38,0.15);   border-color:rgba(220,38,38,0.55); }
-    .wc-num{ font-size:9px; color:var(--faint); font-weight:500; }
-    .wc-wip{ font-size:16px; font-weight:700; line-height:1; }
-    .wc-passed{ font-size:7.5px; color:var(--faint); font-weight:500; }
+    /* HEADER */
+    .main-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: var(--bg-card);
+        padding: 12px 20px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+    }
+    .header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .logo-box {
+        background: #b45309;
+        color: white;
+        width: 36px;
+        height: 36px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+    }
+    .main-header h1 {
+        font-size: 16px;
+        font-weight: 700;
+    }
+    .main-header .subtitle {
+        font-size: 9px;
+        color: var(--text-muted);
+        letter-spacing: 0.5px;
+        margin-top: 2px;
+    }
+    .header-right {
+        text-align: right;
+        font-size: 11px;
+    }
+    .flow-info {
+        color: var(--text-muted);
+        margin-right: 15px;
+    }
+    .status-indicator {
+        font-weight: 600;
+    }
 
-    /* ---------- panel bawah ---------- */
-    .lower-grid{ display:grid; grid-template-columns:300px 1fr; gap:18px; margin-bottom:24px; }
-    .so-list{ background-color:var(--surface); border-radius:var(--radius-lg); padding:18px 20px;
-              box-shadow:var(--shadow); }
-    .so-title{ font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px; margin-bottom:14px; }
-    .so-btn{ width:100%; padding:12px 14px; background-color:var(--surface2); border:none;
-             border-radius:var(--radius-sm); color:var(--text); cursor:pointer; text-align:left;
-             margin-bottom:8px; transition:all .2s; box-shadow:var(--shadow); display:block;
-             text-decoration:none; }
-    .so-btn:hover{ background-color:var(--hover); box-shadow:var(--shadow-md); }
-    .so-btn.active{ background-color:var(--surface); box-shadow:0 0 0 2px var(--amber), var(--shadow-md); }
-    .so-btn-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; }
-    .so-btn-id{ font-size:12.5px; font-weight:700; }
-    .so-btn-pct{ font-size:12.5px; font-weight:600; }
-    .so-btn-pct.done{ color:var(--green); }
-    .so-btn-product{ font-size:11px; color:var(--sub); white-space:nowrap; overflow:hidden;
-                     text-overflow:ellipsis; margin-bottom:3px; }
-    .so-btn-so{ font-size:9.5px; color:var(--faint); margin-bottom:8px; font-weight:500; }
-    .so-mix-bar{ height:6px; background-color:var(--bg); border-radius:3px; overflow:hidden;
-                 display:flex; margin-bottom:7px; }
-    .mix-seg{ flex:0 0 auto; height:100%; }
-    .so-btn-stats{ font-size:10px; color:var(--faint); display:flex; justify-content:space-between;
-                   font-weight:500; }
+    /* CARD SYSTEM */
+    .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 12px;
+    }
+    .card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+        position: relative;
+    }
+    .card-title {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+    }
+    .icon-top-right {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        color: #cbd5e1;
+        font-size: 14px;
+    }
+    .card-value {
+        font-size: 24px;
+        font-weight: 700;
+        margin-bottom: 2px;
+    }
+    .card-sub {
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+    .bottleneck-card {
+        border-left: 4px solid var(--color-red);
+    }
+    .color-green { color: var(--color-green); }
+    .color-blue { color: var(--color-blue); }
+    .color-red { color: var(--color-red); }
+    .card-value .unit { font-size: 14px; font-weight: 400; }
 
-    /* ---------- detail komponen ---------- */
-    .component-detail{ background-color:var(--surface); border-radius:var(--radius-lg);
-                       padding:18px 20px; box-shadow:var(--shadow); }
-    .detail-header{ display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center;
-                    gap:12px; margin-bottom:14px; }
-    .detail-title{ font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px; }
-    .detail-chip{ font-family:var(--mono); font-size:10px; background-color:var(--surface2);
-                  border:1px solid var(--border); border-radius:5px; padding:1px 7px; color:var(--sub);
-                  font-weight:400; }
-    .detail-filter{ display:flex; align-items:center; gap:8px; background-color:var(--surface2);
-                    border:1px solid var(--border); border-radius:var(--radius-sm); padding:7px 12px; }
-    .detail-filter input{ background:transparent; border:none; outline:none; color:var(--text);
-                          font-family:inherit; font-size:12px; width:150px; }
-    .status-filters{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
-    .status-btn{ font-size:11px; font-weight:500; color:var(--sub); background-color:transparent;
-                 border:1px solid var(--border); border-radius:6px; padding:4px 12px; cursor:pointer;
-                 transition:all .2s; font-family:inherit; }
-    .status-btn:hover{ background-color:var(--surface2); border-color:var(--border2); }
-    .status-btn.active{ background-color:var(--amber); color:#fff; border-color:var(--amber); font-weight:600; }
-    .table-container{ overflow-x:auto; }
-    .table{ width:100%; border-collapse:collapse; font-size:12.5px; }
-    .table th{ font-size:9.5px; font-weight:600; letter-spacing:0.1em; color:var(--faint);
-               background-color:var(--surface2); padding:10px 12px; text-align:left;
-               border-bottom:1px solid var(--border); text-transform:uppercase; white-space:nowrap; }
-    .table td{ padding:12px; border-bottom:1px solid var(--border); vertical-align:middle; }
-    .table tbody tr:hover{ background-color:rgba(37,99,235,0.04); }
-    .c-name{ font-size:12px; }
-    .c-sub{ font-family:var(--mono); font-size:9px; color:var(--faint); }
-    .c-matnr{ font-family:var(--mono); font-size:10.5px; font-weight:700; color:var(--purple); }
-    .c-maktx{ font-size:9px; color:var(--faint); }
-    .num{ text-align:right; }
-    .c-qty{ font-family:var(--mono); font-size:13px; font-weight:700; }
-    .c-pos{ font-family:var(--mono); font-size:12px; }
-    .c-pos.is-done{ color:var(--green); }
-    .op{ font-family:var(--mono); font-size:9px; font-weight:700; border-radius:4px; padding:2px 4px;
-         border:1px solid transparent; }
-    .op-done{ color:#fff; background:var(--green); }
-    .op-now{  color:var(--text); background:rgba(37,99,235,0.12); }
-    .op-todo{ color:var(--faint); background:transparent; border-color:var(--border); }
-    .op-arrow{ color:var(--faint); font-size:8px; }
-    .status-pill{ display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:5px;
-                  font-size:10px; font-weight:600; text-transform:uppercase; white-space:nowrap; }
-    .status-pill.done{   background-color:rgba(22,163,74,0.10);   color:var(--green); }
-    .status-pill.active{ background-color:rgba(37,99,235,0.10);   color:var(--blue); }
-    .status-pill.queue{  background-color:rgba(107,123,143,0.12); color:var(--slate); }
-    .empty-row td{ text-align:center; color:var(--faint); font-size:11.5px; padding:22px 12px; }
+    /* FILTER SECTION */
+    .filter-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+    }
+    .filter-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        font-weight: 600;
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    .btn-all-buyer {
+        background: #b45309;
+        color: white;
+        border: none;
+        padding: 4px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 11px;
+    }
+    .filter-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .filter-btn {
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        cursor: pointer;
+        display: flex;
+        gap: 5px;
+        align-items: center;
+    }
+    .filter-btn:hover { background: #f1f5f9; }
+    .filter-btn.active {
+        background: #fef3c7;
+        border-color: #d97706;
+        font-weight: 600;
+    }
+    .filter-btn .pct { color: var(--text-muted); font-size: 9px; font-weight: 400; }
 
-    .footer{ font-size:11px; color:var(--faint); display:flex; flex-wrap:wrap;
-             justify-content:space-between; gap:12px; margin-top:24px; padding-top:14px;
-             border-top:1px solid var(--border); }
+    /* LINTASAN PRODUKSI */
+    .wip-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .section-title-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 14px;
+    }
+    h2 {
+        font-size: 13px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .view-status, .sub-filter {
+        font-size: 11px;
+        color: var(--text-muted);
+    }
+    .wip-flow-container {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    .storage-box {
+        border: 1px dashed var(--border-color);
+        border-radius: 6px;
+        padding: 12px;
+        text-align: center;
+        min-width: 100px;
+        color: var(--text-muted);
+        font-size: 11px;
+    }
+    .storage-box .ic { font-size: 16px; margin-bottom: 4px; color: #94a3b8; }
+    .flow-arrow { color: #cbd5e1; font-size: 14px; }
+    .center-box {
+        flex: 1;
+        border: 2px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px;
+        background: #f8fafc;
+        cursor: pointer;
+        position: relative;
+    }
+    .center-box.active {
+        border-color: #475569;
+        background: #ffffff;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+    }
+    .center-header {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 600;
+        font-size: 12px;
+    }
+    .center-header .sub { font-size: 10px; color: var(--text-muted); font-weight: 400; }
+    .center-body { margin: 8px 0; }
+    .wip-number { font-size: 20px; font-weight: 700; }
+    .wip-lbl { font-size: 11px; color: var(--text-muted); }
+    .center-footer {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--text-muted);
+        margin-bottom: 6px;
+    }
+    .progress-bar-container {
+        height: 6px;
+        background: #e2e8f0;
+        border-radius: 3px;
+        display: flex;
+        overflow: hidden;
+    }
+    .pb-done { background-color: var(--color-green); }
+    .pb-wip { background-color: var(--color-blue); }
+    .pb-queue { background-color: var(--color-orange); }
 
-    /* ---------- ikon ---------- */
-    .icon{ width:18px; height:18px; display:inline-block; vertical-align:middle;
-           fill:none; stroke:currentColor; stroke-width:1.8;
-           stroke-linecap:round; stroke-linejoin:round; }
-    .icon-sm{ width:14px; height:14px; }
-    .icon-lg{ width:22px; height:22px; }
+    .legend-container {
+        display: flex;
+        gap: 12px;
+        font-size: 11px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.green { background: var(--color-green); }
+    .dot.blue { background: var(--color-blue); }
+    .dot.orange { background: var(--color-orange); }
+    .dot.red { background: var(--color-red); }
 
-    @media (max-width:1024px){ .lower-grid{ grid-template-columns:1fr; } }
-    @media (max-width:768px){
-      body{ padding:16px; }
-      .kpi-grid{ grid-template-columns:repeat(2,1fr); gap:10px; }
-      .kpi{ padding:14px 16px; min-height:88px; }
-      .kpi-value{ font-size:24px; }
-      .header{ flex-direction:column; align-items:flex-start; }
-      .header-right{ text-align:left; }
-      .section-buttons{ flex-wrap:wrap; }
-      .sec-btn{ min-width:140px; }
-      .heatmap-section{ padding:14px 16px; }
-      .so-list, .component-detail{ padding:14px 16px; }
+    /* PETA WORK CENTER GRID */
+    .wc-map-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .hint { font-weight: 400; color: var(--text-muted); font-size: 10px; margin-left: 4px; }
+    .load-legend { font-size: 11px; display: flex; gap: 4px; align-items: center; }
+    .lbl-load { padding: 2px 6px; border-radius: 3px; font-size: 10px; }
+    .load-low { background: var(--load-low); color: var(--load-low-text); }
+    .load-med { background: var(--load-med); color: var(--load-med-text); }
+    .load-high { background: var(--load-high); color: var(--load-high-text); }
+
+    .wc-grid {
+        display: grid;
+        grid-template-columns: repeat(20, 1fr);
+        gap: 4px;
+    }
+    .wc-item {
+        border-radius: 4px;
+        padding: 6px 2px;
+        text-align: center;
+        cursor: pointer;
+        border: 1px solid transparent;
+    }
+    .wc-item:hover { transform: scale(1.05); border-color: #94a3b8; }
+    .wc-name { font-size: 9px; color: var(--text-muted); display: block; margin-bottom: 2px; }
+    .wc-value { font-size: 13px; font-weight: 700; }
+    .wc-sub { font-size: 8px; color: var(--text-muted); display: block; opacity: 0.7; }
+
+    /* MONITORING SO / PLO */
+    .so-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .so-list-container {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 320px;
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+    .so-all-bar {
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 6px 12px;
+        display: flex;
+        justify-content: space-between;
+        font-weight: 600;
+        font-size: 11px;
+    }
+    .so-item-box {
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #ffffff;
+    }
+    .so-item-header {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 4px;
+    }
+    .so-meta { font-size: 10px; color: var(--text-muted); font-weight: 400; margin-top: 2px; }
+    .so-pct-val { font-weight: 700; }
+    .so-progress-bar {
+        height: 8px;
+        background: #e2e8f0;
+        border-radius: 4px;
+        margin: 8px 0;
+        display: flex;
+        overflow: hidden;
+    }
+    .so-bar-part { height: 100%; }
+    .so-item-footer {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+
+    /* DETAIL KOMPONEN TABLE */
+    .component-detail-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .detail-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+    .search-box-container {
+        position: relative;
+        width: 240px;
+    }
+    .search-box-container .ic {
+        position: absolute;
+        left: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+    }
+    .search-box-container input {
+        width: 100%;
+        padding: 5px 8px 5px 26px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        font-size: 11px;
+        outline: none;
+    }
+    .tab-filters {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 8px;
+        margin-bottom: 12px;
+    }
+    .tab-btn {
+        background: transparent;
+        border: none;
+        padding: 6px 12px;
+        font-size: 11px;
+        cursor: pointer;
+        color: var(--text-muted);
+        border-radius: 4px;
+    }
+    .tab-btn.active {
+        background: #fef3c7;
+        color: #b45309;
+        font-weight: 600;
+    }
+    .table-wrapper {
+        max-height: 350px;
+        overflow-y: auto;
+    }
+    .component-table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+    }
+    .component-table th {
+        background: #f8fafc;
+        padding: 8px 12px;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border-color);
+        position: sticky;
+        top: 0;
+    }
+    .component-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 11px;
+        vertical-align: middle;
+    }
+    .comp-name { font-weight: 600; display: block; color: #1e293b; }
+    .comp-sub { font-size: 10px; color: var(--text-muted); }
+    .mat-code { color: var(--color-blue); font-weight: 500; font-family: monospace; }
+    .routing-badge {
+        background: #f1f5f9;
+        border: 1px solid var(--border-color);
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-size: 9px;
+        display: inline-block;
+    }
+    .status-badge {
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        display: inline-block;
+        border: 1px solid transparent;
+    }
+    .status-badge.antri { background: #fff7ed; border-color: #ffedd5; color: #c2410c; }
+    .status-badge.dikerjakan { background: #eff6ff; border-color: #dbeafe; color: #1d4ed8; }
+    .status-badge.selesai { background: #ecfdf5; border-color: #d1fae5; color: #047857; }
+
+    .table-footer-note {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 10px;
+        border-top: 1px dashed var(--border-color);
+        padding-top: 8px;
     }
   </style>
 </head>
 <body>
 
-<%-- Pustaka ikon SVG inline (pengganti lucide CDN — jaringan SAP tertutup).
-     Pakai: <svg class="icon"><use xlink:href="#i-package"></use></svg> --%>
+<%-- Pustaka ikon SVG inline — pengganti Font Awesome (CDN tidak terjangkau
+     dari jaringan SAP). Nama symbol mengikuti nama ikon FA aslinya supaya
+     mudah dicocokkan dengan prototype. --%>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="i-factory" viewBox="0 0 24 24"><path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/></symbol>
-  <symbol id="i-clipboard" viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></symbol>
-  <symbol id="i-package" viewBox="0 0 24 24"><path d="M21 8v8a2 2 0 0 1-1 1.73l-7 4a2 2 0 0 1-2 0l-7-4A2 2 0 0 1 3 16V8a2 2 0 0 1 1-1.73l7-4a2 2 0 0 1 2 0l7 4A2 2 0 0 1 21 8z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></symbol>
-  <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="8.5 12.5 11 15 16 9.5"/></symbol>
-  <symbol id="i-building" viewBox="0 0 24 24"><rect x="3" y="7" width="8" height="14"/><rect x="13" y="3" width="8" height="18"/><line x1="6" y1="11" x2="8" y2="11"/><line x1="6" y1="15" x2="8" y2="15"/><line x1="16" y1="8" x2="18" y2="8"/><line x1="16" y1="12" x2="18" y2="12"/><line x1="16" y1="16" x2="18" y2="16"/></symbol>
-  <symbol id="i-timer" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><polyline points="12 9 12 13 15 15"/><line x1="9" y1="2" x2="15" y2="2"/></symbol>
-  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12" y2="17"/></symbol>
-  <symbol id="i-chart" viewBox="0 0 24 24"><line x1="3" y1="21" x2="21" y2="21"/><rect x="5" y="11" width="4" height="7"/><rect x="11" y="6" width="4" height="12"/><rect x="17" y="14" width="4" height="4"/></symbol>
-  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.8-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.1 15H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 10 4.1V4a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.8 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.8H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></symbol>
-  <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M16 2 22 8 8 22 2 16z"/><line x1="6" y1="12" x2="8" y2="14"/><line x1="9" y1="9" x2="11" y2="11"/><line x1="12" y1="6" x2="14" y2="8"/></symbol>
-  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 1 5 5l-9.2 9.2a2.1 2.1 0 0 1-3-3l9.2-9.2z"/><path d="M14.7 6.3 11.4 3a4 4 0 0 0-5.7 5.7L9 12"/></symbol>
-  <symbol id="i-map" viewBox="0 0 24 24"><polygon points="1 6 8 3 16 6 23 3 23 18 16 21 8 18 1 21"/><line x1="8" y1="3" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="21"/></symbol>
-  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
-  <symbol id="i-loader" viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.9" y1="4.9" x2="7.8" y2="7.8"/><line x1="16.2" y1="16.2" x2="19.1" y2="19.1"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.9" y1="19.1" x2="7.8" y2="16.2"/><line x1="16.2" y1="7.8" x2="19.1" y2="4.9"/></symbol>
-  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></symbol>
+  <symbol id="fa-industry" viewBox="0 0 24 24"><path d="M2 21V9l6 4V9l6 4V3h3l1 18H2zm3-3h3v-3H5v3zm5 0h3v-3h-3v3zm5 0h3v-3h-3v3z"/></symbol>
+  <symbol id="fa-users" viewBox="0 0 24 24"><path d="M8 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zm9 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM1 19c0-3 3.1-5 7-5s7 2 7 5v1H1v-1zm15.5-4.2c2.6.5 4.5 2.1 4.5 4.2v1h-4.6v-1c0-1.6-.7-3-1.9-4.1l2-.1z"/></symbol>
+  <symbol id="fa-cubes" viewBox="0 0 24 24"><path d="M11 2 6 4.5v5L11 12l5-2.5v-5L11 2zM4 12l-3 1.5v5L4 21l3-1.5v-5L4 12zm14 0-3 1.5v5L18 21l3-1.5v-5L18 12z"/></symbol>
+  <symbol id="fa-circle-check" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-1.2 14.6-4-4 1.6-1.6 2.4 2.4 5.2-5.2 1.6 1.6-6.8 6.8z"/></symbol>
+  <symbol id="fa-gear" viewBox="0 0 24 24"><path d="m19.4 13-.1-1 .1-1 2-1.5-2-3.5-2.4 1a7 7 0 0 0-1.7-1L15 3H9l-.3 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.5L4.6 11l-.1 1 .1 1-2 1.5 2 3.5 2.4-1c.5.4 1.1.7 1.7 1L9 21h6l.3-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.5-2-1.5zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></symbol>
+  <symbol id="fa-square-check" viewBox="0 0 24 24"><path d="M3 3h18v18H3V3zm7.8 13.6 6.8-6.8-1.6-1.6-5.2 5.2-2.4-2.4-1.6 1.6 4 4z"/></symbol>
+  <symbol id="fa-triangle-exclamation" viewBox="0 0 24 24"><path d="M12 2 1 21h22L12 2zm-1 7h2v6h-2V9zm0 8h2v2h-2v-2z"/></symbol>
+  <symbol id="fa-filter" viewBox="0 0 24 24"><path d="M3 4h18l-7 8v7l-4 2v-9L3 4z"/></symbol>
+  <symbol id="fa-route" viewBox="0 0 24 24"><path d="M6 3a3 3 0 0 0-1 5.8V11H3v2h8a2 2 0 0 1 0 4H8v-2l-4 3 4 3v-2h3a4 4 0 0 0 0-8H7V8.8A3 3 0 0 0 6 3zm12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></symbol>
+  <symbol id="fa-warehouse" viewBox="0 0 24 24"><path d="M12 2 1 7v14h4v-9h14v9h4V7L12 2zM7 14h10v2H7v-2zm0 3h10v4H7v-4z"/></symbol>
+  <symbol id="fa-box-open" viewBox="0 0 24 24"><path d="M2 7 6 3l6 3 6-3 4 4-2 2H4L2 7zm2 5h16v9H4v-9zm7 0h2v4h-2v-4z"/></symbol>
+  <symbol id="fa-arrow-right" viewBox="0 0 24 24"><path d="M4 11h11.2l-4.6-4.6L12 5l7 7-7 7-1.4-1.4 4.6-4.6H4v-2z"/></symbol>
+  <symbol id="fa-table-cells" viewBox="0 0 24 24"><path d="M3 3h18v18H3V3zm2 2v4h5V5H5zm7 0v4h7V5h-7zM5 11v3h5v-3H5zm7 0v3h7v-3h-7zM5 16v3h5v-3H5zm7 0v3h7v-3h-7z"/></symbol>
+  <symbol id="fa-border-all" viewBox="0 0 24 24"><path d="M3 3v18h18V3H3zm2 2h6v6H5V5zm8 0h6v6h-6V5zM5 13h6v6H5v-6zm8 0h6v6h-6v-6z"/></symbol>
+  <symbol id="fa-grip" viewBox="0 0 24 24"><path d="M4 4h4v4H4V4zm6 0h4v4h-4V4zm6 0h4v4h-4V4zM4 10h4v4H4v-4zm6 0h4v4h-4v-4zm6 0h4v4h-4v-4zM4 16h4v4H4v-4zm6 0h4v4h-4v-4zm6 0h4v4h-4v-4z"/></symbol>
+  <symbol id="fa-file-invoice" viewBox="0 0 24 24"><path d="M14 2H5v20h14V7l-5-5zm0 6V3.5L18.5 8H14zM7 10h6v2H7v-2zm0 4h10v2H7v-2zm0 4h10v2H7v-2z"/></symbol>
+  <symbol id="fa-user" viewBox="0 0 24 24"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0 2c-4.4 0-8 2.3-8 5.2V21h16v-1.8c0-2.9-3.6-5.2-8-5.2z"/></symbol>
+  <symbol id="fa-list-check" viewBox="0 0 24 24"><path d="m3 6 2 2 3-3-1.4-1.4L5 5.2 4.4 4.6 3 6zm7-1h11v2H10V5zm-7 8 2 2 3-3-1.4-1.4L5 12.2l-.6-.6L3 13zm7-1h11v2H10v-2zm-7 8 2 2 3-3-1.4-1.4L5 19.2l-.6-.6L3 20zm7-1h11v2H10v-2z"/></symbol>
+  <symbol id="fa-magnifying-glass" viewBox="0 0 24 24"><path d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12z"/></symbol>
 </svg>
 
-<div class="container">
+<div class="dashboard-container">
 
-  <!-- ===================== HEADER ===================== -->
-  <div class="header">
-    <div class="header-left">
-      <div class="header-icon"><svg class="icon icon-lg"><use xlink:href="#i-factory"></use></svg></div>
-      <div class="header-title">
-        <h1>Central Storage</h1>
-        <div class="header-subtitle">Unit Wood Furniture Assembling &middot; Routing &amp; Confirmation</div>
-      </div>
-    </div>
-    <div class="header-right">
-      <div class="header-meta">PT. Kayu Mebel Indonesia</div>
-      <div class="header-meta">USER SAP : <%= lv_user %></div>
-    </div>
-  </div>
-
-  <!-- ===================== KPI ROW ===================== -->
-  <div class="kpi-grid">
-    <% LOOP AT lt_kpi ASSIGNING <k>. %>
-    <div class="kpi">
-      <div class="kpi-header">
-        <span class="kpi-label"><svg class="icon icon-sm"><use xlink:href="#i-<%= <k>-icon %>"></use></svg> <%= <k>-label %></span>
-      </div>
-      <div class="kpi-value"<% IF <k>-color IS NOT INITIAL. %> style="color:<%= <k>-color %>;"<% ENDIF. %>><%= <k>-value %><span class="kpi-unit"><%= <k>-unit %></span></div>
-      <div class="kpi-sub"><%= <k>-sub %></div>
-    </div>
-    <% ENDLOOP. %>
-  </div>
-
-  <!-- ===================== SECTION PIPELINE =====================
-       Tiap tombol = link GET ke halaman ini sendiri dgn ?sec=<id>.
-       href SELALU eksplisit 'index2.htm' (jangan pernah dikosongkan). -->
-  <div class="section-pipeline">
-    <div class="section-title">
-      <h2><svg class="icon"><use xlink:href="#i-chart"></use></svg> Lintasan Routing &mdash; WIP per Section</h2>
-      <span class="section-meta">menampilkan: <%= lv_so_txt %></span>
-    </div>
-
-    <div class="section-buttons">
-      <% LOOP AT lt_sec ASSIGNING <s>. %>
-      <a class="sec-btn<% IF <s>-id = lv_sec. %> active<% ENDIF. %>" href="index2.htm?sec=<%= <s>-id %>&amp;so=<%= lv_so %>">
-        <div class="sec-btn-header">
-          <span class="sec-btn-title"><svg class="icon"><use xlink:href="#i-<%= <s>-icon %>"></use></svg> <%= <s>-title %></span>
-          <span class="sec-btn-wc"><%= <s>-wc_cnt %></span>
+    <header class="main-header">
+        <div class="header-left">
+            <div class="logo-box">
+                <svg class="ic"><use xlink:href="#fa-industry"></use></svg>
+            </div>
+            <div>
+                <h1>Dashboard Production</h1>
+                <p class="subtitle">UNIT ASSEMBLING &bull; MACHINING CENTER &bull; EDGE BANDING &amp; SANDING</p>
+            </div>
         </div>
-        <div class="sec-btn-body">
-          <div>
-            <div class="sec-btn-wip"><%= <s>-wip %></div>
-            <div class="sec-btn-wip-label">komp WIP</div>
-          </div>
-          <div class="sec-btn-stat">
-            <div class="sec-btn-stat-val"><%= <s>-pcs %></div>
-            <div class="sec-btn-stat-label">&#10003; <%= <s>-passed %></div>
-          </div>
+        <div class="header-right">
+            <span class="flow-info">Alur: Storage &rarr; Machining &rarr; Edge Banding &rarr; Storage</span>
+            <span class="status-indicator"><span class="dot green"></span> 10 Buyer | 60 WC (40 MC - 20 EBS)</span>
         </div>
-        <div class="progress-bar">
-          <div class="progress-active" style="width:<%= <s>-w_active %>%"></div>
-          <div class="progress-queue" style="width:<%= <s>-w_queue %>%"></div>
+    </header>
+
+    <section class="summary-cards">
+        <div class="card">
+            <div class="card-title">BUYER <svg class="ic icon-top-right"><use xlink:href="#fa-users"></use></svg></div>
+            <div class="card-value">10</div>
+            <div class="card-sub">16 PLO</div>
         </div>
-      </a>
-      <% ENDLOOP. %>
-    </div>
-
-    <div class="legend">
-      <div class="legend-item"><div class="legend-box" style="background-color:var(--blue)"></div><span class="legend-text">Dikerjakan</span></div>
-      <div class="legend-item"><div class="legend-box" style="background-color:var(--slate)"></div><span class="legend-text">Antre</span></div>
-      <div class="legend-item"><div class="legend-box" style="background-color:var(--green)"></div><span class="legend-text">Sudah lewat</span></div>
-    </div>
-  </div>
-
-  <!-- ===================== PETA WORK CENTER ===================== -->
-  <div class="heatmap-section">
-    <div class="heatmap-header">
-      <h2 class="heatmap-title"><svg class="icon"><use xlink:href="#i-map"></use></svg> Peta Work Center &mdash; <%= lv_sec_txt %></h2>
-      <div class="legend">
-        <span style="font-family:var(--mono); font-size:9.5px; color:var(--faint);">beban:</span>
-        <div class="legend-item"><div class="legend-box" style="background-color:rgba(22,163,74,0.6)"></div><span class="legend-text">rendah</span></div>
-        <div class="legend-item"><div class="legend-box" style="background-color:rgba(201,133,44,0.7)"></div><span class="legend-text">sedang</span></div>
-        <div class="legend-item"><div class="legend-box" style="background-color:rgba(220,38,38,0.8)"></div><span class="legend-text">tinggi</span></div>
-      </div>
-    </div>
-
-    <%-- Judul kelompok dicetak setiap kali field GRP berubah (lt_wc sudah urut).
-         Blok wc-grid dibuka saat kelompok baru & ditutup sebelum kelompok berikutnya. --%>
-    <% CLEAR lv_grp_prev.
-       LOOP AT lt_wc ASSIGNING <w>.
-         IF <w>-grp <> lv_grp_prev.
-           IF lv_grp_prev IS NOT INITIAL. %>
-    </div>
-    <%     ENDIF.
-           lv_grp_prev = <w>-grp. %>
-    <div class="group-label"><%= <w>-grp %> &middot; <%= <w>-grp_cnt %></div>
-    <div class="wc-grid">
-    <%   ENDIF. %>
-      <div class="wc-box <%= <w>-cls %>" title="WC-<%= <w>-num %> &middot; <%= <w>-name %> &mdash; WIP <%= <w>-wip %>, selesai <%= <w>-passed %>">
-        <span class="wc-num"><%= <w>-num %></span>
-        <span class="wc-wip"><%= <w>-wip %></span>
-        <span class="wc-passed">&#10003;<%= <w>-passed %></span>
-      </div>
-    <% ENDLOOP.
-       IF lv_grp_prev IS NOT INITIAL. %>
-    </div>
-    <% ENDIF. %>
-  </div>
-
-  <!-- ============ SO OUTSTANDING + DETAIL KOMPONEN ============ -->
-  <div class="lower-grid">
-
-    <div class="so-list">
-      <h3 class="so-title"><svg class="icon"><use xlink:href="#i-clipboard"></use></svg> SO Outstanding</h3>
-      <% LOOP AT lt_so ASSIGNING <o>. %>
-      <a class="so-btn<% IF <o>-id = lv_so. %> active<% ENDIF. %>" href="index2.htm?sec=<%= lv_sec %>&amp;so=<%= <o>-id %>">
-        <div class="so-btn-header">
-          <span class="so-btn-id"><% IF <o>-id = 'ALL'. %>SEMUA SO<% ELSE. %><%= <o>-id %><% ENDIF. %></span>
-          <span class="so-btn-pct <%= <o>-pct_cls %>"><%= <o>-pct %></span>
+        <div class="card">
+            <div class="card-title">KOMPONEN <svg class="ic icon-top-right"><use xlink:href="#fa-cubes"></use></svg></div>
+            <div class="card-value"><%= lv_t_komp %></div>
+            <div class="card-sub"><%= lv_t_pcs %> pcs</div>
         </div>
-        <% IF <o>-id <> 'ALL'. %>
-        <div class="so-btn-product"><%= <o>-product %></div>
-        <div class="so-btn-so"><%= <o>-sonum %></div>
-        <div class="so-mix-bar">
-          <div class="mix-seg" style="flex:0 0 <%= <o>-mix_a %>%; background-color:var(--amber)"></div>
-          <div class="mix-seg" style="flex:0 0 <%= <o>-mix_b %>%; background-color:var(--blue)"></div>
-          <div class="mix-seg" style="flex:0 0 <%= <o>-mix_c %>%; background-color:var(--green)"></div>
+        <div class="card">
+            <div class="card-title">CONFIRMED <svg class="ic icon-top-right"><use xlink:href="#fa-circle-check"></use></svg></div>
+            <div class="card-value color-green"><%= lv_conf_pct %> <span class="unit">%</span></div>
+            <div class="card-sub"><%= lv_t_confsub %></div>
         </div>
-        <div class="so-btn-stats">
-          <span><%= <o>-stat_l %></span>
-          <span style="color:var(--green);"><%= <o>-stat_r %></span>
+        <div class="card">
+            <div class="card-title">DI PRODUKSI <svg class="ic icon-top-right"><use xlink:href="#fa-gear"></use></svg></div>
+            <div class="card-value color-blue">380</div>
+            <div class="card-sub">WIP di lantai</div>
         </div>
-        <% ENDIF. %>
-      </a>
-      <% ENDLOOP. %>
-    </div>
-
-    <div class="component-detail">
-      <div class="detail-header">
-        <div class="detail-title">
-          <svg class="icon"><use xlink:href="#i-package"></use></svg> Detail Komponen
-          <span class="detail-chip"><%= lv_so_txt %> &middot; <%= lv_sec_txt %></span>
+        <div class="card">
+            <div class="card-title">SELESAI PROD. <svg class="ic icon-top-right"><use xlink:href="#fa-square-check"></use></svg></div>
+            <div class="card-value color-green">268</div>
+            <div class="card-sub">kembali ke storage</div>
         </div>
-        <div class="detail-filter">
-          <span style="color:var(--faint); display:flex;"><svg class="icon icon-sm"><use xlink:href="#i-search"></use></svg></span>
-          <input type="text" id="q" placeholder="cari nama / kode / material" onkeyup="csFilter()">
+        <div class="card bottleneck-card">
+            <div class="card-title">BOTTLENECK <svg class="ic icon-top-right"><use xlink:href="#fa-triangle-exclamation"></use></svg></div>
+            <div class="card-value color-red">EBS-13</div>
+            <div class="card-sub">Edge Band &amp; Sand 13</div>
         </div>
-      </div>
+    </section>
 
-      <div class="status-filters" id="stf">
-        <button type="button" class="status-btn active" data-st="ALL"    onclick="csStatus(this)">Semua</button>
-        <button type="button" class="status-btn"        data-st="active" onclick="csStatus(this)">Dikerjakan</button>
-        <button type="button" class="status-btn"        data-st="queue"  onclick="csStatus(this)">Antre</button>
-        <button type="button" class="status-btn"        data-st="done"   onclick="csStatus(this)">Selesai</button>
-      </div>
+    <section class="filter-section">
+        <div class="filter-header">
+            <span><svg class="ic"><use xlink:href="#fa-filter"></use></svg> FILTER BUYER</span>
+            <button class="btn-all-buyer active" id="btn-all-buyer">Semua Buyer</button>
+        </div>
+        <div class="filter-buttons" id="buyer-filter-container">
+        </div>
+    </section>
 
-      <div class="table-container">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Komponen</th>
-              <th>Kode Material</th>
-              <th class="num">Qty</th>
-              <th>Routing</th>
-              <th>Status</th>
-              <th class="num">Posisi</th>
-            </tr>
-          </thead>
-          <tbody id="ctb">
-            <% LOOP AT lt_comp ASSIGNING <c>. %>
-            <tr data-st="<%= <c>-status %>" data-q="<%= <c>-name %> <%= <c>-sub %> <%= <c>-matnr %> <%= <c>-maktx %>">
-              <td>
-                <div class="c-name"><%= <c>-name %></div>
-                <div class="c-sub"><%= <c>-sub %></div>
-              </td>
-              <td>
-                <div class="c-matnr"><%= <c>-matnr %></div>
-                <div class="c-maktx"><%= <c>-maktx %></div>
-              </td>
-              <td class="num"><span class="c-qty"><%= <c>-qty %></span></td>
-              <td style="white-space:nowrap;">
-                <span class="op <%= <c>-op1_cls %>"><%= <c>-op1 %></span>
-                <span class="op-arrow">&rsaquo;</span>
-                <span class="op <%= <c>-op2_cls %>"><%= <c>-op2 %></span>
-              </td>
-              <td>
-                <span class="status-pill <%= <c>-status %>"><svg class="icon icon-sm"><use xlink:href="#i-<%= <c>-stat_ico %>"></use></svg> <%= <c>-stat_txt %></span>
-              </td>
-              <td class="num"><span class="c-pos <%= <c>-pos_cls %>"><%= <c>-pos %></span></td>
-            </tr>
-            <% ENDLOOP. %>
-            <tr class="empty-row" id="crow-empty" style="display:none;">
-              <td colspan="6">Tidak ada komponen yang cocok dengan filter.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+    <section class="wip-section">
+        <div class="section-title-container">
+            <h2><svg class="ic"><use xlink:href="#fa-route"></use></svg> Lintasan Produksi &mdash; WIP per Center</h2>
+            <span class="view-status">menampilkan: <strong id="wip-display-status">Semua Buyer &bull; Semua SO</strong></span>
+        </div>
 
-  <!-- ===================== FOOTER ===================== -->
-  <div class="footer">
-    <span>Confirmation = operasi ter-scan selesai di WC &middot; WIP = komponen di WC saat ini</span>
-    <span>SO Aktif &amp; Komponen = real stock 2KCS (MSKA) &middot; Confirmed = operasi ter-konfirmasi (AFRU) &middot; panel lain masih dummy &middot; per <%= lv_ts_date %> <%= lv_ts_time %> WIB</span>
-  </div>
+        <div class="wip-flow-container">
+            <div class="storage-box">
+                <svg class="ic"><use xlink:href="#fa-warehouse"></use></svg>
+                <div>IN &bull; dari Storage</div>
+            </div>
+
+            <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
+
+            <div class="center-box active" id="mc-box">
+                <div class="center-header">
+                    <span><svg class="ic"><use xlink:href="#fa-table-cells"></use></svg> Machining Center</span>
+                    <span class="sub">40 WC</span>
+                </div>
+                <div class="center-body">
+                    <span class="wip-number" id="mc-wip-text">213</span> <span class="wip-lbl">WIP</span>
+                </div>
+                <div class="center-footer">
+                    <span>897 pcs</span>
+                    <span class="color-green">&#10003; 420</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="pb-done" style="width: 45%;"></div>
+                    <div class="pb-wip" style="width: 35%;"></div>
+                    <div class="pb-queue" style="width: 20%;"></div>
+                </div>
+            </div>
+
+            <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
+
+            <div class="center-box" id="ebs-box">
+                <div class="center-header">
+                    <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Edge Banding &amp; Sanding</span>
+                    <span class="sub">20 WC</span>
+                </div>
+                <div class="center-body">
+                    <span class="wip-number" id="ebs-wip-text">167</span> <span class="wip-lbl">WIP</span>
+                </div>
+                <div class="center-footer">
+                    <span>869 pcs</span>
+                    <span class="color-green">&#10003; 269</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="pb-done" style="width: 30%;"></div>
+                    <div class="pb-wip" style="width: 50%;"></div>
+                    <div class="pb-queue" style="width: 20%;"></div>
+                </div>
+            </div>
+
+            <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
+
+            <div class="storage-box">
+                <svg class="ic"><use xlink:href="#fa-box-open"></use></svg>
+                <div>OUT &bull; ke Storage</div>
+            </div>
+        </div>
+
+        <div class="legend-container">
+            <span class="legend-item"><span class="dot blue"></span> Dikerjakan</span>
+            <span class="legend-item"><span class="dot orange"></span> Antri</span>
+            <span class="legend-item"><span class="dot green"></span> Sudah Lewat</span>
+        </div>
+    </section>
+
+    <section class="wc-map-section">
+        <div class="section-title-container">
+            <h2><svg class="ic"><use xlink:href="#fa-grip"></use></svg> Peta Work Center &mdash; <span id="wc-map-title">Machining Center</span> <small class="hint">klik WC untuk detail</small></h2>
+            <div class="load-legend">
+                Beban:
+                <span class="lbl-load load-low">rendah</span>
+                <span class="lbl-load load-med">sedang</span>
+                <span class="lbl-load load-high">tinggi</span>
+            </div>
+        </div>
+        <div class="wc-grid" id="wc-grid-container">
+        </div>
+    </section>
+
+    <section class="so-section">
+        <div class="section-title-container">
+            <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> SO / PLO</h2>
+            <span id="so-buyer-label" class="sub">Semua Buyer &bull; 15 PLO</span>
+        </div>
+
+        <div class="so-list-container" id="so-list-container">
+        </div>
+    </section>
+
+    <section class="component-detail-section">
+        <div class="detail-header-row">
+            <div class="section-title-container">
+                <h2><svg class="ic"><use xlink:href="#fa-list-check"></use></svg> Detail Komponen</h2>
+                <span class="sub-filter" id="detail-sub-label">Semua Buyer &bull; Machining Center</span>
+            </div>
+
+            <div class="search-box-container">
+                <svg class="ic"><use xlink:href="#fa-magnifying-glass"></use></svg>
+                <input type="text" placeholder="cari nama / kode / buyer" id="search-component">
+            </div>
+        </div>
+
+        <div class="tab-filters">
+            <button class="tab-btn active" data-tab="semua">Semua</button>
+            <button class="tab-btn" data-tab="dikerjakan">Dikerjakan</button>
+            <button class="tab-btn" data-tab="antri">Antri</button>
+            <button class="tab-btn" data-tab="selesai">Selesai</button>
+        </div>
+
+        <div class="table-wrapper">
+            <table class="component-table">
+                <thead>
+                    <tr>
+                        <th>KOMPONEN</th>
+                        <th>KODE MATERIAL</th>
+                        <th>QTY ROUTING</th>
+                        <th>STATUS</th>
+                        <th style="text-align: right;">POSISI</th>
+                    </tr>
+                </thead>
+                <tbody id="component-table-body">
+                </tbody>
+            </table>
+        </div>
+
+        <div class="table-footer-note">
+            confirmed = operasi ter-scan selesai di WC &nbsp;|&nbsp; WIP = komponen di WC saat ini
+            <span style="float: right;">data sebagian simulasi &bull; per <%= lv_ts_date %> <%= lv_ts_time %></span>
+        </div>
+    </section>
+
 </div>
 
 <script type="text/javascript">
-/* Filter panel Detail Komponen — murni client-side (tidak memanggil server).
-   Tiap baris membawa: data-st (status) & data-q (teks yang bisa dicari). */
-var csSt = 'ALL';
+/* ====================================================================
+   Logika disalin dari prototype/script.js. Struktur data & nama fungsi
+   DIPERTAHANKAN supaya perbedaan dengan prototype mudah ditelusuri.
 
-function csStatus(btn){
-  var b = document.getElementById('stf').getElementsByTagName('button');
-  for (var i = 0; i < b.length; i++) { b[i].className = 'status-btn'; }
-  btn.className = 'status-btn active';
-  csSt = btn.getAttribute('data-st');
-  csFilter();
+   ⚠️ FASE DATA: array di blok "DATA DUMMY UNTUK JS" di bawah nanti diisi
+   dari ABAP (loop tabel internal -> tulis baris array). Logika filter &
+   render di bawahnya TIDAK perlu diubah. Ingat meng-escape tanda kutip
+   pada teks dari SAP sebelum dimasukkan ke string JS.
+   ==================================================================== */
+
+/* ---------- DATA DUMMY UNTUK JS ---------- */
+var BUYERS = [
+    { id: 'nordic', name: 'Nordic Living', pct: 64 },
+    { id: 'maison', name: 'Maison Clair', pct: 58 },
+    { id: 'westfield', name: 'Westfield Home', pct: 40 },
+    { id: 'sakura', name: 'Sakura Interior', pct: 16 },
+    { id: 'aussie', name: 'Aussie Timber', pct: 36 },
+    { id: 'kastel', name: 'Kastel Mobel', pct: 88 },
+    { id: 'green', name: 'Green Valley', pct: 20 },
+    { id: 'oakhouse', name: 'Oakhouse Ltd', pct: 45 },
+    { id: 'bella', name: 'Bella Casa', pct: 59 },
+    { id: 'lotus', name: 'Lotus Home', pct: 14 }
+];
+
+function buildWC(prefix, count, maxVal) {
+    var out = [];
+    for (var i = 1; i <= count; i++) {
+        var value = Math.floor(Math.random() * maxVal) + (prefix === 'MC' ? 1 : 0);
+        var load = 'low';
+        if (prefix === 'MC') {
+            if (value > 4 && value <= 8) { load = 'med'; }
+            if (value > 8) { load = 'high'; }
+        } else {
+            if (value === 2 || value === 3) { load = 'med'; }
+            if (value > 3) { load = 'high'; }
+        }
+        out.push({ id: prefix + '-' + (i < 10 ? '0' + i : i), value: value, load: load });
+    }
+    return out;
+}
+var WORK_CENTERS_MC = buildWC('MC', 40, 12);
+var WORK_CENTERS_EBS = buildWC('EBS', 20, 5);
+
+var SO_DATA = [
+    { id: 'SO-2401', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Wardrobe 3-Pintu - Aurora', plonum: 'PLO-24-0037', pct: 88, compCount: 60, pcsCount: 120, selesai: 51, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['30%', '40%', '18%', '12%'] },
+    { id: 'SO-2402', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Credenza - Aurora', plonum: 'PLO-24-0039', pct: 79, compCount: 50, pcsCount: 97, selesai: 41, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['25%', '35%', '19%', '21%'] },
+    { id: 'SO-2403', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'TV Cabinet - Nordic', plonum: 'PLO-24-0021', pct: 71, compCount: 55, pcsCount: 112, selesai: 37, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['40%', '20%', '11%', '29%'] },
+    { id: 'SO-2404', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'Sideboard - Nordic', plonum: 'PLO-24-0035', pct: 28, compCount: 60, pcsCount: 135, selesai: 6, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['50%', '30%', '5%', '15%'] },
+    { id: 'SO-2405', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Kitchen Upper Set - Lumen', plonum: 'PLO-24-0015', pct: 52, compCount: 62, pcsCount: 129, selesai: 24, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['42%', '30%', '10%', '18%'] },
+    { id: 'SO-2406', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Dresser 6-Laci - Lumen', plonum: 'PLO-24-0078', pct: 18, compCount: 58, pcsCount: 121, selesai: 2, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['20%', '20%', '5%', '55%'] }
+];
+
+var COMPONENT_DATA = [
+    { name: 'Ambalan #8', code: 'SD-2401-C005', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-01', status: 'antri', pos: '0%' },
+    { name: 'Sekat Vertikal #9', code: 'SD-2401-C009', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'PB18-PTH', qty: 2, center: 'MC', wc: 'MC-25', status: 'dikerjakan', pos: '0%' },
+    { name: 'Rak Tengah #39', code: 'SD-2401-C020', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-08', status: 'antri', pos: '0%' },
+    { name: 'Rak Tengah #51', code: 'SD-2401-C051', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-01', status: 'antri', pos: '0%' },
+    { name: 'Pintu Kiri #50', code: 'SD-2401-C050', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'HPL-3021', qty: 1, center: 'MC', wc: 'MC-08', status: 'dikerjakan', pos: '0%' },
+    { name: 'Samping Kanan #3', code: 'SD-2401-C003', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'PB18-PTH', qty: 4, center: 'MC', wc: 'MC-12', status: 'antri', pos: '0%' },
+    { name: 'Pintu Laci #5', code: 'SD-2401-C005', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'BLK18-MLN', qty: 1, center: 'MC', wc: 'MC-32', status: 'dikerjakan', pos: '0%' },
+
+    { name: 'Rak Bawah #9', code: 'SD-2405-C009', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 4, center: 'EBS', wc: 'EBS-14', status: 'antri', pos: '50%' },
+    { name: 'Samping Kanan #10', code: 'SD-2405-C010', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 1, center: 'EBS', wc: 'EBS-13', status: 'antri', pos: '50%' },
+    { name: 'Partisi #12', code: 'SD-2405-C012', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 2, center: 'EBS', wc: 'EBS-02', status: 'dikerjakan', pos: '50%' },
+    { name: 'Back Panel B #19', code: 'SD-2405-C019', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PLY12-MRN', qty: 2, center: 'EBS', wc: 'EBS-20', status: 'dikerjakan', pos: '50%' },
+    { name: 'Rak Atas #21', code: 'SD-2405-C021', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 3, center: 'EBS', wc: 'EBS-14', status: 'antri', pos: '50%' },
+    { name: 'Rak Tengah #22', code: 'SD-2405-C022', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'MDF15-MAT', qty: 2, center: 'EBS', wc: 'EBS-02', status: 'dikerjakan', pos: '50%' },
+    { name: 'Balok Penguat #30', code: 'SD-2405-C030', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PLY12-MRN', qty: 4, center: 'EBS', wc: 'EBS-11', status: 'dikerjakan', pos: '50%' }
+];
+/* ---------- AKHIR DATA DUMMY UNTUK JS ---------- */
+
+/* STATE */
+var selectedBuyer = null;
+var selectedCenter = 'MC';
+var selectedTab = 'semua';
+var searchQuery = '';
+
+/* DOM */
+var buyerFilterContainer, btnAllBuyer, mcBox, ebsBox, wcGridContainer, wcMapTitle,
+    soListContainer, componentTableBody, searchComponent, wipDisplayStatus,
+    detailSubLabel, soBuyerLabel;
+
+function icon(name, extraStyle) {
+    return '<svg class="ic"' + (extraStyle ? ' style="' + extraStyle + '"' : '') +
+           '><use xlink:href="#' + name + '"></use></svg>';
 }
 
-function csFilter(){
-  var q    = (document.getElementById('q').value || '').toLowerCase();
-  var rows = document.getElementById('ctb').getElementsByTagName('tr');
-  var shown = 0;
-  for (var i = 0; i < rows.length; i++) {
-    var r = rows[i];
-    if (r.id === 'crow-empty') { continue; }
-    var okSt = (csSt === 'ALL') || (r.getAttribute('data-st') === csSt);
-    var txt  = (r.getAttribute('data-q') || '').toLowerCase();
-    var okQ  = (q === '') || (txt.indexOf(q) >= 0);
-    if (okSt && okQ) { r.style.display = ''; shown++; } else { r.style.display = 'none'; }
-  }
-  document.getElementById('crow-empty').style.display = (shown === 0) ? '' : 'none';
+function init() {
+    buyerFilterContainer = document.getElementById('buyer-filter-container');
+    btnAllBuyer          = document.getElementById('btn-all-buyer');
+    mcBox                = document.getElementById('mc-box');
+    ebsBox               = document.getElementById('ebs-box');
+    wcGridContainer      = document.getElementById('wc-grid-container');
+    wcMapTitle           = document.getElementById('wc-map-title');
+    soListContainer      = document.getElementById('so-list-container');
+    componentTableBody   = document.getElementById('component-table-body');
+    searchComponent      = document.getElementById('search-component');
+    wipDisplayStatus     = document.getElementById('wip-display-status');
+    detailSubLabel       = document.getElementById('detail-sub-label');
+    soBuyerLabel         = document.getElementById('so-buyer-label');
+
+    renderBuyerFilters();
+    renderWCLoadGrid();
+    renderSOList();
+    renderComponentTable();
+    setupEventListeners();
+}
+
+function renderBuyerFilters() {
+    buyerFilterContainer.innerHTML = '';
+    for (var i = 0; i < BUYERS.length; i++) {
+        (function (buyer) {
+            var btn = document.createElement('button');
+            btn.className = 'filter-btn' + (selectedBuyer === buyer.id ? ' active' : '');
+            btn.innerHTML = buyer.name + ' <span class="pct">' + buyer.pct + '%</span>';
+            btn.onclick = function () { selectBuyer(buyer.id); };
+            buyerFilterContainer.appendChild(btn);
+        })(BUYERS[i]);
+    }
+}
+
+function selectBuyer(buyerId) {
+    if (buyerId === null) {
+        selectedBuyer = null;
+        btnAllBuyer.className = 'btn-all-buyer active';
+    } else {
+        selectedBuyer = buyerId;
+        btnAllBuyer.className = 'btn-all-buyer';
+    }
+
+    if (buyerId === 'westfield') {
+        switchCenter('EBS');
+        document.getElementById('mc-wip-text').innerHTML = '34';
+        document.getElementById('ebs-wip-text').innerHTML = '27';
+    } else {
+        switchCenter('MC');
+        document.getElementById('mc-wip-text').innerHTML = '213';
+        document.getElementById('ebs-wip-text').innerHTML = '167';
+    }
+
+    renderBuyerFilters();
+    updateLabels();
+    renderWCLoadGrid();
+    renderSOList();
+    renderComponentTable();
+}
+
+function switchCenter(center) {
+    selectedCenter = center;
+    if (center === 'MC') {
+        mcBox.className = 'center-box active';
+        ebsBox.className = 'center-box';
+        wcMapTitle.innerHTML = 'Machining Center';
+    } else {
+        ebsBox.className = 'center-box active';
+        mcBox.className = 'center-box';
+        wcMapTitle.innerHTML = 'Edge Banding &amp; Sanding';
+    }
+    updateLabels();
+    renderWCLoadGrid();
+    renderComponentTable();
+}
+
+function buyerNameOf(id) {
+    for (var i = 0; i < BUYERS.length; i++) {
+        if (BUYERS[i].id === id) { return BUYERS[i].name; }
+    }
+    return 'Semua Buyer';
+}
+
+function updateLabels() {
+    var buyerName = selectedBuyer ? buyerNameOf(selectedBuyer) : 'Semua Buyer';
+    wipDisplayStatus.innerHTML = buyerName + ' • Semua SO';
+    detailSubLabel.innerHTML = buyerName + ' • ' +
+        (selectedCenter === 'MC' ? 'Machining Center' : 'Edge Banding &amp; Sanding');
+
+    var n = 0;
+    for (var i = 0; i < SO_DATA.length; i++) {
+        if (!selectedBuyer || SO_DATA[i].buyerId === selectedBuyer) { n++; }
+    }
+    soBuyerLabel.innerHTML = buyerName + ' • ' + n + ' PLO';
+}
+
+function renderWCLoadGrid() {
+    wcGridContainer.innerHTML = '';
+    var items = selectedCenter === 'MC' ? WORK_CENTERS_MC : WORK_CENTERS_EBS;
+    for (var i = 0; i < items.length; i++) {
+        var wc = items[i];
+        var div = document.createElement('div');
+        div.className = 'wc-item load-' + wc.load;
+        div.innerHTML =
+            '<span class="wc-name">' + wc.id.split('-')[1] + '</span>' +
+            '<span class="wc-value">' + wc.value + '</span>' +
+            '<span class="wc-sub">/12</span>';
+        wcGridContainer.appendChild(div);
+    }
+}
+
+function renderSOList() {
+    soListContainer.innerHTML = '';
+
+    var allBar = document.createElement('div');
+    allBar.className = 'so-all-bar';
+    allBar.innerHTML = '<span>SEMUA SO</span> <span class="color-green">46%</span>';
+    soListContainer.appendChild(allBar);
+
+    for (var i = 0; i < SO_DATA.length; i++) {
+        var so = SO_DATA[i];
+        if (selectedBuyer && so.buyerId !== selectedBuyer) { continue; }
+
+        var barSegments = '';
+        for (var j = 0; j < so.widths.length; j++) {
+            barSegments += '<div class="so-bar-part" style="width: ' + so.widths[j] +
+                           '; background: ' + so.colors[j] + ';"></div>';
+        }
+
+        var item = document.createElement('div');
+        item.className = 'so-item-box';
+        item.innerHTML =
+            '<div class="so-item-header">' +
+                '<div>' + so.id +
+                    '<div class="so-meta">' + icon('fa-user') + ' ' + so.buyerName + '</div>' +
+                '</div>' +
+                '<div class="so-pct-val">' + so.pct + '%</div>' +
+            '</div>' +
+            '<div class="so-meta" style="color:#1e293b; font-weight:500;">' + so.desc + '</div>' +
+            '<div class="so-meta" style="font-family:monospace;">' + so.plonum + '</div>' +
+            '<div class="so-progress-bar">' + barSegments + '</div>' +
+            '<div class="so-item-footer">' +
+                '<span>' + so.compCount + ' komp - ' + so.pcsCount + ' pcs</span>' +
+                '<span class="color-green" style="font-weight:600;">' + so.selesai + ' selesai</span>' +
+            '</div>';
+        soListContainer.appendChild(item);
+    }
+}
+
+function renderComponentTable() {
+    componentTableBody.innerHTML = '';
+
+    var rows = [];
+    var q = searchQuery.toLowerCase();
+    for (var i = 0; i < COMPONENT_DATA.length; i++) {
+        var c = COMPONENT_DATA[i];
+        if (c.center !== selectedCenter) { continue; }
+        if (selectedBuyer && c.buyerId !== selectedBuyer) { continue; }
+        if (selectedTab !== 'semua' && c.status !== selectedTab) { continue; }
+        if (q && (c.name + ' ' + c.code + ' ' + c.buyerName).toLowerCase().indexOf(q) < 0) { continue; }
+        rows.push(c);
+    }
+
+    if (rows.length === 0) {
+        componentTableBody.innerHTML =
+            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">' +
+            'Tidak ada data komponen ditemukan</td></tr>';
+        return;
+    }
+
+    for (var k = 0; k < rows.length; k++) {
+        var r = rows[k];
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td>' +
+                '<span class="comp-name">' + r.name + '</span>' +
+                '<span class="comp-sub">' + r.code + ' • ' + r.buyerName + '</span>' +
+            '</td>' +
+            '<td><span class="mat-code">' + r.mat + '</span></td>' +
+            '<td><div class="routing-badge">' +
+                '<span style="color:#059669; font-weight:700;">' + r.qty + '</span> | ' +
+                icon('fa-table-cells', 'font-size:8px;') + ' ' + r.center + ' @ ' + r.wc +
+            '</div></td>' +
+            '<td><span class="status-badge ' + r.status + '">' + r.status.toUpperCase() + '</span></td>' +
+            '<td style="text-align: right; font-weight:700;">' + r.pos + '</td>';
+        componentTableBody.appendChild(tr);
+    }
+}
+
+function setupEventListeners() {
+    btnAllBuyer.onclick = function () { selectBuyer(null); };
+    mcBox.onclick  = function () { switchCenter('MC'); };
+    ebsBox.onclick = function () { switchCenter('EBS'); };
+
+    var tabs = document.getElementsByClassName('tab-btn');
+    for (var i = 0; i < tabs.length; i++) {
+        (function (btn) {
+            btn.onclick = function () {
+                var all = document.getElementsByClassName('tab-btn');
+                for (var j = 0; j < all.length; j++) { all[j].className = 'tab-btn'; }
+                btn.className = 'tab-btn active';
+                selectedTab = btn.getAttribute('data-tab');
+                renderComponentTable();
+            };
+        })(tabs[i]);
+    }
+
+    searchComponent.onkeyup = function () {
+        searchQuery = searchComponent.value || '';
+        renderComponentTable();
+    };
+}
+
+if (window.addEventListener) {
+    window.addEventListener('DOMContentLoaded', init, false);
+} else {
+    window.attachEvent('onload', init);
 }
 </script>
 </body>
