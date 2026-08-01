@@ -232,40 +232,26 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         border-left: 4px solid var(--color-red);
     }
 
-    /* ---- tooltip kartu ----
-       Dipakai untuk menjelaskan ARTI angka di tempat orang melihatnya.
-       Murni CSS; .card diberi overflow visible supaya tidak terpotong. */
-    .card.has-tip { overflow: visible; }
-    .card.has-tip:hover { z-index: 40; }
-    .tip-anchor { cursor: help; position: relative; }
-    .tip-anchor .ic { color: #94a3b8; }
-    .card-tip {
-        position: absolute; top: 100%; left: -8px; margin-top: 8px;
-        width: 300px; background: #161a23; color: #fff;
-        border-radius: 10px; padding: 12px 13px; z-index: 50;
+    /* ---- TOOLTIP MODERN (satu sistem utk seluruh halaman) ----
+       Diposisikan JS dgn position:fixed supaya tidak terpotong panel
+       ber-overflow (grid work center, daftar SO yang bergulir). */
+    .mtip {
+        position: fixed; display: none; z-index: 9999;
+        max-width: 320px; background: #161a23; color: #fff;
+        border-radius: 10px; padding: 11px 13px;
         box-shadow: 0 12px 34px rgba(0,0,0,0.22), 0 4px 10px rgba(0,0,0,0.12);
-        opacity: 0; visibility: hidden; transform: translateY(-4px);
-        transition: opacity .14s, transform .14s; pointer-events: none;
-        text-align: left; font-weight: 400;
+        font-size: 11px; line-height: 1.5; text-align: left; pointer-events: none;
     }
-    .tip-anchor:hover .card-tip { opacity: 1; visibility: visible; transform: translateY(0); }
-    .card-tip:before {
-        content: ''; position: absolute; bottom: 100%; left: 14px;
-        border: 6px solid transparent; border-bottom-color: #161a23;
-    }
+    .tip-anchor { cursor: help; }
+    .tip-anchor .ic { color: #cbd5e1; }
     .ct-h { display: block; font-size: 11px; font-weight: 700; margin-bottom: 6px;
             padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.14); }
-    .ct-r { display: block; font-size: 10.5px; line-height: 1.5; color: #cbd5e1;
-            margin-bottom: 4px; }
+    .ct-r { display: block; font-size: 10.5px; color: #cbd5e1; margin-bottom: 4px; }
     .ct-r b { color: #fff; font-weight: 600; }
     .ct-src { display: block; font-family: monospace; font-size: 9.5px;
               color: #93a3b8; margin-top: 7px; padding-top: 6px;
               border-top: 1px solid rgba(255,255,255,0.14); }
     .ct-warn { display: block; font-size: 10px; color: #fbbf24; margin-top: 6px; }
-    .color-green { color: var(--color-green); }
-    .color-blue { color: var(--color-blue); }
-    .color-red { color: var(--color-red); }
-    .card-value .unit { font-size: 14px; font-weight: 400; }
 
     /* FILTER SECTION */
     .filter-section {
@@ -654,53 +640,32 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
 
     <section class="summary-cards">
         <div class="card">
-            <div class="card-title">BUYER <svg class="ic icon-top-right"><use xlink:href="#fa-users"></use></svg></div>
+            <div class="card-title">BUYER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Buyer ber-stok nyata</span><span class='ct-r'>Jumlah <b>buyer berbeda</b> yang punya stok di salah satu dari enam storage location.</span><span class='ct-r'>Persen di tiap tombol filter = komponen buyer itu yang <b>sudah keluar dari 2KCS</b>, dibagi seluruh komponennya.</span><span class='ct-src'>MSKA &rarr; VBAK-KUNNR &rarr; KNA1-NAME1<br>sample customer 2000000004 dibuang</span>"><svg class="ic"><use xlink:href="#fa-users"></use></svg></span></div>
             <div class="card-value" id="kpi-buyer">-</div>
             <div class="card-sub" id="kpi-buyer-sub">memuat&hellip;</div>
         </div>
-        <div class="card has-tip">
-            <div class="card-title">SALES ORDER
-                <span class="tip-anchor icon-top-right"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg>
-                    <span class="card-tip">
-                        <span class="ct-h">Sales Order ber-stok nyata</span>
-                        <span class="ct-r">Jumlah <b>SO berbeda</b> yang punya stok di salah satu dari enam storage location.</span>
-                        <span class="ct-r">Sub-teks memerinci isinya: berapa <b>komponen</b> (kombinasi unik SO + Item + Material) dan berapa pcs.</span>
-                        <span class="ct-r">Material sama di dua SO dihitung <b>dua kali</b> &mdash; stoknya fisik terpisah per SO. Material sama lintas SLoc dihitung <b>sekali</b>.</span>
-                        <span class="ct-src">MSKA &middot; 2KCS 2261 2262 22E2 22E3 229K<br>SOBKZ=E &middot; KALAB&gt;0 &middot; tanpa sample customer</span>
-                        <span class="ct-warn">Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>
-                    </span>
-                </span>
-            </div>
+        <div class="card">
+            <div class="card-title">SALES ORDER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sales Order ber-stok nyata</span><span class='ct-r'>Jumlah <b>SO berbeda</b> yang punya stok di enam SLoc. Sub-teks memerinci isinya: berapa komponen dan berapa pcs.</span><span class='ct-r'>Komponen = kombinasi unik <b>SO + Item + Material</b>. Material sama di dua SO dihitung dua kali; lintas SLoc dihitung sekali.</span><span class='ct-src'>MSKA &middot; SOBKZ=E &middot; KALAB&gt;0</span><span class='ct-warn'>Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg></span></div>
             <div class="card-value" id="kpi-so">-</div>
             <div class="card-sub" id="kpi-so-sub">memuat&hellip;</div>
         </div>
-        <div class="card has-tip">
-            <div class="card-title">CONFIRMED
-                <span class="tip-anchor icon-top-right"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg>
-                    <span class="card-tip">
-                        <span class="ct-h">Operasi ter-konfirmasi</span>
-                        <span class="ct-r">Persentase <b>operasi</b> yang sudah dikonfirmasi selesai, dari seluruh operasi milik order SO dalam cakupan.</span>
-                        <span class="ct-r">&Sigma;LMNGA = 0 &rarr; antre<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; selesai</span>
-                        <span class="ct-src">AFRU vs AFVV &middot; baris STOKZ=X dibuang<br>order: Plant 1000 WM/PN &middot; Plant 2000 GA/EB</span>
-                        <span class="ct-warn">Basisnya OPERASI, bukan komponen diterima. Prototype memaksudkan yang kedua &mdash; definisi finalnya belum diputuskan.</span>
-                    </span>
-                </span>
-            </div>
+        <div class="card">
+            <div class="card-title">CONFIRMED <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Operasi ter-konfirmasi</span><span class='ct-r'>Persentase <b>operasi</b> yang sudah dikonfirmasi selesai, dari seluruh operasi milik order SO dalam cakupan.</span><span class='ct-r'>&Sigma;LMNGA = 0 &rarr; antre<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; selesai</span><span class='ct-src'>AFRU vs AFVV &middot; baris STOKZ=X dibuang</span><span class='ct-warn'>Basisnya OPERASI, bukan komponen diterima. Prototype memaksudkan yang kedua; definisi finalnya belum diputuskan.</span>"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg></span></div>
             <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span></div>
             <div class="card-sub" id="kpi-conf-sub">memuat&hellip;</div>
         </div>
         <div class="card">
-            <div class="card-title">DI PRODUKSI <svg class="ic icon-top-right"><use xlink:href="#fa-gear"></use></svg></div>
+            <div class="card-title">DI PRODUKSI <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen di lantai produksi</span><span class='ct-r'>Komponen yang stoknya <b>sudah keluar dari 2KCS</b> — ada di 2261, 2262, 22E2, 22E3, atau 229K.</span><span class='ct-r'>Komponen yang stoknya terpecah (sebagian masih 2KCS) tetap dihitung di sini: begitu ada bagian yang bergerak, ia bukan lagi diam menunggu.</span><span class='ct-src'>MSKA saldo saat ini &middot; cacah komponen</span>"><svg class="ic"><use xlink:href="#fa-gear"></use></svg></span></div>
             <div class="card-value color-blue" id="kpi-prod">-</div>
             <div class="card-sub" id="kpi-prod-sub">memuat&hellip;</div>
         </div>
         <div class="card">
-            <div class="card-title">SELESAI PROD. <svg class="ic icon-top-right"><use xlink:href="#fa-square-check"></use></svg></div>
+            <div class="card-title">SELESAI PROD. <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sampai Sanding (sementara)</span><span class='ct-r'>Komponen yang stoknya sudah berada di <b>229K</b>, SLoc terakhir dalam cakupan.</span><span class='ct-warn'>Ini PROXY SEMENTARA, bukan &quot;kembali ke storage&quot; seperti maksud prototype. Definisi sebenarnya belum diputuskan.</span>"><svg class="ic"><use xlink:href="#fa-square-check"></use></svg></span></div>
             <div class="card-value color-green" id="kpi-done">-</div>
             <div class="card-sub" id="kpi-done-sub">memuat&hellip;</div>
         </div>
         <div class="card bottleneck-card">
-            <div class="card-title">BOTTLENECK <svg class="ic icon-top-right"><use xlink:href="#fa-triangle-exclamation"></use></svg></div>
+            <div class="card-title">BOTTLENECK <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Belum dihitung</span><span class='ct-r'>Kartu ini masih menampilkan angka contoh. Rencananya: work center dengan antrean terbanyak.</span><span class='ct-warn'>Jangan dipakai mengambil keputusan sampai tersambung data.</span>"><svg class="ic"><use xlink:href="#fa-triangle-exclamation"></use></svg></span></div>
             <div class="card-value color-red">EBS-13</div>
             <div class="card-sub">Edge Band &amp; Sand 13</div>
         </div>
@@ -734,7 +699,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                     <span><svg class="ic"><use xlink:href="#fa-table-cells"></use></svg> Machining Center</span>
                     <span class="sub">40 WC</span>
                 </div>
-                <div class="center-body">
+                <div class="center-body tip-anchor" id="mc-wip-tip">
                     <span class="wip-number" id="mc-wip-text">-</span> <span class="wip-lbl">WIP</span>
                 </div>
                 <div class="center-footer">
@@ -755,7 +720,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                     <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Edge Banding &amp; Sanding</span>
                     <span class="sub">20 WC</span>
                 </div>
-                <div class="center-body">
+                <div class="center-body tip-anchor" id="ebs-wip-tip">
                     <span class="wip-number" id="ebs-wip-text">-</span> <span class="wip-lbl">WIP</span>
                 </div>
                 <div class="center-footer">
@@ -1229,6 +1194,97 @@ function drawCenters() {
         setBar(id + '-bar-done',  tot ? Math.round((g || 0) * 100 / tot) : 0);
         setBar(id + '-bar-wip',   tot ? Math.round(a * 100 / tot) : 0);
         setBar(id + '-bar-queue', tot ? Math.round(q * 100 / tot) : 0);
+
+        var slocQ = (id === 'mc') ? '2KCS' : '2261 / 2262';
+        var slocA = (id === 'mc') ? '2261 / 2262' : '22E2 / 22E3 / 229K';
+        var box = document.getElementById(id + '-wip-tip');
+        if (box) {
+            box.setAttribute('data-tip',
+                '<span class='ct-h'>WIP &mdash; komponen sedang di center ini</span>' +
+                '<span class='ct-r'>Angka besar = komponen yang stoknya ada di <b>' + slocA + '</b>.</span>' +
+                '<span class='ct-r'>Antre <b>' + kpiNum(q) + '</b> (masih di ' + slocQ + ')<br>' +
+                'Dikerjakan <b>' + kpiNum(a) + '</b> (di ' + slocA + ')<br>' +
+                'Sudah lewat <b>' + (g === null ? 'menghitung…' : kpiNum(g)) + '</b></span>' +
+                '<span class='ct-r'>Sudah lewat = pernah diterima di SLoc center ini, tapi stoknya sekarang nol.</span>' +
+                '<span class='ct-src'>kuning &amp; biru: MSKA saldo &middot; hijau: MSEG riwayat<br>cacah komponen, bukan qty</span>');
+        }
+    }
+}
+
+/* ====================================================================
+   TOOLTIP MODERN — SATU sistem untuk seluruh halaman.
+   Sebelumnya kartu memakai tooltip CSS sendiri dan peta WC memakai
+   atribut title bawaan browser; dua gaya berbeda di satu halaman.
+
+   Cara pakai: beri elemen apa pun atribut data-tip berisi HTML.
+   Pengikatannya lewat DELEGASI di document, jadi elemen yang dirender
+   belakangan (peta WC, daftar SO) ikut bekerja tanpa perlu dibind ulang.
+
+   Diposisikan lewat JS (position:fixed) supaya TIDAK terpotong oleh
+   panel ber-overflow — masalah yang tidak bisa dihindari tooltip CSS
+   murni di dalam grid dan daftar bergulir.
+   ==================================================================== */
+var TIPEL = null;
+
+function tipEnsure() {
+    if (TIPEL) { return; }
+    TIPEL = document.createElement('div');
+    TIPEL.className = 'mtip';
+    document.body.appendChild(TIPEL);
+}
+
+function tipFind(node) {
+    while (node && node !== document.body) {
+        if (node.getAttribute && node.getAttribute('data-tip')) { return node; }
+        node = node.parentNode;
+    }
+    return null;
+}
+
+function tipShow(el) {
+    tipEnsure();
+    TIPEL.innerHTML = el.getAttribute('data-tip');
+    TIPEL.style.visibility = 'hidden';
+    TIPEL.style.display = 'block';
+
+    var r = el.getBoundingClientRect();
+    var w = TIPEL.offsetWidth, h = TIPEL.offsetHeight;
+    var vw = document.documentElement.clientWidth;
+    var vh = document.documentElement.clientHeight;
+
+    var left = r.left;
+    var top = r.bottom + 8;
+    if (left + w > vw - 8) { left = vw - w - 8; }
+    if (left < 8) { left = 8; }
+    /* kalau tidak muat di bawah, tampilkan di atas elemennya */
+    if (top + h > vh - 8) { top = r.top - h - 8; }
+    if (top < 8) { top = 8; }
+
+    TIPEL.style.left = left + 'px';
+    TIPEL.style.top = top + 'px';
+    TIPEL.style.visibility = 'visible';
+}
+
+function tipHide() {
+    if (TIPEL) { TIPEL.style.display = 'none'; }
+}
+
+function tipBindDelegated() {
+    var over = function (e) {
+        var t = tipFind(e.target || e.srcElement);
+        if (t) { tipShow(t); }
+    };
+    var out = function (e) {
+        var t = tipFind(e.target || e.srcElement);
+        if (t) { tipHide(); }
+    };
+    if (document.addEventListener) {
+        document.addEventListener('mouseover', over, false);
+        document.addEventListener('mouseout', out, false);
+        window.addEventListener('scroll', tipHide, true);
+    } else {
+        document.attachEvent('onmouseover', over);
+        document.attachEvent('onmouseout', out);
     }
 }
 
@@ -1311,6 +1367,7 @@ function loadKpi() {
 }
 
 function boot() {
+    tipBindDelegated();
     init();
     loadKpi();
 }
