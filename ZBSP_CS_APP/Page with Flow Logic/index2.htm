@@ -24,20 +24,11 @@
 *& ===== STATUS DATA =====
 *& LIVE  : kartu SALES ORDER, BUYER, CONFIRMED — diambil ASINKRON dari
 *&         dash_prod.htm
-*& LIVE  : DI PRODUKSI, SELESAI PROD. (sementara), dua kotak center,
-*&         peta work center, daftar SO (+cari, +klik utk detail komponen).
-*& DUMMY : kartu BOTTLENECK.
-*&
-*& ⚠️ SEGMEN HIJAU "sudah lewat" di kedua kotak center TIDAK DIISI dan
-*&    ditulis "belum tersedia". Barang yang selesai diproses otomatis
-*&    tidak punya stok lagi, jadi saldo stok TIDAK BISA menjawabnya —
-*&    jawabannya ada di riwayat pergerakan (MSEG). Keputusan K3, belum
-*&    diambil. JANGAN mengisinya dengan nol; nol berarti "tidak ada yang
-*&    lewat", padahal yang benar "belum dihitung".
-*& ⚠️ Kartu SELESAI PROD. memakai proxy SEMENTARA: komponen yang sudah
-*&    sampai 229K. Itu BUKAN "kembali ke storage" seperti maksud prototype.
-*& ⚠️ Beban warna di Peta Work Center memakai ambang sementara (antre >3
-*&    sedang, >8 tinggi). Dasar perhitungannya belum diputuskan (K5).
+*& DUMMY : kartu DI PRODUKSI / SELESAI PROD. / BOTTLENECK, dua kotak center,
+*&         peta work center, daftar SO, tabel Detail Komponen.
+*& Data dummy dikirim ke JS sebagai array di blok "DATA DUMMY UNTUK JS".
+*& Saat fase data nanti: cukup ganti isi array itu dengan hasil SELECT —
+*& logika filter/render di JS tidak perlu diubah.
 *&
 *& ⚠️ CATATAN DEFINISI (dibereskan di fase data, jangan dianggap beres):
 *&    Prototype menulis CONFIRMED = "basis komponen diterima". Angka yang
@@ -700,13 +691,13 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         </div>
         <div class="card">
             <div class="card-title">DI PRODUKSI <svg class="ic icon-top-right"><use xlink:href="#fa-gear"></use></svg></div>
-            <div class="card-value color-blue" id="kpi-prod">-</div>
-            <div class="card-sub" id="kpi-prod-sub">memuat&hellip;</div>
+            <div class="card-value color-blue">380</div>
+            <div class="card-sub">WIP di lantai</div>
         </div>
         <div class="card">
             <div class="card-title">SELESAI PROD. <svg class="ic icon-top-right"><use xlink:href="#fa-square-check"></use></svg></div>
-            <div class="card-value color-green" id="kpi-done">-</div>
-            <div class="card-sub" id="kpi-done-sub">memuat&hellip;</div>
+            <div class="card-value color-green">268</div>
+            <div class="card-sub">kembali ke storage</div>
         </div>
         <div class="card bottleneck-card">
             <div class="card-title">BOTTLENECK <svg class="ic icon-top-right"><use xlink:href="#fa-triangle-exclamation"></use></svg></div>
@@ -741,19 +732,19 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <div class="center-box active" id="mc-box">
                 <div class="center-header">
                     <span><svg class="ic"><use xlink:href="#fa-table-cells"></use></svg> Machining Center</span>
-                    <span class="sub" id="mc-wc-cnt">&mdash;</span>
+                    <span class="sub">40 WC</span>
                 </div>
                 <div class="center-body">
-                    <span class="wip-number" id="mc-wip-text">-</span> <span class="wip-lbl">WIP</span>
+                    <span class="wip-number" id="mc-wip-text">213</span> <span class="wip-lbl">WIP</span>
                 </div>
                 <div class="center-footer">
-                    <span id="mc-foot">&mdash;</span>
-                    <span class="color-green" id="mc-done">&mdash;</span>
+                    <span>897 pcs</span>
+                    <span class="color-green">&#10003; 420</span>
                 </div>
                 <div class="progress-bar-container">
-                    <div class="pb-done" id="mc-bar-done" style="width: 0%;"></div>
-                    <div class="pb-wip" id="mc-bar-wip" style="width: 0%;"></div>
-                    <div class="pb-queue" id="mc-bar-queue" style="width: 0%;"></div>
+                    <div class="pb-done" style="width: 45%;"></div>
+                    <div class="pb-wip" style="width: 35%;"></div>
+                    <div class="pb-queue" style="width: 20%;"></div>
                 </div>
             </div>
 
@@ -762,19 +753,19 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <div class="center-box" id="ebs-box">
                 <div class="center-header">
                     <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Edge Banding &amp; Sanding</span>
-                    <span class="sub" id="ebs-wc-cnt">&mdash;</span>
+                    <span class="sub">20 WC</span>
                 </div>
                 <div class="center-body">
-                    <span class="wip-number" id="ebs-wip-text">-</span> <span class="wip-lbl">WIP</span>
+                    <span class="wip-number" id="ebs-wip-text">167</span> <span class="wip-lbl">WIP</span>
                 </div>
                 <div class="center-footer">
-                    <span id="ebs-foot">&mdash;</span>
-                    <span class="color-green" id="ebs-done">&mdash;</span>
+                    <span>869 pcs</span>
+                    <span class="color-green">&#10003; 269</span>
                 </div>
                 <div class="progress-bar-container">
-                    <div class="pb-done" id="ebs-bar-done" style="width: 0%;"></div>
-                    <div class="pb-wip" id="ebs-bar-wip" style="width: 0%;"></div>
-                    <div class="pb-queue" id="ebs-bar-queue" style="width: 0%;"></div>
+                    <div class="pb-done" style="width: 30%;"></div>
+                    <div class="pb-wip" style="width: 50%;"></div>
+                    <div class="pb-queue" style="width: 20%;"></div>
                 </div>
             </div>
 
@@ -810,13 +801,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <section class="so-section">
         <div class="section-title-container">
             <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> Sales Order</h2>
-            <div style="display:flex; align-items:center; gap:10px;">
-                <span id="so-buyer-label" class="sub">Semua Buyer</span>
-                <div class="search-box-container" style="width:190px;">
-                    <svg class="ic"><use xlink:href="#fa-magnifying-glass"></use></svg>
-                    <input type="text" placeholder="cari SO / item" id="search-so">
-                </div>
-            </div>
+            <span id="so-buyer-label" class="sub">Semua Buyer</span>
         </div>
 
         <div class="so-list-container" id="so-list-container">
@@ -883,21 +868,57 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
    tombol buyer tidak dirender sama sekali, bukan menampilkan nama palsu. */
 var BUYERS = [];
 
-/* Semua array di bawah DIISI dari dash_prod.htm. Kosong sampai data tiba —
-   lebih baik panel kosong daripada menampilkan angka karangan prototype. */
-var WORK_CENTERS_MC  = [];
-var WORK_CENTERS_EBS = [];
-var SO_DATA          = [];
-var COMPONENT_DATA   = [];
+function buildWC(prefix, count, maxVal) {
+    var out = [];
+    for (var i = 1; i <= count; i++) {
+        var value = Math.floor(Math.random() * maxVal) + (prefix === 'MC' ? 1 : 0);
+        var load = 'low';
+        if (prefix === 'MC') {
+            if (value > 4 && value <= 8) { load = 'med'; }
+            if (value > 8) { load = 'high'; }
+        } else {
+            if (value === 2 || value === 3) { load = 'med'; }
+            if (value > 3) { load = 'high'; }
+        }
+        out.push({ id: prefix + '-' + (i < 10 ? '0' + i : i), value: value, load: load });
+    }
+    return out;
+}
+var WORK_CENTERS_MC = buildWC('MC', 40, 12);
+var WORK_CENTERS_EBS = buildWC('EBS', 20, 5);
+
+var SO_DATA = [
+    { id: 'SO-2401', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Wardrobe 3-Pintu - Aurora', pct: 88, compCount: 60, pcsCount: 120, selesai: 51, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['30%', '40%', '18%', '12%'] },
+    { id: 'SO-2402', buyerId: 'nordic', buyerName: 'Nordic Living', desc: 'Credenza - Aurora', pct: 79, compCount: 50, pcsCount: 97, selesai: 41, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['25%', '35%', '19%', '21%'] },
+    { id: 'SO-2403', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'TV Cabinet - Nordic', pct: 71, compCount: 55, pcsCount: 112, selesai: 37, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['40%', '20%', '11%', '29%'] },
+    { id: 'SO-2404', buyerId: 'maison', buyerName: 'Maison Clair', desc: 'Sideboard - Nordic', pct: 28, compCount: 60, pcsCount: 135, selesai: 6, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['50%', '30%', '5%', '15%'] },
+    { id: 'SO-2405', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Kitchen Upper Set - Lumen', pct: 52, compCount: 62, pcsCount: 129, selesai: 24, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['42%', '30%', '10%', '18%'] },
+    { id: 'SO-2406', buyerId: 'westfield', buyerName: 'Westfield Home', desc: 'Dresser 6-Laci - Lumen', pct: 18, compCount: 58, pcsCount: 121, selesai: 2, colors: ['#b45309', '#2563eb', '#10b981', '#cbd5e1'], widths: ['20%', '20%', '5%', '55%'] }
+];
+
+var COMPONENT_DATA = [
+    { name: 'Ambalan #8', code: 'SD-2401-C005', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-01', status: 'antri', pos: '0%' },
+    { name: 'Sekat Vertikal #9', code: 'SD-2401-C009', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'PB18-PTH', qty: 2, center: 'MC', wc: 'MC-25', status: 'dikerjakan', pos: '0%' },
+    { name: 'Rak Tengah #39', code: 'SD-2401-C020', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-08', status: 'antri', pos: '0%' },
+    { name: 'Rak Tengah #51', code: 'SD-2401-C051', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-01', status: 'antri', pos: '0%' },
+    { name: 'Pintu Kiri #50', code: 'SD-2401-C050', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'HPL-3021', qty: 1, center: 'MC', wc: 'MC-08', status: 'dikerjakan', pos: '0%' },
+    { name: 'Samping Kanan #3', code: 'SD-2401-C003', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'PB18-PTH', qty: 4, center: 'MC', wc: 'MC-12', status: 'antri', pos: '0%' },
+    { name: 'Pintu Laci #5', code: 'SD-2401-C005', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'BLK18-MLN', qty: 1, center: 'MC', wc: 'MC-32', status: 'dikerjakan', pos: '0%' },
+
+    { name: 'Rak Bawah #9', code: 'SD-2405-C009', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 4, center: 'EBS', wc: 'EBS-14', status: 'antri', pos: '50%' },
+    { name: 'Samping Kanan #10', code: 'SD-2405-C010', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 1, center: 'EBS', wc: 'EBS-13', status: 'antri', pos: '50%' },
+    { name: 'Partisi #12', code: 'SD-2405-C012', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 2, center: 'EBS', wc: 'EBS-02', status: 'dikerjakan', pos: '50%' },
+    { name: 'Back Panel B #19', code: 'SD-2405-C019', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PLY12-MRN', qty: 2, center: 'EBS', wc: 'EBS-20', status: 'dikerjakan', pos: '50%' },
+    { name: 'Rak Atas #21', code: 'SD-2405-C021', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 3, center: 'EBS', wc: 'EBS-14', status: 'antri', pos: '50%' },
+    { name: 'Rak Tengah #22', code: 'SD-2405-C022', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'MDF15-MAT', qty: 2, center: 'EBS', wc: 'EBS-02', status: 'dikerjakan', pos: '50%' },
+    { name: 'Balok Penguat #30', code: 'SD-2405-C030', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PLY12-MRN', qty: 4, center: 'EBS', wc: 'EBS-11', status: 'dikerjakan', pos: '50%' }
+];
 /* ---------- AKHIR DATA DUMMY UNTUK JS ---------- */
 
 /* STATE */
 var selectedBuyer = null;
 var selectedCenter = 'MC';
 var selectedTab = 'semua';
-var soQuery = '';
-var soMore = 0;
-var selectedSO = null;
 var searchQuery = '';
 
 /* DOM */
@@ -1005,31 +1026,14 @@ function updateLabels() {
 function renderWCLoadGrid() {
     wcGridContainer.innerHTML = '';
     var items = selectedCenter === 'MC' ? WORK_CENTERS_MC : WORK_CENTERS_EBS;
-
-    if (!items.length) {
-        wcGridContainer.innerHTML =
-            '<div style="grid-column:1/-1; text-align:center; padding:14px; ' +
-            'color:var(--text-muted); font-size:11px;">belum ada data work center</div>';
-        return;
-    }
-
     for (var i = 0; i < items.length; i++) {
         var wc = items[i];
-        /* Beban = jumlah operasi ANTRE di WC itu. Ambang ini SEMENTARA —
-           dasar perhitungan beban masih akan dibahas (K5 di roadmap). */
-        var load = 'low';
-        if (wc.q > 3) { load = 'med'; }
-        if (wc.q > 8) { load = 'high'; }
-
         var div = document.createElement('div');
-        div.className = 'wc-item load-' + load;
-        div.setAttribute('title',
-            wc.wc + ' - ' + (wc.name || '') +
-            ' | antre ' + wc.q + ', dikerjakan ' + wc.a + ', selesai ' + wc.c);
+        div.className = 'wc-item load-' + wc.load;
         div.innerHTML =
-            '<span class="wc-name">' + wc.wc + '</span>' +
-            '<span class="wc-value">' + wc.q + '</span>' +
-            '<span class="wc-sub">antre</span>';
+            '<span class="wc-name">' + wc.id.split('-')[1] + '</span>' +
+            '<span class="wc-value">' + wc.value + '</span>' +
+            '<span class="wc-sub">/12</span>';
         wcGridContainer.appendChild(div);
     }
 }
@@ -1037,90 +1041,38 @@ function renderWCLoadGrid() {
 function renderSOList() {
     soListContainer.innerHTML = '';
 
-    var q = (soQuery || '').toLowerCase();
-    var shown = 0;
+    var allBar = document.createElement('div');
+    allBar.className = 'so-all-bar';
+    allBar.innerHTML = '<span>SEMUA SO</span> <span class="color-green">46%</span>';
+    soListContainer.appendChild(allBar);
+
     for (var i = 0; i < SO_DATA.length; i++) {
         var so = SO_DATA[i];
-        if (selectedBuyer && so.bid !== selectedBuyer) { continue; }
-        if (q && (so.so + ' ' + so.item + ' ' + so.buyer).toLowerCase().indexOf(q) < 0) { continue; }
+        if (selectedBuyer && so.buyerId !== selectedBuyer) { continue; }
 
-        var tot = so.komp || 1;
-        var wCs = Math.round((so.cs || 0) * 100 / tot);
-        var wMc = Math.round((so.mc || 0) * 100 / tot);
-        var wEb = Math.round((so.eb || 0) * 100 / tot);
+        var barSegments = '';
+        for (var j = 0; j < so.widths.length; j++) {
+            barSegments += '<div class="so-bar-part" style="width: ' + so.widths[j] +
+                           '; background: ' + so.colors[j] + ';"></div>';
+        }
 
         var item = document.createElement('div');
         item.className = 'so-item-box';
-        item.style.cursor = 'pointer';
         item.innerHTML =
             '<div class="so-item-header">' +
-                '<div>' + so.so + ' <span style="color:#64748b; font-weight:400;">/ ' + so.item + '</span>' +
-                    '<div class="so-meta">' + icon('fa-user') + ' ' + so.buyer + '</div>' +
+                '<div>' + so.id +
+                    '<div class="so-meta">' + icon('fa-user') + ' ' + so.buyerName + '</div>' +
                 '</div>' +
-                '<div class="so-pct-val" style="font-size:11px; color:#64748b;">' + so.komp + ' komp</div>' +
+                '<div class="so-pct-val">' + so.pct + '%</div>' +
             '</div>' +
-            '<div class="so-progress-bar">' +
-                '<div class="so-bar-part" style="width:' + wCs + '%; background:#f59e0b;"></div>' +
-                '<div class="so-bar-part" style="width:' + wMc + '%; background:#2563eb;"></div>' +
-                '<div class="so-bar-part" style="width:' + wEb + '%; background:#10b981;"></div>' +
-            '</div>' +
+            '<div class="so-meta" style="color:#1e293b; font-weight:500;">' + so.desc + '</div>' +
+            '<div class="so-progress-bar">' + barSegments + '</div>' +
             '<div class="so-item-footer">' +
-                '<span>' + so.pcs + ' pcs</span>' +
-                '<span>2KCS ' + (so.cs || 0) + ' &middot; MC ' + (so.mc || 0) + ' &middot; EBS ' + (so.eb || 0) + '</span>' +
+                '<span>' + so.compCount + ' komp - ' + so.pcsCount + ' pcs</span>' +
+                '<span class="color-green" style="font-weight:600;">' + so.selesai + ' selesai</span>' +
             '</div>';
-        item.onclick = (function (a, b) {
-            return function () { openCompDetail(a, b); };
-        })(so.so, so.item);
         soListContainer.appendChild(item);
-        shown++;
     }
-
-    if (shown === 0) {
-        soListContainer.innerHTML =
-            '<div style="padding:16px; text-align:center; color:var(--text-muted); font-size:11px;">' +
-            'Tidak ada Sales Order yang cocok</div>';
-    }
-    if (soMore > 0) {
-        var note = document.createElement('div');
-        note.style.cssText = 'font-size:10px; color:#92400e; background:#fef3c7;' +
-            'border:1px solid #fde68a; border-radius:4px; padding:5px 8px; margin-top:4px;';
-        note.innerHTML = 'Menampilkan ' + SO_DATA.length + ' SO+Item pertama; ' +
-                         soMore + ' lainnya tidak dimuat.';
-        soListContainer.appendChild(note);
-    }
-}
-
-/* Klik baris SO -> ambil komponennya sesuai enam SLoc, tampilkan di tabel
-   Detail Komponen. Query-nya sempit (satu SO+Item) sehingga tidak perlu
-   cache dan daftar komponen tidak pernah dikirim borongan ke browser. */
-function openCompDetail(so, item) {
-    selectedSO = so + '/' + item;
-    detailSubLabel.innerHTML = 'SO ' + so + ' &middot; item ' + item + ' &mdash; memuat&hellip;';
-    componentTableBody.innerHTML =
-        '<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--text-muted);">memuat&hellip;</td></tr>';
-
-    kpiGet('dash_prod.htm?part=comp&so=' + encodeURIComponent(so) +
-           '&item=' + encodeURIComponent(item), function (d) {
-        if (!d || !d.ok) {
-            componentTableBody.innerHTML =
-                '<tr><td colspan="5" style="text-align:center; padding:16px; color:#ef4444;">gagal memuat komponen</td></tr>';
-            return;
-        }
-        COMPONENT_DATA = [];
-        for (var i = 0; i < d.rows.length; i++) {
-            var r = d.rows[i];
-            COMPONENT_DATA.push({
-                name: r.maktx || r.matnr, code: r.matnr,
-                buyerId: '', buyerName: '',
-                mat: r.matnr, qty: r.qty, center: r.center, wc: r.lgort,
-                status: (r.lgort === '2KCS') ? 'antri' : 'dikerjakan',
-                pos: r.lgort
-            });
-        }
-        detailSubLabel.innerHTML = 'SO ' + so + ' &middot; item ' + item +
-                                   ' &mdash; ' + d.rows.length + ' komponen';
-        renderComponentTable();
-    });
 }
 
 function renderComponentTable() {
@@ -1130,8 +1082,8 @@ function renderComponentTable() {
     var q = searchQuery.toLowerCase();
     for (var i = 0; i < COMPONENT_DATA.length; i++) {
         var c = COMPONENT_DATA[i];
-        if (!selectedSO && c.center !== selectedCenter) { continue; }
-        if (!selectedSO && selectedBuyer && c.buyerId !== selectedBuyer) { continue; }
+        if (c.center !== selectedCenter) { continue; }
+        if (selectedBuyer && c.buyerId !== selectedBuyer) { continue; }
         if (selectedTab !== 'semua' && c.status !== selectedTab) { continue; }
         if (q && (c.name + ' ' + c.code + ' ' + c.buyerName).toLowerCase().indexOf(q) < 0) { continue; }
         rows.push(c);
@@ -1181,11 +1133,6 @@ function setupEventListeners() {
         })(tabs[i]);
     }
 
-    var soBox = document.getElementById('search-so');
-    if (soBox) {
-        soBox.onkeyup = function () { soQuery = soBox.value || ''; renderSOList(); };
-    }
-
     searchComponent.onkeyup = function () {
         searchQuery = searchComponent.value || '';
         renderComponentTable();
@@ -1229,21 +1176,15 @@ function kpiNum(n) {
     return out;
 }
 
-function setBar(id, pct) {
-    var el = document.getElementById(id);
-    if (el) { el.style.width = pct + '%'; }
-}
-
 function loadKpi() {
     kpiGet('dash_prod.htm?part=stock', function (d) {
         if (!d || !d.ok) {
-            kpiText('kpi-so', '-');       kpiText('kpi-so-sub', 'gagal memuat');
-            kpiText('kpi-buyer', '-');    kpiText('kpi-buyer-sub', 'gagal memuat');
-            kpiText('kpi-prod', '-');     kpiText('kpi-prod-sub', 'gagal memuat');
-            kpiText('kpi-done', '-');     kpiText('kpi-done-sub', 'gagal memuat');
+            kpiText('kpi-so', '-');
+            kpiText('kpi-so-sub', 'gagal memuat');
+            kpiText('kpi-buyer', '-');
+            kpiText('kpi-buyer-sub', 'gagal memuat');
             return;
         }
-
         kpiText('kpi-so', kpiNum(d.so));
         kpiText('kpi-so-sub', kpiNum(d.komp) + ' komponen &middot; ' + kpiNum(d.pcs) + ' pcs');
 
@@ -1251,43 +1192,14 @@ function loadKpi() {
         kpiText('kpi-buyer-sub', 'punya stok di enam SLoc');
         kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
 
-        kpiText('kpi-prod', kpiNum(d.prod));
-        kpiText('kpi-prod-sub', 'komponen di SLoc proses');
-
-        kpiText('kpi-done', kpiNum(d.done));
-        kpiText('kpi-done-sub', 'sampai 229K (sementara)');
-
-        /* ---- dua kotak center ----
-           Kuning = antre, biru = dikerjakan. HIJAU sengaja 0 dan diberi
-           keterangan: barang yang sudah selesai tidak punya stok lagi, jadi
-           saldo stok tidak bisa menjawabnya. Jawabannya ada di riwayat
-           pergerakan (MSEG) dan itu keputusan yang belum diambil. */
-        var mcTot = (d.mcq || 0) + (d.mcp || 0);
-        var ebTot = (d.ebq || 0) + (d.ebp || 0);
-        kpiText('mc-wip-text', kpiNum(d.mcp));
-        kpiText('mc-foot', kpiNum(d.mcq) + ' antre di 2KCS');
-        kpiText('mc-done', 'sudah lewat: belum tersedia');
-        setBar('mc-bar-done', 0);
-        setBar('mc-bar-wip', mcTot ? Math.round(d.mcp * 100 / mcTot) : 0);
-        setBar('mc-bar-queue', mcTot ? Math.round(d.mcq * 100 / mcTot) : 0);
-
-        kpiText('ebs-wip-text', kpiNum(d.ebp));
-        kpiText('ebs-foot', kpiNum(d.ebq) + ' antre di 2261/2262');
-        kpiText('ebs-done', 'sudah lewat: belum tersedia');
-        setBar('ebs-bar-done', 0);
-        setBar('ebs-bar-wip', ebTot ? Math.round(d.ebp * 100 / ebTot) : 0);
-        setBar('ebs-bar-queue', ebTot ? Math.round(d.ebq * 100 / ebTot) : 0);
-
+        /* Filter buyer diisi dari data, lalu seluruh panel dirender ulang.
+           Sebelum ini BUYERS kosong sehingga tidak ada tombol sama sekali —
+           lebih baik kosong daripada menampilkan nama buyer palsu. */
         if (d.buyer && d.buyer.length) {
             BUYERS = d.buyer;
             renderBuyerFilters();
+            updateLabels();
         }
-        if (d.solist) {
-            SO_DATA = d.solist;
-            soMore = d.solist_more || 0;
-        }
-        updateLabels();
-        renderSOList();
     });
 
     kpiGet('dash_prod.htm?part=ops', function (d) {
@@ -1298,24 +1210,11 @@ function loadKpi() {
         }
         kpiText('kpi-conf', d.pct);
         var sub = kpiNum(d.conf) + ' / ' + kpiNum(d.total) + ' op';
-        /* Kalau hasil dipotong batas order, WAJIB diberitahu — angka tidak
-           lengkap yang tampil meyakinkan lebih berbahaya daripada yang
-           jelas ditandai. */
-        if (d.trunc) { sub += ' &mdash; TIDAK LENGKAP (dibatasi ' + kpiNum(d.ord) + ' order)'; }
+        /* Kalau hasil dipotong batas order, WAJIB diberitahu — angka yang
+           tidak lengkap tapi tampil meyakinkan lebih berbahaya daripada
+           angka yang jelas ditandai. */
+        if (d.trunc) { sub += ' — TIDAK LENGKAP (dibatasi ' + kpiNum(d.ord) + ' order)'; }
         kpiText('kpi-conf-sub', sub);
-
-        /* ---- peta work center ---- */
-        WORK_CENTERS_MC = [];
-        WORK_CENTERS_EBS = [];
-        if (d.wc) {
-            for (var i = 0; i < d.wc.length; i++) {
-                if (d.wc[i].center === 'EBS') { WORK_CENTERS_EBS.push(d.wc[i]); }
-                else { WORK_CENTERS_MC.push(d.wc[i]); }
-            }
-        }
-        kpiText('mc-wc-cnt', WORK_CENTERS_MC.length + ' WC');
-        kpiText('ebs-wc-cnt', WORK_CENTERS_EBS.length + ' WC');
-        renderWCLoadGrid();
     });
 }
 
