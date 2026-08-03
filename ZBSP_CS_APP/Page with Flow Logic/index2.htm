@@ -428,18 +428,62 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .wc-value { font-size: 13px; font-weight: 700; }
     .wc-sub { font-size: 8px; color: var(--text-muted); display: block; opacity: 0.7; }
 
+    /* ================================================================
+       SALES ORDER + DETAIL KOMPONEN — SATU BARIS
+       Dulu dua section bertumpuk, masing-masing pendek (320/350px).
+       Sekarang bersanding 1fr : 2fr dengan TINGGI SAMA 560px sehingga
+       dua panel rata dan keduanya menampilkan lebih banyak baris.
+
+       Tingginya dikunci di section, lalu bagian yang bergulir memakai
+       flex:1 + min-height:0. Tanpa min-height:0 anak flex menolak
+       menyusut dan panel akan meluber melewati 560px.
+       ================================================================ */
+    .so-detail-row {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 16px;
+        align-items: stretch;
+    }
+    @media (max-width: 1100px) {
+        .so-detail-row { grid-template-columns: 1fr; }
+    }
+
     /* MONITORING SO */
     .so-section {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
         border-radius: 8px;
         padding: 16px;
+        height: 560px;
+        display: flex;
+        flex-direction: column;
+    }
+    /* Kepala panel SO ditumpuk, bukan disebar kiri-kanan: di lebar 1fr
+       (~sepertiga layar) judul + label buyer + kotak cari berebut tempat
+       dan judulnya patah dua baris. */
+    .so-head {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+    .so-head-line { display: flex; align-items: center; gap: 8px; }
+    .so-head-buyer {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 11px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     .so-list-container {
         display: flex;
         flex-direction: column;
         gap: 8px;
-        max-height: 320px;
+        flex: 1 1 auto;
+        min-height: 0;
         overflow-y: auto;
         padding-right: 4px;
     }
@@ -458,6 +502,20 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         border-radius: 6px;
         padding: 10px 12px;
         background: #ffffff;
+        cursor: pointer;
+    }
+    .so-item-box:hover { border-color: #94a3b8; background: #f8fafc; }
+    /* SO terpilih -> tabel Detail Komponen menyempit ke SO+Item ini saja */
+    .so-item-box.active {
+        border-color: #d97706;
+        background: #fffbeb;
+        box-shadow: inset 3px 0 0 #d97706;
+    }
+    .so-clear-note {
+        font-size: 10px;
+        color: #92400e;
+        margin-top: 2px;
+        font-weight: 400;
     }
     .so-item-header {
         display: flex;
@@ -490,12 +548,16 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         border: 1px solid var(--border-color);
         border-radius: 8px;
         padding: 16px;
+        height: 560px;
+        display: flex;
+        flex-direction: column;
     }
     .detail-header-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
         margin-bottom: 12px;
+        flex: 0 0 auto;
     }
     .search-box-container {
         position: relative;
@@ -522,7 +584,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         border-bottom: 1px solid var(--border-color);
         padding-bottom: 8px;
         margin-bottom: 12px;
+        flex: 0 0 auto;
     }
+    .tab-btn .cnt { font-size: 9px; opacity: 0.75; margin-left: 3px; }
     .tab-btn {
         background: transparent;
         border: none;
@@ -538,7 +602,8 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         font-weight: 600;
     }
     .table-wrapper {
-        max-height: 350px;
+        flex: 1 1 auto;
+        min-height: 0;
         overflow-y: auto;
     }
     .component-table {
@@ -563,7 +628,9 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         vertical-align: middle;
     }
     .comp-name { font-weight: 600; display: block; color: #1e293b; }
-    .comp-sub { font-size: 10px; color: var(--text-muted); }
+    /* block, bukan inline: di kolom SO/ITEM baris atasnya bukan .comp-name
+       sehingga tanpa ini keduanya menempel jadi "0010440item 000010". */
+    .comp-sub { font-size: 10px; color: var(--text-muted); display: block; }
     .mat-code { color: var(--color-blue); font-weight: 500; font-family: monospace; }
     .routing-badge {
         background: #f1f5f9;
@@ -590,6 +657,55 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         margin-top: 10px;
         border-top: 1px dashed var(--border-color);
         padding-top: 8px;
+        flex: 0 0 auto;
+    }
+
+    /* ---- baris komponen yang dapat dibentangkan ----
+       Isinya TAHAP (order), bukan operasi: diag_routing.htm bagian B
+       membuktikan 86,1% order hanya punya 1 operasi, jadi daftar VORNR
+       hampir selalu berisi satu baris dan tidak berguna. Daftar tahap
+       menjadikannya peta perjalanan komponen. */
+    .comp-row { cursor: pointer; }
+    .comp-row:hover { background: #f8fafc; }
+    .comp-row.open { background: #fffbeb; }
+    .caret {
+        display: inline-block;
+        width: 10px;
+        color: var(--text-muted);
+        font-size: 9px;
+        margin-right: 2px;
+    }
+    .stage-cell { background: #f8fafc; padding: 0 !important; }
+    .stage-table { width: 100%; border-collapse: collapse; }
+    .stage-table td {
+        padding: 6px 12px 6px 30px;
+        border-bottom: 1px solid #eef2f7;
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+    .stage-seq {
+        display: inline-block;
+        min-width: 16px;
+        height: 16px;
+        line-height: 16px;
+        text-align: center;
+        border-radius: 50%;
+        background: #e2e8f0;
+        color: #475569;
+        font-size: 9px;
+        font-weight: 700;
+        margin-right: 6px;
+    }
+    .stage-name { color: #1e293b; font-weight: 600; }
+    .stage-msg { padding: 8px 12px 8px 30px; font-size: 10px; color: var(--text-muted); }
+    .warn-strip {
+        font-size: 10px;
+        color: #92400e;
+        background: #fef3c7;
+        border: 1px solid #fde68a;
+        border-radius: 4px;
+        padding: 5px 8px;
+        margin-top: 6px;
     }
   </style>
 </head>
@@ -763,12 +879,15 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         </div>
     </section>
 
+    <div class="so-detail-row">
+
     <section class="so-section">
-        <div class="section-title-container">
-            <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> Sales Order</h2>
-            <div style="display:flex; align-items:center; gap:10px;">
-                <span id="so-buyer-label" class="sub">Semua Buyer</span>
-                <div class="search-box-container" style="width:190px;">
+        <div class="so-head">
+            <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> Sales Order
+                <small class="hint">klik untuk menyaring komponen</small></h2>
+            <div class="so-head-line">
+                <span id="so-buyer-label" class="so-head-buyer">Semua Buyer</span>
+                <div class="search-box-container" style="width:150px; flex:0 0 auto;">
                     <svg class="ic"><use xlink:href="#fa-magnifying-glass"></use></svg>
                     <input type="text" placeholder="cari SO / item" id="search-so">
                 </div>
@@ -782,21 +901,23 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     <section class="component-detail-section">
         <div class="detail-header-row">
             <div class="section-title-container">
-                <h2><svg class="ic"><use xlink:href="#fa-list-check"></use></svg> Detail Komponen</h2>
+                <h2><svg class="ic"><use xlink:href="#fa-list-check"></use></svg> Detail Komponen
+                    <span class="tip-anchor" data-tip="<span class='ct-h'>Status dari konfirmasi operasi</span><span class='ct-r'>Satu baris = satu <b>komponen</b> (SO + Item + Material). Statusnya dinilai dari operasi komponen itu <b>di tahap center yang sedang dipilih</b>.</span><span class='ct-r'>&Sigma;LMNGA = 0 &rarr; antri<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; selesai</span><span class='ct-r'>Klik satu baris untuk membentangkan <b>seluruh tahapnya</b>, termasuk Pembahanan di plant 1000.</span><span class='ct-src'>AFPO+AFKO &rarr; AFVC &rarr; AFVV / AFRU<br>tahap dari PWERK + AFKO-DISPO</span><span class='ct-warn'>Angka di sini TIDAK akan sama dengan dua kotak center di atas. Kotak center berbasis saldo stok (MSKA); tabel ini berbasis konfirmasi operasi (AFRU). Dua pertanyaan yang berbeda.</span>"><svg class="ic"><use xlink:href="#fa-triangle-exclamation"></use></svg></span>
+                </h2>
                 <span class="sub-filter" id="detail-sub-label">Semua Buyer &bull; Machining Center</span>
             </div>
 
-            <div class="search-box-container">
+            <div class="search-box-container" style="width:200px;">
                 <svg class="ic"><use xlink:href="#fa-magnifying-glass"></use></svg>
                 <input type="text" placeholder="cari nama / kode / buyer" id="search-component">
             </div>
         </div>
 
         <div class="tab-filters">
-            <button class="tab-btn active" data-tab="semua">Semua</button>
-            <button class="tab-btn" data-tab="dikerjakan">Dikerjakan</button>
-            <button class="tab-btn" data-tab="antri">Antri</button>
-            <button class="tab-btn" data-tab="selesai">Selesai</button>
+            <button class="tab-btn active" data-tab="dikerjakan">Dikerjakan<span class="cnt" id="cnt-dikerjakan"></span></button>
+            <button class="tab-btn" data-tab="antri">Antri<span class="cnt" id="cnt-antri"></span></button>
+            <button class="tab-btn" data-tab="selesai">Selesai<span class="cnt" id="cnt-selesai"></span></button>
+            <button class="tab-btn" data-tab="semua">Semua<span class="cnt" id="cnt-semua"></span></button>
         </div>
 
         <div class="table-wrapper">
@@ -804,10 +925,10 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
                 <thead>
                     <tr>
                         <th>KOMPONEN</th>
-                        <th>KODE MATERIAL</th>
-                        <th>QTY ROUTING</th>
+                        <th>SO / ITEM</th>
+                        <th>OPERASI</th>
                         <th>STATUS</th>
-                        <th style="text-align: right;">POSISI</th>
+                        <th style="text-align: right;">SELESAI</th>
                     </tr>
                 </thead>
                 <tbody id="component-table-body">
@@ -815,11 +936,18 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             </table>
         </div>
 
-        <div class="table-footer-note">
-            confirmed = operasi ter-scan selesai di WC &nbsp;|&nbsp; WIP = komponen di WC saat ini
-            <span style="float: right;">data sebagian simulasi &bull; per <%= lv_ts_date %> <%= lv_ts_time %></span>
+        <%-- Timestamp disimpan di ATRIBUT, bukan di dalam <script>.
+             Isi div ini ditimpa innerHTML oleh renderDetailFooter(); atribut
+             bertahan, anak elemen tidak. Tidak ada halaman lain di aplikasi
+             ini yang menaruh <%= %> di dalam blok script — pola itu tidak
+             ditiru di sini. --%>
+        <div class="table-footer-note" id="detail-footer"
+             data-ts="<%= lv_ts_date %> <%= lv_ts_time %>">
+            memuat&hellip;
         </div>
     </section>
+
+    </div>
 
 </div>
 
@@ -861,41 +989,51 @@ var WORK_CENTERS_EBS = buildWC('EBS', 20, 5);
 /* Diisi dari dash_prod.htm?part=stock. Kosong sampai data tiba. */
 var SO_DATA = [];
 
-var COMPONENT_DATA = [
-    { name: 'Ambalan #8', code: 'SD-2401-C005', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-01', status: 'antri', pos: '0%' },
-    { name: 'Sekat Vertikal #9', code: 'SD-2401-C009', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'PB18-PTH', qty: 2, center: 'MC', wc: 'MC-25', status: 'dikerjakan', pos: '0%' },
-    { name: 'Rak Tengah #39', code: 'SD-2401-C020', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-08', status: 'antri', pos: '0%' },
-    { name: 'Rak Tengah #51', code: 'SD-2401-C051', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'MDF15-MAT', qty: 1, center: 'MC', wc: 'MC-01', status: 'antri', pos: '0%' },
-    { name: 'Pintu Kiri #50', code: 'SD-2401-C050', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'HPL-3021', qty: 1, center: 'MC', wc: 'MC-08', status: 'dikerjakan', pos: '0%' },
-    { name: 'Samping Kanan #3', code: 'SD-2401-C003', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'PB18-PTH', qty: 4, center: 'MC', wc: 'MC-12', status: 'antri', pos: '0%' },
-    { name: 'Pintu Laci #5', code: 'SD-2401-C005', buyerId: 'nordic', buyerName: 'Nordic Living', mat: 'BLK18-MLN', qty: 1, center: 'MC', wc: 'MC-32', status: 'dikerjakan', pos: '0%' },
-
-    { name: 'Rak Bawah #9', code: 'SD-2405-C009', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 4, center: 'EBS', wc: 'EBS-14', status: 'antri', pos: '50%' },
-    { name: 'Samping Kanan #10', code: 'SD-2405-C010', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 1, center: 'EBS', wc: 'EBS-13', status: 'antri', pos: '50%' },
-    { name: 'Partisi #12', code: 'SD-2405-C012', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 2, center: 'EBS', wc: 'EBS-02', status: 'dikerjakan', pos: '50%' },
-    { name: 'Back Panel B #19', code: 'SD-2405-C019', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PLY12-MRN', qty: 2, center: 'EBS', wc: 'EBS-20', status: 'dikerjakan', pos: '50%' },
-    { name: 'Rak Atas #21', code: 'SD-2405-C021', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PB18-PTH', qty: 3, center: 'EBS', wc: 'EBS-14', status: 'antri', pos: '50%' },
-    { name: 'Rak Tengah #22', code: 'SD-2405-C022', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'MDF15-MAT', qty: 2, center: 'EBS', wc: 'EBS-02', status: 'dikerjakan', pos: '50%' },
-    { name: 'Balok Penguat #30', code: 'SD-2405-C030', buyerId: 'westfield', buyerName: 'Westfield Home', mat: 'PLY12-MRN', qty: 4, center: 'EBS', wc: 'EBS-11', status: 'dikerjakan', pos: '50%' }
-];
+/* Detail Komponen diisi dash_prod.htm?part=komp — LIVE, bukan dummy.
+   Array dummy COMPONENT_DATA yang lama sudah dibuang seluruhnya. */
+var KOMP = [];
 /* ---------- AKHIR DATA DUMMY UNTUK JS ---------- */
 
 /* STATE */
 var selectedBuyer = null;
 var selectedCenter = 'MC';
-var selectedTab = 'semua';
+/* Tab dibuka di DIKERJAKAN, bukan "Semua" — permintaan user 2026-08-03.
+   Kelas .active di HTML harus ikut ada di tombol ini. */
+var selectedTab = 'dikerjakan';
 var soQuery = '';
 var soMore = 0;
 var searchQuery = '';
 
+/* Sales Order yang sedang dipilih; null = semua SO.
+   Bukan sekadar penyaring di browser: memilih SO memicu pengambilan ulang
+   part=komp yang discope, sehingga komponennya lepas dari batas 400. */
+var selectedSO = null;
+
+/* Keadaan tabel komponen */
+var kompMore    = 0;      /* komponen di luar batas, dilaporkan apa adanya */
+var kompNook    = 0;      /* komponen tanpa order di tahap center ini      */
+var kompState   = 'load'; /* load | ok | err | wait                        */
+var kompReqSeq  = 0;      /* penanda urutan permintaan — lihat loadKomp()  */
+var kompRetried = false;
+
+/* Baris yang dibentangkan: kunci -> { open, rows, state } */
+var EXPANDED = {};
+
 /* DOM */
 var buyerFilterContainer, btnAllBuyer, mcBox, ebsBox, wcGridContainer, wcMapTitle,
     soListContainer, componentTableBody, searchComponent, wipDisplayStatus,
-    detailSubLabel, soBuyerLabel;
+    detailSubLabel, soBuyerLabel, detailFooter;
 
 function icon(name, extraStyle) {
     return '<svg class="ic"' + (extraStyle ? ' style="' + extraStyle + '"' : '') +
            '><use xlink:href="#' + name + '"></use></svg>';
+}
+
+/* Teks dari SAP (MAKTX, NAME1) masuk ke innerHTML. Tanpa ini, satu tanda
+   "<" pada deskripsi material sudah cukup merusak tabelnya. */
+function esc(s) {
+    if (s === null || s === undefined) { return ''; }
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function init() {
@@ -911,6 +1049,7 @@ function init() {
     wipDisplayStatus     = document.getElementById('wip-display-status');
     detailSubLabel       = document.getElementById('detail-sub-label');
     soBuyerLabel         = document.getElementById('so-buyer-label');
+    detailFooter         = document.getElementById('detail-footer');
 
     renderBuyerFilters();
     renderWCLoadGrid();
@@ -941,21 +1080,24 @@ function selectBuyer(buyerId) {
         btnAllBuyer.className = 'btn-all-buyer';
     }
 
-    if (buyerId === 'westfield') {
-        switchCenter('EBS');
-        document.getElementById('mc-wip-text').innerHTML = '34';
-        document.getElementById('ebs-wip-text').innerHTML = '27';
-    } else {
-        switchCenter('MC');
-        document.getElementById('mc-wip-text').innerHTML = '213';
-        document.getElementById('ebs-wip-text').innerHTML = '167';
-    }
+    /* Ganti buyer -> pilihan SO lama hampir pasti bukan milik buyer ini.
+       Dilepas supaya tabel tidak menampilkan SO yang sudah tidak terlihat
+       di daftar sebelahnya. */
+    selectedSO = null;
+
+    /* CATATAN: di sini dulu ada blok yang menimpa mc-wip-text / ebs-wip-text
+       dengan angka tetap (213/167 dan 34/27) untuk buyer contoh 'nordic' dan
+       'westfield'. Setelah BUYERS diisi KUNNR nyata, cabang 'westfield' tidak
+       pernah tercapai sehingga cabang lain SELALU jalan dan menimpa angka
+       asli dari dash_prod.htm dengan angka karangan. Dibuang 2026-08-03.
+       drawCenters() dipanggil supaya angka yang benar kembali terpasang. */
+    drawCenters();
 
     renderBuyerFilters();
     updateLabels();
     renderWCLoadGrid();
     renderSOList();
-    renderComponentTable();
+    loadKomp();
 }
 
 function switchCenter(center) {
@@ -971,7 +1113,6 @@ function switchCenter(center) {
     }
     updateLabels();
     renderWCLoadGrid();
-    renderComponentTable();
 }
 
 function buyerNameOf(id) {
@@ -983,8 +1124,11 @@ function buyerNameOf(id) {
 
 function updateLabels() {
     var buyerName = selectedBuyer ? buyerNameOf(selectedBuyer) : 'Semua Buyer';
-    wipDisplayStatus.innerHTML = buyerName + ' • Semua SO';
-    detailSubLabel.innerHTML = buyerName + ' • ' +
+    var soName = selectedSO
+        ? (selectedSO.so + ' / ' + selectedSO.item)
+        : 'Semua SO';
+    wipDisplayStatus.innerHTML = buyerName + ' • ' + soName;
+    detailSubLabel.innerHTML = buyerName + ' • ' + soName + ' • ' +
         (selectedCenter === 'MC' ? 'Machining Center' : 'Edge Banding &amp; Sanding');
 
     soBuyerLabel.innerHTML = buyerName;
@@ -1020,13 +1164,19 @@ function renderSOList() {
         var wMc = Math.round((so.mc || 0) * 100 / tot);
         var wEb = Math.round((so.eb || 0) * 100 / tot);
 
+        var isSel = selectedSO && selectedSO.so === so.so && selectedSO.item === so.item;
+
         var item = document.createElement('div');
-        item.className = 'so-item-box';
+        item.className = 'so-item-box' + (isSel ? ' active' : '');
+        item.onclick = (function (s) {
+            return function () { selectSO(s.so, s.item); };
+        })(so);
         item.innerHTML =
             '<div class="so-item-header">' +
                 '<div>' + so.so +
                     ' <span style="color:#64748b; font-weight:400;">/ ' + so.item + '</span>' +
-                    '<div class="so-meta">' + icon('fa-user') + ' ' + so.buyer + '</div>' +
+                    '<div class="so-meta">' + icon('fa-user') + ' ' + esc(so.buyer) + '</div>' +
+                    (isSel ? '<div class="so-clear-note">klik lagi untuk menampilkan semua SO</div>' : '') +
                 '</div>' +
                 '<div class="so-pct-val" style="font-size:11px; color:#64748b;">' +
                     so.komp + ' komp</div>' +
@@ -1065,50 +1215,287 @@ function renderSOList() {
     }
 }
 
+/* ====================================================================
+   DETAIL KOMPONEN
+
+   Pembagian kerja penyaring — sengaja tidak seluruhnya di satu tempat:
+     center, SO+Item, buyer  -> DI SERVER (part=komp). Ketiganya mengubah
+       cakupan, jadi harus di server supaya hasilnya lepas dari batas 400
+       komponen. Kalau disaring di browser, memilih satu SO hanya akan
+       menyaring 400 komponen pertama — SO di urutan ke-900 akan terlihat
+       kosong padahal datanya ada.
+     tab status, kotak cari  -> DI BROWSER. Instan, tanpa permintaan baru.
+   ==================================================================== */
+
+function kompKey(r) { return r.so + '|' + r.item + '|' + r.mat; }
+
+function selectSO(so, item) {
+    if (selectedSO && selectedSO.so === so && selectedSO.item === item) {
+        selectedSO = null;                 /* klik kedua -> lepas */
+    } else {
+        selectedSO = { so: so, item: item };
+    }
+    EXPANDED = {};
+    updateLabels();
+    renderSOList();
+    loadKomp();
+}
+
+/* Ambil ringkasan komponen. Setiap permintaan diberi nomor urut: jawaban
+   yang datang terlambat dari permintaan LAMA diabaikan, supaya klik cepat
+   berturut-turut tidak membuat tabel menampilkan hasil pilihan sebelumnya. */
+function loadKomp() {
+    var seq = ++kompReqSeq;
+    kompState = 'load';
+    EXPANDED = {};
+    renderComponentTable();
+
+    var url = 'dash_prod.htm?part=komp&ctr=' +
+              (selectedCenter === 'MC' ? 'MC' : 'EB');
+    if (selectedSO) {
+        url += '&so=' + encodeURIComponent(selectedSO.so) +
+               '&item=' + encodeURIComponent(selectedSO.item);
+    }
+    if (selectedBuyer) {
+        url += '&bid=' + encodeURIComponent(selectedBuyer);
+    }
+
+    kpiGet(url, function (d) {
+        if (seq !== kompReqSeq) { return; }      /* jawaban usang */
+
+        if (!d) {
+            KOMP = []; kompState = 'err';
+            renderComponentTable();
+            return;
+        }
+        if (!d.ok) {
+            /* part=stock belum sempat menulis daftar komponennya. Dicoba
+               ulang SEKALI setelah jeda; kalau masih belum ada, dikatakan
+               apa adanya, bukan ditampilkan sebagai "tidak ada data". */
+            KOMP = []; kompState = 'wait';
+            renderComponentTable();
+            if (!kompRetried) {
+                kompRetried = true;
+                setTimeout(loadKomp, 2500);
+            }
+            return;
+        }
+        KOMP = d.rows || [];
+        kompMore = d.more || 0;
+        kompNook = d.nook || 0;
+        kompState = 'ok';
+        renderComponentTable();
+    });
+}
+
+/* Rincian tahap satu komponen — hanya saat barisnya dibentangkan.
+   Hasilnya disimpan di EXPANDED sehingga buka-tutup berikutnya tidak
+   meminta ulang ke server. */
+function loadStages(r) {
+    var key = kompKey(r);
+    var st = EXPANDED[key];
+    st.state = 'load';
+    renderComponentTable();
+
+    kpiGet('dash_prod.htm?part=ops1' +
+           '&so='   + encodeURIComponent(r.so) +
+           '&item=' + encodeURIComponent(r.item) +
+           '&mat='  + encodeURIComponent(r.mat),
+        function (d) {
+            var cur = EXPANDED[key];
+            if (!cur) { return; }
+            if (!d || !d.ok) {
+                cur.state = 'err';
+            } else {
+                cur.rows = d.rows || [];
+                cur.state = 'ok';
+            }
+            renderComponentTable();
+        });
+}
+
+function toggleStages(r) {
+    var key = kompKey(r);
+    if (EXPANDED[key] && EXPANDED[key].open) {
+        EXPANDED[key].open = false;
+        renderComponentTable();
+        return;
+    }
+    if (!EXPANDED[key]) {
+        EXPANDED[key] = { open: true, rows: null, state: 'load' };
+        loadStages(r);
+        return;
+    }
+    EXPANDED[key].open = true;
+    if (EXPANDED[key].state === 'err') {
+        loadStages(r);                        /* gagal sebelumnya -> coba lagi */
+        return;
+    }
+    renderComponentTable();
+}
+
+function centerName() {
+    return selectedCenter === 'MC' ? 'Machining Center' : 'Edge Banding';
+}
+
+function stageRowsHtml(st) {
+    if (st.state === 'load') {
+        return '<div class="stage-msg">memuat tahap&hellip;</div>';
+    }
+    if (st.state === 'err') {
+        return '<div class="stage-msg" style="color:#b91c1c;">Gagal memuat tahap. ' +
+               'Klik baris ini untuk mencoba lagi.</div>';
+    }
+    if (!st.rows || st.rows.length === 0) {
+        return '<div class="stage-msg">Komponen ini tidak punya order produksi sama sekali.</div>';
+    }
+    var h = '<table class="stage-table">';
+    for (var i = 0; i < st.rows.length; i++) {
+        var s = st.rows[i];
+        h += '<tr>' +
+             '<td style="width:42%;">' +
+                '<span class="stage-seq">' + (s.seq || '?') + '</span>' +
+                '<span class="stage-name">' + esc(s.stg) + '</span>' +
+                ' <span style="opacity:0.7;">op ' + esc(s.op) + '</span>' +
+             '</td>' +
+             '<td style="width:20%;">' + (s.wc ? esc(s.wc) : '&mdash;') + '</td>' +
+             '<td style="width:20%;"><span class="status-badge ' + s.st + '">' +
+                String(s.st).toUpperCase() + '</span></td>' +
+             '<td style="width:18%; text-align:right;">' +
+                s.done + ' / ' + (s.need || '&mdash;') + '</td>' +
+             '</tr>';
+    }
+    return h + '</table>';
+}
+
 function renderComponentTable() {
     componentTableBody.innerHTML = '';
 
+    /* Cacah per status dihitung dari SELURUH hasil (sebelum tab disaring)
+       supaya angka di tombol tab tidak berubah mengikuti tab yang aktif. */
+    var cnt = { dikerjakan: 0, antri: 0, selesai: 0, semua: 0 };
     var rows = [];
     var q = searchQuery.toLowerCase();
-    for (var i = 0; i < COMPONENT_DATA.length; i++) {
-        var c = COMPONENT_DATA[i];
-        if (c.center !== selectedCenter) { continue; }
-        if (selectedBuyer && c.buyerId !== selectedBuyer) { continue; }
-        if (selectedTab !== 'semua' && c.status !== selectedTab) { continue; }
-        if (q && (c.name + ' ' + c.code + ' ' + c.buyerName).toLowerCase().indexOf(q) < 0) { continue; }
-        rows.push(c);
+    var i, r;
+
+    for (i = 0; i < KOMP.length; i++) {
+        r = KOMP[i];
+        if (q && (r.txt + ' ' + r.mat + ' ' + r.buyer + ' ' + r.so)
+                 .toLowerCase().indexOf(q) < 0) { continue; }
+        cnt.semua++;
+        if (cnt[r.st] !== undefined) { cnt[r.st]++; }
+        if (selectedTab !== 'semua' && r.st !== selectedTab) { continue; }
+        rows.push(r);
+    }
+
+    var tabs = ['dikerjakan', 'antri', 'selesai', 'semua'];
+    for (i = 0; i < tabs.length; i++) {
+        var el = document.getElementById('cnt-' + tabs[i]);
+        if (el) { el.innerHTML = kompState === 'ok' ? '(' + cnt[tabs[i]] + ')' : ''; }
+    }
+
+    if (kompState !== 'ok') {
+        var msg = 'Memuat data komponen&hellip;';
+        if (kompState === 'err') {
+            msg = 'Gagal memuat data komponen dari dash_prod.htm?part=komp.';
+        } else if (kompState === 'wait') {
+            msg = 'Menunggu data stok selesai dihitung&hellip;';
+        }
+        componentTableBody.innerHTML =
+            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:24px;">' +
+            msg + '</td></tr>';
+        renderDetailFooter(0);
+        return;
     }
 
     if (rows.length === 0) {
         componentTableBody.innerHTML =
-            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:20px;">' +
-            'Tidak ada data komponen ditemukan</td></tr>';
+            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:24px;">' +
+            'Tidak ada komponen yang cocok</td></tr>';
+        renderDetailFooter(0);
         return;
     }
 
     for (var k = 0; k < rows.length; k++) {
-        var r = rows[k];
+        r = rows[k];
+        var key = EXPANDED[kompKey(r)];
+        var isOpen = !!(key && key.open);
+
         var tr = document.createElement('tr');
+        tr.className = 'comp-row' + (isOpen ? ' open' : '');
+        tr.onclick = (function (row) {
+            return function () { toggleStages(row); };
+        })(r);
         tr.innerHTML =
             '<td>' +
-                '<span class="comp-name">' + r.name + '</span>' +
-                '<span class="comp-sub">' + r.code + ' • ' + r.buyerName + '</span>' +
+                '<span class="comp-name"><span class="caret">' +
+                    (isOpen ? '&#9660;' : '&#9654;') + '</span>' + esc(r.txt) + '</span>' +
+                '<span class="comp-sub"><span class="mat-code">' + esc(r.mat) + '</span>' +
+                    (r.buyer ? ' • ' + esc(r.buyer) : '') + '</span>' +
             '</td>' +
-            '<td><span class="mat-code">' + r.mat + '</span></td>' +
+            '<td><span class="mat-code">' + esc(r.so) + '</span>' +
+                '<span class="comp-sub">item ' + esc(r.item) + '</span></td>' +
             '<td><div class="routing-badge">' +
-                '<span style="color:#059669; font-weight:700;">' + r.qty + '</span> | ' +
-                icon('fa-table-cells', 'font-size:8px;') + ' ' + r.center + ' @ ' + r.wc +
+                '<span style="color:#059669; font-weight:700;">' + r.done + '</span> / ' + r.tot +
+                ' op' + (r.wc ? ' | ' + icon('fa-table-cells', 'font-size:8px;') + ' ' + esc(r.wc) : '') +
             '</div></td>' +
-            '<td><span class="status-badge ' + r.status + '">' + r.status.toUpperCase() + '</span></td>' +
-            '<td style="text-align: right; font-weight:700;">' + r.pos + '</td>';
+            '<td><span class="status-badge ' + r.st + '">' + String(r.st).toUpperCase() + '</span></td>' +
+            '<td style="text-align: right; font-weight:700;">' + r.pct + '%</td>';
         componentTableBody.appendChild(tr);
+
+        if (isOpen) {
+            var dtr = document.createElement('tr');
+            dtr.innerHTML = '<td class="stage-cell" colspan="5">' +
+                            stageRowsHtml(key) + '</td>';
+            componentTableBody.appendChild(dtr);
+        }
     }
+
+    renderDetailFooter(rows.length);
+}
+
+/* Kaki tabel: mengaku apa yang TIDAK ditampilkan. Tabel yang diam-diam
+   terpotong jauh lebih berbahaya daripada tabel yang mengaku tidak lengkap. */
+function renderDetailFooter(shown) {
+    if (!detailFooter) { return; }
+
+    var ts = detailFooter.getAttribute('data-ts') || '';
+    var h = ts ? '<span style="float:right;">per ' + esc(ts) + '</span>' : '';
+    h += 'status dari konfirmasi operasi (AFRU) di tahap <strong>' + centerName() +
+         '</strong> &mdash; <strong>bukan</strong> dari saldo stok, jadi tidak sebanding ' +
+         'dengan dua kotak center di atas.';
+
+    if (selectedCenter !== 'MC') {
+        h += '<br>Sanding (229K) tidak punya DISPO tersendiri, jadi tahap ini mencakup ' +
+             'order Edge Banding (EB2) saja.';
+    }
+    if (kompState === 'ok') {
+        h += '<br>menampilkan ' + shown + ' dari ' + KOMP.length + ' komponen di tahap ini';
+        if (kompNook > 0) {
+            h += ' &nbsp;|&nbsp; ' + kompNook +
+                 ' komponen tidak punya order produksi di tahap ini';
+        }
+    }
+    if (kompMore > 0) {
+        h += '<div class="warn-strip">Menampilkan ' + KOMP.length +
+             ' komponen pertama; ' + kompMore + ' lainnya tidak dimuat. ' +
+             'Pilih satu Sales Order atau satu Buyer untuk melihatnya.</div>';
+    }
+    detailFooter.innerHTML = h;
 }
 
 function setupEventListeners() {
     btnAllBuyer.onclick = function () { selectBuyer(null); };
-    mcBox.onclick  = function () { switchCenter('MC'); };
-    ebsBox.onclick = function () { switchCenter('EBS'); };
+    /* Ganti center = ganti TAHAP yang dinilai, jadi tabelnya harus diambil
+       ulang dari server, bukan sekadar dirender ulang. */
+    mcBox.onclick  = function () {
+        if (selectedCenter === 'MC') { return; }
+        switchCenter('MC'); loadKomp();
+    };
+    ebsBox.onclick = function () {
+        if (selectedCenter === 'EBS') { return; }
+        switchCenter('EBS'); loadKomp();
+    };
 
     var tabs = document.getElementsByClassName('tab-btn');
     for (var i = 0; i < tabs.length; i++) {
@@ -1118,6 +1505,8 @@ function setupEventListeners() {
                 for (var j = 0; j < all.length; j++) { all[j].className = 'tab-btn'; }
                 btn.className = 'tab-btn active';
                 selectedTab = btn.getAttribute('data-tab');
+                /* tab hanya menyaring hasil yang sudah ada — tanpa
+                   permintaan baru, supaya perpindahannya seketika */
                 renderComponentTable();
             };
         })(tabs[i]);
@@ -1199,14 +1588,20 @@ function drawCenters() {
         var slocA = (id === 'mc') ? '2261 / 2262' : '22E2 / 22E3 / 229K';
         var box = document.getElementById(id + '-wip-tip');
         if (box) {
+            /* ⚠️ Atribut class di bawah WAJIB memakai kutip GANDA.
+               Sampai 2026-08-03 baris-baris ini memakai kutip tunggal di
+               dalam string berkutip tunggal ('<span class='ct-h'>...'), yang
+               bukan sekadar salah tampil melainkan SYNTAX ERROR — dan satu
+               syntax error menggugurkan SELURUH blok <script> halaman ini,
+               sehingga tidak ada satu pun panel yang terisi. */
             box.setAttribute('data-tip',
-                '<span class='ct-h'>WIP &mdash; komponen sedang di center ini</span>' +
-                '<span class='ct-r'>Angka besar = komponen yang stoknya ada di <b>' + slocA + '</b>.</span>' +
-                '<span class='ct-r'>Antre <b>' + kpiNum(q) + '</b> (masih di ' + slocQ + ')<br>' +
+                '<span class="ct-h">WIP &mdash; komponen sedang di center ini</span>' +
+                '<span class="ct-r">Angka besar = komponen yang stoknya ada di <b>' + slocA + '</b>.</span>' +
+                '<span class="ct-r">Antre <b>' + kpiNum(q) + '</b> (masih di ' + slocQ + ')<br>' +
                 'Dikerjakan <b>' + kpiNum(a) + '</b> (di ' + slocA + ')<br>' +
-                'Sudah lewat <b>' + (g === null ? 'menghitung…' : kpiNum(g)) + '</b></span>' +
-                '<span class='ct-r'>Sudah lewat = pernah diterima di SLoc center ini, tapi stoknya sekarang nol.</span>' +
-                '<span class='ct-src'>kuning &amp; biru: MSKA saldo &middot; hijau: MSEG riwayat<br>cacah komponen, bukan qty</span>');
+                'Sudah lewat <b>' + (g === null ? 'menghitung&hellip;' : kpiNum(g)) + '</b></span>' +
+                '<span class="ct-r">Sudah lewat = pernah diterima di SLoc center ini, tapi stoknya sekarang nol.</span>' +
+                '<span class="ct-src">kuning &amp; biru: MSKA saldo &middot; hijau: MSEG riwayat<br>cacah komponen, bukan qty</span>');
         }
     }
 }
@@ -1300,6 +1695,11 @@ function loadKpi() {
             kpiText('kpi-buyer', '-');  kpiText('kpi-buyer-sub', 'gagal memuat');
             kpiText('kpi-prod', '-');   kpiText('kpi-prod-sub', 'gagal memuat');
             kpiText('kpi-done', '-');   kpiText('kpi-done-sub', 'gagal memuat');
+            /* part=komp bergantung pada part=stock. Kalau yang ini gagal,
+               tabel tidak akan pernah terisi — dikatakan sekarang, bukan
+               dibiarkan berputar di "memuat" selamanya. */
+            kompState = 'err';
+            renderComponentTable();
             return;
         }
 
@@ -1335,6 +1735,12 @@ function loadKpi() {
         }
         updateLabels();
         renderSOList();
+
+        /* part=komp HARUS menyusul part=stock: ia membaca daftar komponen
+           yang baru saja ditulis part=stock ke SHARED BUFFER 'DPRODKM'.
+           Dipanggil bersamaan, ia akan membalas "jalankan part=stock lebih
+           dulu". Sejajar dengan part=hist yang punya ketergantungan sama. */
+        loadKomp();
 
         kpiGet('dash_prod.htm?part=hist', function (h) {
             if (!h || !h.ok) {
