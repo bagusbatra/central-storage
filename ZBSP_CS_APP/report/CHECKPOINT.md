@@ -29,7 +29,7 @@ status tanpa bukti.
 | 1 | Dashboard Central Storage | ✅ Jalan | `index.htm`, `dash_*.htm` | Restrukturisasi 2026-07-24 |
 | 2 | Monitoring / Pelacakan SO | ✅ Jalan | `monitoring.htm` | Perbaikan status SO 2026-07-23 |
 | 3 | Diagnostik Routing (Fase 0) | ✅ Selesai | `diag_routing.htm` | Dijalankan 2026-07-30, hasil terkunci |
-| 4 | Dashboard Production | 🟡 Sebagian | `index2.htm`, `dash_prod.htm` | Fase data 6 dari 8 tahap, 2026-08-03. Sisa: peta WC & BOTTLENECK (terhalang K5) |
+| 4 | Dashboard Production | ⏸️ Belum teruji | `index2.htm`, `dash_prod.htm` | Fase data SELESAI 2026-08-03; work center dihapus. Menunggu aktivasi 15 objek di SE80 |
 | 5 | Peta Perjalanan SO | 🟡 Sebagian | `routing_map.htm` | Dot map + stok real, 2026-07-31 |
 | 6 | Pohon Konvergensi Material | 🔧 Dikerjakan | `ZCL_CS_PEG.abap` | Task 3 dari 11, 2026-08-01 |
 | 7 | Pemetaan Cost Center (`map_sec`) | 🚧 Terhalang | — | 64 cost center menunggu diberi nama |
@@ -79,13 +79,13 @@ sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti t
 - **Berkas: 15 objek SE80** (dipecah 2026-08-03 dari 2 berkas 1.863 + 1.439
   baris). Rinciannya di bawah — **semuanya wajib aktif**
 - **Sumbu utama:** **Buyer** (dulu SO)
-- **Pusat produksi:** 2 center — Machining Center (40 WC) + Edge Banding &
-  Sanding (20 WC). Dulu 3 section
+- **Pusat produksi:** 2 center — Machining Center + Edge Banding & Sanding.
+  Dulu 3 section
 - **Alur:** Storage → Machining → Edge Banding → Storage
 - **⚠️ ATURAN CAKUPAN DIPERLUAS (ketentuan wajib user, 2026-08-01):** SO yang
   dihitung adalah yang punya stok di **enam** SLoc: `2KCS`, `2261`, `2262`,
   `22E2`, `22E3`, `229K` — bukan lagi 2KCS saja. Berlaku untuk buyer,
-  komponen, SO, work center, semuanya. Sample customer `2000000004` tetap
+  komponen, dan SO. Sample customer `2000000004` tetap
   dibuang. Satu "komponen" = COUNT DISTINCT (VBELN+POSNR+MATNR)
 - **PLO tidak dipakai** (ketentuan wajib user); `PLAF` tidak disentuh
 - **Pemetaan center — DUA sumbu berbeda, jangan dicampur:**
@@ -110,10 +110,10 @@ tercetak ke keluaran, dan untuk endpoint JSON itu merusak jawabannya.
 |---|---|---|
 | `index2.htm` | Page with Flow Logic | rangka halaman, 85 baris |
 | `cs2_css_base.htm` | Page Fragment | CSS: reset, header, kartu, filter, tooltip, Lintasan |
-| `cs2_css_panel.htm` | Page Fragment | CSS: peta WC, Sales Order, Detail Komponen |
+| `cs2_css_panel.htm` | Page Fragment | CSS: Sales Order, Detail Komponen |
 | `cs2_icons.htm` | Page Fragment | 19 symbol SVG pengganti Font Awesome |
 | `cs2_body.htm` | Page Fragment | seluruh markup |
-| `cs2_js_core.htm` | Page Fragment | state, init, buyer, center, WC, daftar SO, event |
+| `cs2_js_core.htm` | Page Fragment | state, init, buyer, center, daftar SO, event |
 | `cs2_js_detail.htm` | Page Fragment | tabel Detail Komponen |
 | `cs2_js_kpi.htm` | Page Fragment | kpiGet, dua kotak center, tooltip, loadKpi, boot |
 | `dash_prod.htm` | Page with Flow Logic | rangka endpoint: konstanta, parameter, cache |
@@ -148,10 +148,13 @@ halaman menjadi >1 menit/timeout).
 `DPRODKM` yang ditulis `part=stock` — **harus dipanggil setelahnya**.
 TTL 300 dtk, `?fresh=1` memaksa hitung ulang.
 
-- **Sudah live:** BUYER, SALES ORDER, OPERASI SELESAI, DI PRODUKSI, filter
-  buyer, dua kotak center (tiga warna), daftar SO, tabel Detail Komponen
-- **Masih dummy:** kartu BOTTLENECK dan peta Work Center (`Math.random()`) —
-  keduanya terhalang K5
+- **Sudah live:** BUYER, SALES ORDER, OPERASI SELESAI, DI PRODUKSI,
+  SELESAI PROD., filter buyer, dua kotak center (tiga warna), daftar SO,
+  tabel Detail Komponen
+- **Tidak ada lagi elemen dummy.** Kartu BOTTLENECK dan peta Work Center
+  DIHAPUS 2026-08-03 atas permintaan user — keduanya masih `Math.random()`
+  dan bergantung pada K5 yang tak kunjung diputuskan. Seluruh halaman kini
+  memakai data nyata
 - ⏸️ **Belum di-commit & belum pernah dijalankan di SE80** (per 2026-08-03):
   paket Perbaikan #1 — header bar biru, rename OPERASI SELESAI, sub-teks dua
   baris DI PRODUKSI, dan `done_real` untuk SELESAI PROD. Yang terakhir membawa
@@ -160,7 +163,7 @@ TTL 300 dtk, `?fresh=1` memaksa hitung ulang.
 - **Ikon:** Font Awesome CDN diganti 19 `symbol` SVG inline — CDN tidak
   terjangkau dari jaringan SAP
 - **Tabel yang dibaca:** MSKA, MSEG, VBAK, KNA1, MAKT, AFKO⨝AFPO, AFVC, AFVV,
-  AFRU, CRHD
+  AFRU. (`CRHD` tidak lagi disentuh sejak work center dihapus)
 
 ### Definisi yang mudah disalahpahami
 
@@ -183,9 +186,9 @@ TTL 300 dtk, `?fresh=1` memaksa hitung ulang.
   (`diag_routing.htm`, `routing_map.htm`, `dash_prod.htm` part=ops & part=komp)
 - 📍 **Fase data punya roadmap sendiri:** `report/ROADMAP-index2-data.md`.
   **Baca itu dulu kalau melanjutkan di sesi baru**
-- 🔴 **Satu-satunya penghambat tersisa — K5 "dasar perhitungan beban WC":**
-  memblokir peta Work Center (tahap 4) dan kartu BOTTLENECK (tahap 6). K1–K4
-  dan K6 sudah ditutup
+- ✅ **Tidak ada keputusan terbuka yang tersisa.** K1–K4 & K6 ditutup lewat
+  keputusan; K5 ("dasar perhitungan beban WC") gugur karena work center
+  dihapus seluruhnya dari halaman ini
 
 ### 🔴 Pelajaran 2026-08-03 — jangan diulang
 

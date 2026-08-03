@@ -2,8 +2,8 @@
      PAGE FRAGMENT — JS inti
      Disisipkan index2.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
-     State, pembantu, init, filter buyer, ganti center, peta WC,
-     daftar SO, pemasangan event. Detail Komponen ada di
+     State, pembantu, init, filter buyer, ganti center, daftar SO,
+     pemasangan event. Detail Komponen ada di
      cs2_js_detail.htm; pengambilan angka di cs2_js_kpi.htm.
      ========================================================== --%>
 /* ====================================================================
@@ -21,24 +21,6 @@
    tombol buyer tidak dirender sama sekali, bukan menampilkan nama palsu. */
 var BUYERS = [];
 
-function buildWC(prefix, count, maxVal) {
-    var out = [];
-    for (var i = 1; i <= count; i++) {
-        var value = Math.floor(Math.random() * maxVal) + (prefix === 'MC' ? 1 : 0);
-        var load = 'low';
-        if (prefix === 'MC') {
-            if (value > 4 && value <= 8) { load = 'med'; }
-            if (value > 8) { load = 'high'; }
-        } else {
-            if (value === 2 || value === 3) { load = 'med'; }
-            if (value > 3) { load = 'high'; }
-        }
-        out.push({ id: prefix + '-' + (i < 10 ? '0' + i : i), value: value, load: load });
-    }
-    return out;
-}
-var WORK_CENTERS_MC = buildWC('MC', 40, 12);
-var WORK_CENTERS_EBS = buildWC('EBS', 20, 5);
 
 /* Diisi dari dash_prod.htm?part=stock. Kosong sampai data tiba. */
 var SO_DATA = [];
@@ -74,7 +56,7 @@ var kompRetried = false;
 var EXPANDED = {};
 
 /* DOM */
-var buyerFilterContainer, btnAllBuyer, mcBox, ebsBox, wcGridContainer, wcMapTitle,
+var buyerFilterContainer, btnAllBuyer, mcBox, ebsBox,
     soListContainer, componentTableBody, searchComponent, wipDisplayStatus,
     detailSubLabel, soBuyerLabel, detailFooter;
 
@@ -95,8 +77,6 @@ function init() {
     btnAllBuyer          = document.getElementById('btn-all-buyer');
     mcBox                = document.getElementById('mc-box');
     ebsBox               = document.getElementById('ebs-box');
-    wcGridContainer      = document.getElementById('wc-grid-container');
-    wcMapTitle           = document.getElementById('wc-map-title');
     soListContainer      = document.getElementById('so-list-container');
     componentTableBody   = document.getElementById('component-table-body');
     searchComponent      = document.getElementById('search-component');
@@ -106,7 +86,6 @@ function init() {
     detailFooter         = document.getElementById('detail-footer');
 
     renderBuyerFilters();
-    renderWCLoadGrid();
     renderSOList();
     renderComponentTable();
     setupEventListeners();
@@ -149,7 +128,6 @@ function selectBuyer(buyerId) {
 
     renderBuyerFilters();
     updateLabels();
-    renderWCLoadGrid();
     renderSOList();
     loadKomp();
 }
@@ -159,14 +137,11 @@ function switchCenter(center) {
     if (center === 'MC') {
         mcBox.className = 'center-box active';
         ebsBox.className = 'center-box';
-        wcMapTitle.innerHTML = 'Machining Center';
     } else {
         ebsBox.className = 'center-box active';
         mcBox.className = 'center-box';
-        wcMapTitle.innerHTML = 'Edge Banding &amp; Sanding';
     }
     updateLabels();
-    renderWCLoadGrid();
 }
 
 function buyerNameOf(id) {
@@ -188,20 +163,6 @@ function updateLabels() {
     soBuyerLabel.innerHTML = buyerName;
 }
 
-function renderWCLoadGrid() {
-    wcGridContainer.innerHTML = '';
-    var items = selectedCenter === 'MC' ? WORK_CENTERS_MC : WORK_CENTERS_EBS;
-    for (var i = 0; i < items.length; i++) {
-        var wc = items[i];
-        var div = document.createElement('div');
-        div.className = 'wc-item load-' + wc.load;
-        div.innerHTML =
-            '<span class="wc-name">' + wc.id.split('-')[1] + '</span>' +
-            '<span class="wc-value">' + wc.value + '</span>' +
-            '<span class="wc-sub">/12</span>';
-        wcGridContainer.appendChild(div);
-    }
-}
 
 function renderSOList() {
     soListContainer.innerHTML = '';

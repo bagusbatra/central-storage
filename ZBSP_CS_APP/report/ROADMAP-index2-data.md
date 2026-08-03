@@ -16,14 +16,13 @@ dokumen ini dari atas — isinya cukup untuk melanjutkan tanpa konteks lain.
 | 1 | Filter Buyer + kartu BUYER | ✅ Selesai |
 | 2 | Panel SO | ✅ Selesai — klik SO ditambahkan 2026-08-03 |
 | 3 | Dua kotak center + tiga warna | ✅ Selesai — hijau dari `MSEG` |
-| 4 | Peta Work Center | ⬜ **Belum** — masih `Math.random()`, terhalang K5 |
+| 4 | Peta Work Center | ❌ **DIBATALKAN** 2026-08-03 — seluruh elemen work center dihapus atas permintaan user |
 | 5 | Detail Komponen | ✅ Selesai 2026-08-03 |
-| 6 | DI PRODUKSI / SELESAI PROD. / BOTTLENECK | 🟡 Dua selesai; BOTTLENECK terhalang K5 |
+| 6 | DI PRODUKSI / SELESAI PROD. | ✅ Selesai. BOTTLENECK ❌ dibatalkan bersama work center |
 | 7 | Finalisasi CONFIRMED | ✅ Ditutup lewat rename **OPERASI SELESAI** |
 
-**K5 adalah satu-satunya keputusan yang tersisa**, dan ia memblokir dua hal
-yang tersisa juga: tahap 4 dan kartu BOTTLENECK. Kalau melanjutkan, mulai
-dari sana.
+**Tidak ada keputusan terbuka yang tersisa.** K5 gugur bersama penghapusan
+work center, dan dengan itu seluruh tahap roadmap ini selesai atau dibatalkan.
 
 ---
 
@@ -41,8 +40,7 @@ Data yang diambil terfokus pada **SO yang memiliki stok** di:
 2KCS · 2261 · 2262 · 22E2 · 22E3 · 229K
 ```
 
-Berlaku untuk apa pun yang diturunkan darinya — nama buyer, komponen, SO,
-work center, semuanya. Satu SO masuk cakupan kalau punya stok di **salah satu**
+Berlaku untuk apa pun yang diturunkan darinya — nama buyer, komponen, dan SO. Satu SO masuk cakupan kalau punya stok di **salah satu**
 SLoc di atas.
 
 > ⚠️ **Ini memperluas aturan lama.** Blok DATA LIVE yang ada sekarang hanya
@@ -78,7 +76,7 @@ urutan kuning → biru → hijau.
 | Warna | Arti | Sumber |
 |---|---|---|
 | 🟡 Kuning — **antri** | Barang masih berada di `2KCS` | Saldo stok di 2KCS |
-| 🔵 Biru — **dikerjakan** | Barang ada di `2261`/`2262`. Perlu dibedakan lagi: **masih antre di center** atau **sudah masuk proses**; kalau sudah, di **WC mana** | Saldo stok 2261/2262 + status operasi + `AFVC-ARBID` → `CRHD-ARBPL` |
+| 🔵 Biru — **dikerjakan** | Barang ada di `2261`/`2262` | Saldo stok 2261/2262 |
 | 🟢 Hijau — **sudah lewat** | Pernah masuk & selesai di Machining Center, walaupun **stoknya sudah tidak ada** karena lanjut ke proses berikutnya | **Bukan saldo stok** — lihat bagian "Masalah warna hijau" |
 
 ### Edge Banding & Sanding
@@ -86,11 +84,8 @@ urutan kuning → biru → hijau.
 | Warna | Arti | Sumber |
 |---|---|---|
 | 🟡 Kuning — **antri** | Barang masih antre, belum masuk proses edge banding maupun sanding | Saldo stok, belum di 22E2/22E3/229K |
-| 🔵 Biru — **dikerjakan** | Barang ada di `22E2`/`22E3` (edge banding) atau `229K` (sanding). Info WC wajib ikut | Saldo stok + status operasi + WC |
+| 🔵 Biru — **dikerjakan** | Barang ada di `22E2`/`22E3` (edge banding) atau `229K` (sanding) | Saldo stok |
 | 🟢 Hijau — **sudah lewat** | Sudah selesai fase ini; barang siap untuk pre-assy / assy | Sama seperti MC — lihat di bawah |
-
-Informasi WC dari segmen biru dipakai dua kali: di bar center, dan sebagai isi
-**tooltip di Peta Work Center**.
 
 ---
 
@@ -221,17 +216,16 @@ Mengikuti definisi warna di bagian atas dokumen ini.
 sudah dihitung halaman. Acuan SO 10446: 41 operasi, 26 confirmed / 5 active /
 10 queue (`diag_routing.htm` bagian C).
 
-### Tahap 4 — Peta Work Center + tooltip
+### Tahap 4 — Peta Work Center — ❌ DIBATALKAN 2026-08-03
 
-- Menampilkan WC sesuai **card yang sedang aktif** (MC atau EBS)
-- **Semua WC tampil**, dibedakan warna beban: rendah / sedang / tinggi
-- **Tooltip modern** berisi apa yang ada di dalam WC tersebut — material apa,
-  berapa, milik SO siapa. Datanya dari segmen biru tahap 3
-- **❓ K5:** "beban" dihitung dari apa? Jumlah operasi antre, jumlah komponen,
-  atau qty? Akan dibahas
-- ⚠️ Prototype mengasumsikan 60 WC (40 MC + 20 EBS). Kenyataannya **17 WC**
-  pada scope SO 10446 (`diag_routing.htm` bagian D). Grid akan tampak jauh
-  lebih kosong — putuskan bentuknya setelah melihat hasil nyatanya
+Seluruh elemen work center dihapus dari halaman ini atas permintaan user:
+section Peta Work Center, kartu BOTTLENECK, sub-label "40 WC"/"20 WC", kolom
+WC di Detail Komponen dan di baris bentang tahap, serta rantai
+`AFVC-ARBID → CRHD-ARBPL` di endpoint.
+
+Petanya memang tidak pernah tersambung data — isinya `Math.random()` sejak
+awal — dan bergantung pada K5 yang tak kunjung diputuskan. Menghapusnya
+menutup K5 sekaligus membuang satu-satunya elemen dummy yang tersisa.
 
 ### Tahap 5 — Detail Komponen — ✅ SELESAI 2026-08-03
 
@@ -258,7 +252,7 @@ sengaja tidak ditampilkan (dicacah sebagai `nook`). Verifikasi penggantinya:
 `baris tab Dikerjakan + Antri + Selesai = rows.length`, dan
 `rows.length + nook` = jumlah komponen yang punya order di tahap itu.
 
-### Tahap 6 — Kartu DI PRODUKSI / SELESAI PROD. / BOTTLENECK — 🟡 Sebagian
+### Tahap 6 — Kartu DI PRODUKSI / SELESAI PROD. — ✅ SELESAI
 
 - **DI PRODUKSI** — ✅ selesai. Komponen yang punya stok di SLoc proses
   (di luar 2KCS). Sub-teks dua baris: rasio thd total komponen, lalu
@@ -269,7 +263,7 @@ sengaja tidak ditampilkan (dicacah sebagai `nook`). Verifikasi penggantinya:
   SLoc → field `done_real`. Definisi lama ("stok ada di 229K") hanya proxy
   sementara; field `done` sengaja tetap dikirim sebagai pembanding sampai
   PPIC memverifikasi angka baru
-- **BOTTLENECK** — ⬜ masih dummy, terhalang K5
+- **BOTTLENECK** — ❌ dihapus 2026-08-03 bersama seluruh elemen work center
 
 ### Tahap 7 — Finalisasi CONFIRMED — ✅ DITUTUP 2026-08-03
 
@@ -292,18 +286,17 @@ ikon ⚠ + tooltip.
 | K2 | Arti segmen progress bar SO | 2 | ✅ Ditutup 2026-08-01 — kuning 2KCS · biru MC · hijau EBS |
 | K3 | **Cara menghitung warna hijau "sudah lewat"** | 3 | ✅ Ditutup 2026-08-01 — `MSEG` shkzg='S', pernah masuk & stok kini nol (`part=hist`) |
 | K4 | Isi kolom QTY ROUTING | 5 | ✅ Ditutup 2026-08-03 — jadi kolom OPERASI: `done/tot op` + WC aktif |
-| K5 | Dasar perhitungan "beban" WC | 4 | ❓ **MASIH TERBUKA** |
+| K5 | Dasar perhitungan "beban" WC | 4 | ❌ **GUGUR** 2026-08-03 — work center dihapus, pertanyaannya tidak relevan lagi |
 | K6 | Definisi CONFIRMED | 7 | ✅ Ditutup 2026-08-03 — label diubah jadi OPERASI SELESAI, definisi tetap operasi |
 
-**K5 kini satu-satunya yang tersisa**, dan ia memblokir dua pekerjaan terakhir
-di halaman ini: peta Work Center (tahap 4) dan kartu BOTTLENECK (tahap 6).
-Pertanyaannya masih sama: "beban" dihitung dari jumlah operasi antre, jumlah
-komponen, atau qty?
+**Tidak ada keputusan terbuka yang tersisa.** K5 gugur 2026-08-03: kedua hal
+yang dulu diblokirnya — peta Work Center dan kartu BOTTLENECK — dihapus
+seluruhnya, jadi pertanyaan "beban WC dihitung dari apa" tidak punya konsumen
+lagi.
 
-Bahan yang sekarang sudah tersedia dan dulu belum ada saat K5 ditulis:
-`part=komp` sudah memetakan komponen → work center aktif lewat
-`AFVC-ARBID → CRHD-ARBPL`, jadi ketiga kandidat dasar perhitungan itu kini
-bisa dihitung dan dibandingkan sebelum memutuskan.
+Kalau suatu saat work center dihidupkan kembali, K5 harus dibuka ulang lebih
+dulu, dan rantai `AFVC-ARBID → CRHD-ARBPL` yang dibuang dari `dp_komp.htm`
+bisa diambil lagi dari git.
 
 ---
 

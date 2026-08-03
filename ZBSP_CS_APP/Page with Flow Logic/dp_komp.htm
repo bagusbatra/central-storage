@@ -3,7 +3,7 @@
      Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
      Baca daftar komponen, persempit sesuai parameter, ambil order +
-     tahap + operasi + work center. Perakitan jawabannya di
+     tahap + operasi. Perakitan jawabannya di
      dp_komp_out.htm, yang disisipkan di dalam IF yang sama.
      ========================================================== --%><%
 *&---------------------------------------------------------------------*
@@ -20,7 +20,7 @@
 *& Alur Machining -> Edge Banding BUKAN routing multi-operasi dalam satu
 *& order, melainkan RANGKAIAN ORDER TERPISAH — satu order per tahap.
 *& Karena itu baris bentang berisi TAHAP, dan pemetaan komponen ke center
-*& diambil dari AFKO-DISPO, bukan ditebak dari nama work center.
+*& diambil dari AFKO-DISPO.
 *&
 *&   seq 1  Pembahanan        pwerk 1000, dispo WM1/WM2/PN1/PN2
 *&   seq 2  Machining Center  pwerk 2000, dispo GA1/GA2
@@ -176,7 +176,7 @@ IF lv_part = 'komp' OR lv_part = 'ops1'.
   ENDLOOP.
   SORT lt_kord BY kdauf kdpos matnr seq aufnr.
 
-  " ===== Operasi, qty rencana, konfirmasi, work center =====
+  " ===== Operasi, qty rencana, konfirmasi =====
   TYPES: BEGIN OF ty_kap, aufpl TYPE afko-aufpl, END OF ty_kap.
   DATA: lt_kap TYPE STANDARD TABLE OF ty_kap WITH DEFAULT KEY, ls_kap TYPE ty_kap.
   LOOP AT lt_kord ASSIGNING <ko>.
@@ -187,7 +187,7 @@ IF lv_part = 'komp' OR lv_part = 'ops1'.
 
   TYPES: BEGIN OF ty_kop,
            aufpl TYPE afvc-aufpl, aplzl TYPE afvc-aplzl,
-           vornr TYPE afvc-vornr, arbid TYPE afvc-arbid,
+           vornr TYPE afvc-vornr,
          END OF ty_kop.
   DATA: lt_kop TYPE STANDARD TABLE OF ty_kop WITH DEFAULT KEY, ls_kop TYPE ty_kop.
 
@@ -197,7 +197,7 @@ IF lv_part = 'komp' OR lv_part = 'ops1'.
   DATA: lt_kvv TYPE STANDARD TABLE OF ty_kvv WITH DEFAULT KEY, ls_kvv TYPE ty_kvv.
 
   IF lt_kap IS NOT INITIAL.
-    SELECT aufpl aplzl vornr arbid FROM afvc INTO TABLE lt_kop
+    SELECT aufpl aplzl vornr FROM afvc INTO TABLE lt_kop
       FOR ALL ENTRIES IN lt_kap WHERE aufpl = lt_kap-aufpl.
     SORT lt_kop BY aufpl vornr aplzl.
 
@@ -238,32 +238,8 @@ IF lv_part = 'komp' OR lv_part = 'ops1'.
   ENDLOOP.
   SORT lt_kagg BY aufnr vornr.
 
-  " AFVC-ARBID -> CRHD-OBJID (OBJTY='A') -> CRHD-ARBPL
-  TYPES: BEGIN OF ty_karb, arbid TYPE afvc-arbid, END OF ty_karb.
-  DATA: lt_karb TYPE STANDARD TABLE OF ty_karb WITH DEFAULT KEY, ls_karb TYPE ty_karb.
-  LOOP AT lt_kop INTO ls_kop.
-    IF ls_kop-arbid IS INITIAL.
-      CONTINUE.
-    ENDIF.
-    ls_karb-arbid = ls_kop-arbid.
-    APPEND ls_karb TO lt_karb.
-  ENDLOOP.
-  SORT lt_karb BY arbid. DELETE ADJACENT DUPLICATES FROM lt_karb COMPARING arbid.
-
-  TYPES: BEGIN OF ty_kwc, objid TYPE crhd-objid, arbpl TYPE crhd-arbpl, END OF ty_kwc.
-  DATA: lt_kwc TYPE STANDARD TABLE OF ty_kwc WITH DEFAULT KEY, ls_kwc TYPE ty_kwc.
-  IF lt_karb IS NOT INITIAL.
-    " CRHD bergantung waktu (DATBI); satu ARBID bisa berbaris lebih dari satu.
-    " Nama work center praktis tidak berubah antar versi, jadi diambil satu.
-    SELECT objid arbpl FROM crhd INTO TABLE lt_kwc
-      FOR ALL ENTRIES IN lt_karb
-      WHERE objty = 'A' AND objid = lt_karb-arbid.
-    SORT lt_kwc BY objid. DELETE ADJACENT DUPLICATES FROM lt_kwc COMPARING objid.
-  ENDIF.
-
   DATA: lv_kmg  TYPE afvv-mgvrg,
         lv_kst  TYPE string,
-        lv_kwcn TYPE crhd-arbpl,
         lv_json2 TYPE string,
         lv_kfirst TYPE abap_bool VALUE abap_true.
 %><%@include file="dp_komp_out.htm" %><%

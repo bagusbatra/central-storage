@@ -2,7 +2,7 @@
      PAGE FRAGMENT — Markup halaman
      Disisipkan index2.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
-     Header, kartu ringkasan, filter buyer, Lintasan Produksi, peta WC,
+     Header, kartu ringkasan, filter buyer, Lintasan Produksi,
      Sales Order + Detail Komponen. Memakai lv_ts_date / lv_ts_time
      yang dideklarasikan di index2.htm.
      ========================================================== --%>
@@ -41,7 +41,7 @@
         <%-- Label "CONFIRMED" diganti "OPERASI SELESAI": yang dihitung memang
              operasi, bukan komponen jadi. Definisi & query TIDAK berubah. --%>
         <div class="card">
-            <div class="card-title">OPERASI SELESAI <span class="tip-anchor icon-top-right" id="tip-conf" data-tip="<span class='ct-h'>Operasi Selesai</span><span class='ct-r'>Persentase langkah pengerjaan (<b>operasi</b>) yang sudah dikonfirmasi selesai oleh operator lantai produksi, dihitung dari seluruh operasi milik order produksi yang terkait Sales Order dalam cakupan.</span><span class='ct-r'><b>Satuan</b>: operasi (satu operasi = satu langkah pengerjaan di satu work center). Satu komponen bisa punya banyak operasi berurutan.</span><span class='ct-r'><b>Status per operasi</b>:<br>&bull; Selesai &mdash; qty konfirmasi &ge; qty target, atau operator menandai final<br>&bull; Sedang dikerjakan &mdash; sudah ada qty konfirmasi tapi belum penuh<br>&bull; Antre &mdash; belum ada konfirmasi sama sekali</span><span class='ct-src'>AFRU vs AFVV &middot; baris STOKZ=X dibuang</span><span class='ct-warn'>Angka ini berbicara tentang <b>langkah pengerjaan</b>, bukan <b>komponen yang selesai jadi</b>. Satu komponen dengan 5 operasi baru selesai jika kelimanya selesai.</span>"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg></span></div>
+            <div class="card-title">OPERASI SELESAI <span class="tip-anchor icon-top-right" id="tip-conf" data-tip="<span class='ct-h'>Operasi Selesai</span><span class='ct-r'>Persentase langkah pengerjaan (<b>operasi</b>) yang sudah dikonfirmasi selesai oleh operator lantai produksi, dihitung dari seluruh operasi milik order produksi yang terkait Sales Order dalam cakupan.</span><span class='ct-r'><b>Satuan</b>: operasi (satu operasi = satu langkah pengerjaan). Satu komponen bisa punya banyak operasi berurutan.</span><span class='ct-r'><b>Status per operasi</b>:<br>&bull; Selesai &mdash; qty konfirmasi &ge; qty target, atau operator menandai final<br>&bull; Sedang dikerjakan &mdash; sudah ada qty konfirmasi tapi belum penuh<br>&bull; Antre &mdash; belum ada konfirmasi sama sekali</span><span class='ct-src'>AFRU vs AFVV &middot; baris STOKZ=X dibuang</span><span class='ct-warn'>Angka ini berbicara tentang <b>langkah pengerjaan</b>, bukan <b>komponen yang selesai jadi</b>. Satu komponen dengan 5 operasi baru selesai jika kelimanya selesai.</span>"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg></span></div>
             <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span><span id="kpi-conf-warn" class="trunc-warn" style="display:none" data-tip="<span class='ct-h'>Angka dibatasi</span><span class='ct-r'>Order melampaui batas 1.500 &mdash; persentase dihitung dari 1.500 order teratas saja. Indikatif, bukan final.</span>">&#9888;</span></div>
             <div class="card-sub" id="kpi-conf-sub">memuat&hellip;</div>
         </div>
@@ -55,11 +55,6 @@
             <div class="card-title">SELESAI PROD. <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen Selesai Produksi</span><span class='ct-r'>Komponen yang order produksinya sudah dipenuhi penuh (qty diterima &ge; qty target) DAN stoknya sudah tidak ada lagi di enam SLoc yang kita pantau &mdash; artinya barangnya sudah lanjut ke jalur berikutnya di luar sistem ini.</span><span class='ct-r'><b>Satuan</b>: komponen unik (Sales Order + Item + Material).</span><span class='ct-r'><b>Dua syarat harus terpenuhi</b>:<br>1. <b>Order delivered penuh</b> &mdash; AFPO menunjukkan qty diterima (WEMNG) sudah mencapai atau melewati qty target (PSMNG).<br>2. <b>Stok kosong di 6 SLoc</b> &mdash; tidak ada saldo lagi di 2KCS, 2261, 2262, 22E2, 22E3, 229K.</span><span class='ct-r'><b>Kenapa tidak semua komponen muncul di sini</b>: tidak semua komponen disiplin melewati enam SLoc ini &mdash; beberapa langsung diproses di jalur lain. Kartu ini hanya menghitung yang MEMANG lewat sini dan sudah keluar bersih.</span><span class='ct-src'>AFKO + AFPO (WEMNG vs PSMNG), diverifikasi dengan MSKA (stok kosong di cakupan)</span>"><svg class="ic"><use xlink:href="#fa-square-check"></use></svg></span></div>
             <div class="card-value color-green" id="kpi-done">-</div>
             <div class="card-sub" id="kpi-done-sub">memuat&hellip;</div>
-        </div>
-        <div class="card bottleneck-card">
-            <div class="card-title">BOTTLENECK <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Belum dihitung</span><span class='ct-r'>Kartu ini masih menampilkan angka contoh. Rencananya: work center dengan antrean terbanyak.</span><span class='ct-warn'>Jangan dipakai mengambil keputusan sampai tersambung data.</span>"><svg class="ic"><use xlink:href="#fa-triangle-exclamation"></use></svg></span></div>
-            <div class="card-value color-red">EBS-13</div>
-            <div class="card-sub">Edge Band &amp; Sand 13</div>
         </div>
     </section>
 
@@ -89,7 +84,6 @@
             <div class="center-box active" id="mc-box">
                 <div class="center-header">
                     <span><svg class="ic"><use xlink:href="#fa-table-cells"></use></svg> Machining Center</span>
-                    <span class="sub">40 WC</span>
                 </div>
                 <div class="center-body tip-anchor" id="mc-wip-tip">
                     <span class="wip-number" id="mc-wip-text">-</span> <span class="wip-lbl">WIP</span>
@@ -110,7 +104,6 @@
             <div class="center-box" id="ebs-box">
                 <div class="center-header">
                     <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Edge Banding &amp; Sanding</span>
-                    <span class="sub">20 WC</span>
                 </div>
                 <div class="center-body tip-anchor" id="ebs-wip-tip">
                     <span class="wip-number" id="ebs-wip-text">-</span> <span class="wip-lbl">WIP</span>
@@ -138,20 +131,6 @@
             <span class="legend-item"><span class="dot blue"></span> Dikerjakan</span>
             <span class="legend-item"><span class="dot orange"></span> Antri</span>
             <span class="legend-item"><span class="dot green"></span> Sudah Lewat</span>
-        </div>
-    </section>
-
-    <section class="wc-map-section">
-        <div class="section-title-container">
-            <h2><svg class="ic"><use xlink:href="#fa-grip"></use></svg> Peta Work Center &mdash; <span id="wc-map-title">Machining Center</span> <small class="hint">klik WC untuk detail</small></h2>
-            <div class="load-legend">
-                Beban:
-                <span class="lbl-load load-low">rendah</span>
-                <span class="lbl-load load-med">sedang</span>
-                <span class="lbl-load load-high">tinggi</span>
-            </div>
-        </div>
-        <div class="wc-grid" id="wc-grid-container">
         </div>
     </section>
 

@@ -2,39 +2,10 @@
      PAGE FRAGMENT — CSS panel bawah
      Disisipkan index2.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
-     Peta Work Center, Sales Order, Detail Komponen, baris bentang tahap.
+     Sales Order, Detail Komponen, baris bentang tahap.
      Lanjutan dari cs2_css_base.htm.
      ========================================================== --%>
-    /* PETA WORK CENTER GRID */
-    .wc-map-section {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        padding: 16px;
-    }
     .hint { font-weight: 400; color: var(--text-muted); font-size: 10px; margin-left: 4px; }
-    .load-legend { font-size: 11px; display: flex; gap: 4px; align-items: center; }
-    .lbl-load { padding: 2px 6px; border-radius: 3px; font-size: 10px; }
-    .load-low { background: var(--load-low); color: var(--load-low-text); }
-    .load-med { background: var(--load-med); color: var(--load-med-text); }
-    .load-high { background: var(--load-high); color: var(--load-high-text); }
-
-    .wc-grid {
-        display: grid;
-        grid-template-columns: repeat(20, 1fr);
-        gap: 4px;
-    }
-    .wc-item {
-        border-radius: 4px;
-        padding: 6px 2px;
-        text-align: center;
-        cursor: pointer;
-        border: 1px solid transparent;
-    }
-    .wc-item:hover { transform: scale(1.05); border-color: #94a3b8; }
-    .wc-name { font-size: 9px; color: var(--text-muted); display: block; margin-bottom: 2px; }
-    .wc-value { font-size: 13px; font-weight: 700; }
-    .wc-sub { font-size: 8px; color: var(--text-muted); display: block; opacity: 0.7; }
 
     /* ================================================================
        SALES ORDER + DETAIL KOMPONEN — SATU BARIS

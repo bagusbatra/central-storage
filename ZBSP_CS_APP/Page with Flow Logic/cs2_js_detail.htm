@@ -143,15 +143,14 @@ function stageRowsHtml(st) {
     for (var i = 0; i < st.rows.length; i++) {
         var s = st.rows[i];
         h += '<tr>' +
-             '<td style="width:42%;">' +
+             '<td style="width:56%;">' +
                 '<span class="stage-seq">' + (s.seq || '?') + '</span>' +
                 '<span class="stage-name">' + esc(s.stg) + '</span>' +
                 ' <span style="opacity:0.7;">op ' + esc(s.op) + '</span>' +
              '</td>' +
-             '<td style="width:20%;">' + (s.wc ? esc(s.wc) : '&mdash;') + '</td>' +
-             '<td style="width:20%;"><span class="status-badge ' + s.st + '">' +
+             '<td style="width:24%;"><span class="status-badge ' + s.st + '">' +
                 String(s.st).toUpperCase() + '</span></td>' +
-             '<td style="width:18%; text-align:right;">' +
+             '<td style="width:20%; text-align:right;">' +
                 s.done + ' / ' + (s.need || '&mdash;') + '</td>' +
              '</tr>';
     }
@@ -227,7 +226,7 @@ function renderComponentTable() {
                 '<span class="comp-sub">item ' + esc(r.item) + '</span></td>' +
             '<td><div class="routing-badge">' +
                 '<span style="color:#059669; font-weight:700;">' + r.done + '</span> / ' + r.tot +
-                ' op' + (r.wc ? ' | ' + icon('fa-table-cells', 'font-size:8px;') + ' ' + esc(r.wc) : '') +
+                ' op' +
             '</div></td>' +
             '<td><span class="status-badge ' + r.st + '">' + String(r.st).toUpperCase() + '</span></td>' +
             '<td style="text-align: right; font-weight:700;">' + r.pct + '%</td>';

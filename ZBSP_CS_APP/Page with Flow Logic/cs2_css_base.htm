@@ -21,12 +21,6 @@
         --color-orange: #f59e0b;
         --color-red: #ef4444;
 
-        --load-low: #d1fae5;
-        --load-low-text: #065f46;
-        --load-med: #fef3c7;
-        --load-med-text: #92400e;
-        --load-high: #fee2e2;
-        --load-high-text: #991b1b;
     }
 
     * {
@@ -128,7 +122,7 @@
     /* CARD SYSTEM */
     .summary-cards {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(5, 1fr);   /* semula 6; satu kartu dibuang */
         gap: 12px;
     }
     .card {
@@ -172,13 +166,10 @@
         margin-left: 4px;
         cursor: help;
     }
-    .bottleneck-card {
-        border-left: 4px solid var(--color-red);
-    }
 
     /* ---- TOOLTIP MODERN (satu sistem utk seluruh halaman) ----
        Diposisikan JS dgn position:fixed supaya tidak terpotong panel
-       ber-overflow (grid work center, daftar SO yang bergulir). */
+       ber-overflow, mis. daftar SO yang bergulir. */
     .mtip {
         position: fixed; display: none; z-index: 9999;
         max-width: 320px; background: #161a23; color: #fff;
