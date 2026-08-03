@@ -1,0 +1,229 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — Markup halaman
+     Disisipkan index2.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     Header, kartu ringkasan, filter buyer, Lintasan Produksi, peta WC,
+     Sales Order + Detail Komponen. Memakai lv_ts_date / lv_ts_time
+     yang dideklarasikan di index2.htm.
+     ========================================================== --%>
+<%-- Header SENGAJA di luar .content: itu satu-satunya cara ia bisa menempel
+     ke tepi viewport sementara isi halaman tetap punya padding. --%>
+<header class="main-header">
+    <div class="header-left">
+        <div class="logo-box">
+            <svg class="ic"><use xlink:href="#fa-industry"></use></svg>
+        </div>
+        <div>
+            <h1>Dashboard Production</h1>
+            <p class="subtitle">UNIT ASSEMBLING &bull; MACHINING CENTER &bull; EDGE BANDING &amp; SANDING</p>
+        </div>
+    </div>
+    <div class="header-right">
+        <span class="flow-info">Alur: Storage &rarr; Machining &rarr; Edge Banding &rarr; Storage</span>
+        <span class="status-indicator"><span class="dot green"></span> <span id="hdr-stat">memuat&hellip;</span></span>
+    </div>
+</header>
+
+<main class="content">
+<div class="dashboard-container">
+
+    <section class="summary-cards">
+        <div class="card">
+            <div class="card-title">BUYER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Buyer ber-stok nyata</span><span class='ct-r'>Jumlah <b>buyer berbeda</b> yang punya stok di salah satu dari enam storage location.</span><span class='ct-r'>Persen di tiap tombol filter = komponen buyer itu yang <b>sudah keluar dari 2KCS</b>, dibagi seluruh komponennya.</span><span class='ct-src'>MSKA &rarr; VBAK-KUNNR &rarr; KNA1-NAME1<br>sample customer 2000000004 dibuang</span>"><svg class="ic"><use xlink:href="#fa-users"></use></svg></span></div>
+            <div class="card-value" id="kpi-buyer">-</div>
+            <div class="card-sub" id="kpi-buyer-sub">memuat&hellip;</div>
+        </div>
+        <div class="card">
+            <div class="card-title">SALES ORDER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sales Order ber-stok nyata</span><span class='ct-r'>Jumlah <b>SO berbeda</b> yang punya stok di enam SLoc. Sub-teks memerinci isinya: berapa komponen dan berapa pcs.</span><span class='ct-r'>Komponen = kombinasi unik <b>SO + Item + Material</b>. Material sama di dua SO dihitung dua kali; lintas SLoc dihitung sekali.</span><span class='ct-src'>MSKA &middot; SOBKZ=E &middot; KALAB&gt;0</span><span class='ct-warn'>Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg></span></div>
+            <div class="card-value" id="kpi-so">-</div>
+            <div class="card-sub" id="kpi-so-sub">memuat&hellip;</div>
+        </div>
+        <%-- Label "CONFIRMED" diganti "OPERASI SELESAI": yang dihitung memang
+             operasi, bukan komponen jadi. Definisi & query TIDAK berubah. --%>
+        <div class="card">
+            <div class="card-title">OPERASI SELESAI <span class="tip-anchor icon-top-right" id="tip-conf" data-tip="<span class='ct-h'>Operasi Selesai</span><span class='ct-r'>Persentase langkah pengerjaan (<b>operasi</b>) yang sudah dikonfirmasi selesai oleh operator lantai produksi, dihitung dari seluruh operasi milik order produksi yang terkait Sales Order dalam cakupan.</span><span class='ct-r'><b>Satuan</b>: operasi (satu operasi = satu langkah pengerjaan di satu work center). Satu komponen bisa punya banyak operasi berurutan.</span><span class='ct-r'><b>Status per operasi</b>:<br>&bull; Selesai &mdash; qty konfirmasi &ge; qty target, atau operator menandai final<br>&bull; Sedang dikerjakan &mdash; sudah ada qty konfirmasi tapi belum penuh<br>&bull; Antre &mdash; belum ada konfirmasi sama sekali</span><span class='ct-src'>AFRU vs AFVV &middot; baris STOKZ=X dibuang</span><span class='ct-warn'>Angka ini berbicara tentang <b>langkah pengerjaan</b>, bukan <b>komponen yang selesai jadi</b>. Satu komponen dengan 5 operasi baru selesai jika kelimanya selesai.</span>"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg></span></div>
+            <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span><span id="kpi-conf-warn" class="trunc-warn" style="display:none" data-tip="<span class='ct-h'>Angka dibatasi</span><span class='ct-r'>Order melampaui batas 1.500 &mdash; persentase dihitung dari 1.500 order teratas saja. Indikatif, bukan final.</span>">&#9888;</span></div>
+            <div class="card-sub" id="kpi-conf-sub">memuat&hellip;</div>
+        </div>
+        <div class="card">
+            <div class="card-title">DI PRODUKSI <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen di Lantai Produksi</span><span class='ct-r'>Jumlah komponen unik yang stok fisiknya sedang berada di area proses (bukan di storage awal 2KCS). Menunjukkan seberapa banyak barang yang sudah bergerak dan sedang dikerjakan.</span><span class='ct-r'><b>Satuan</b>: komponen unik (kombinasi Sales Order + Item + Material). Material yang sama muncul di dua SO dihitung dua kali; material yang stoknya terpecah antar SLoc dihitung sekali.</span><span class='ct-r'><b>Yang masuk hitungan</b>: komponen yang punya stok di 2261, 2262 (Machining), 22E2, 22E3, 229K (Edge Banding &amp; Sanding). Komponen yang stoknya terpecah &mdash; sebagian masih 2KCS, sebagian sudah bergerak &mdash; tetap dihitung di sini. Begitu ada bagian yang jalan, komponen itu bukan lagi diam menunggu.</span><span class='ct-r'><b>Yang tidak masuk</b>: komponen yang seluruh stoknya masih di 2KCS (belum bergerak sama sekali).</span><span class='ct-src'>Saldo stok saat ini MSKA</span>"><svg class="ic"><use xlink:href="#fa-gear"></use></svg></span></div>
+            <div class="card-value color-blue" id="kpi-prod">-</div>
+            <div class="card-sub" id="kpi-prod-sub">memuat&hellip;</div>
+            <div class="card-sub card-sub-2" id="kpi-prod-sub2">&nbsp;</div>
+        </div>
+        <div class="card">
+            <div class="card-title">SELESAI PROD. <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen Selesai Produksi</span><span class='ct-r'>Komponen yang order produksinya sudah dipenuhi penuh (qty diterima &ge; qty target) DAN stoknya sudah tidak ada lagi di enam SLoc yang kita pantau &mdash; artinya barangnya sudah lanjut ke jalur berikutnya di luar sistem ini.</span><span class='ct-r'><b>Satuan</b>: komponen unik (Sales Order + Item + Material).</span><span class='ct-r'><b>Dua syarat harus terpenuhi</b>:<br>1. <b>Order delivered penuh</b> &mdash; AFPO menunjukkan qty diterima (WEMNG) sudah mencapai atau melewati qty target (PSMNG).<br>2. <b>Stok kosong di 6 SLoc</b> &mdash; tidak ada saldo lagi di 2KCS, 2261, 2262, 22E2, 22E3, 229K.</span><span class='ct-r'><b>Kenapa tidak semua komponen muncul di sini</b>: tidak semua komponen disiplin melewati enam SLoc ini &mdash; beberapa langsung diproses di jalur lain. Kartu ini hanya menghitung yang MEMANG lewat sini dan sudah keluar bersih.</span><span class='ct-src'>AFKO + AFPO (WEMNG vs PSMNG), diverifikasi dengan MSKA (stok kosong di cakupan)</span>"><svg class="ic"><use xlink:href="#fa-square-check"></use></svg></span></div>
+            <div class="card-value color-green" id="kpi-done">-</div>
+            <div class="card-sub" id="kpi-done-sub">memuat&hellip;</div>
+        </div>
+        <div class="card bottleneck-card">
+            <div class="card-title">BOTTLENECK <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Belum dihitung</span><span class='ct-r'>Kartu ini masih menampilkan angka contoh. Rencananya: work center dengan antrean terbanyak.</span><span class='ct-warn'>Jangan dipakai mengambil keputusan sampai tersambung data.</span>"><svg class="ic"><use xlink:href="#fa-triangle-exclamation"></use></svg></span></div>
+            <div class="card-value color-red">EBS-13</div>
+            <div class="card-sub">Edge Band &amp; Sand 13</div>
+        </div>
+    </section>
+
+    <section class="filter-section">
+        <div class="filter-header">
+            <span><svg class="ic"><use xlink:href="#fa-filter"></use></svg> FILTER BUYER</span>
+            <button class="btn-all-buyer active" id="btn-all-buyer">Semua Buyer</button>
+        </div>
+        <div class="filter-buttons" id="buyer-filter-container">
+        </div>
+    </section>
+
+    <section class="wip-section">
+        <div class="section-title-container">
+            <h2><svg class="ic"><use xlink:href="#fa-route"></use></svg> Lintasan Produksi &mdash; WIP per Center</h2>
+            <span class="view-status">menampilkan: <strong id="wip-display-status">Semua Buyer &bull; Semua SO</strong></span>
+        </div>
+
+        <div class="wip-flow-container">
+            <div class="storage-box">
+                <svg class="ic"><use xlink:href="#fa-warehouse"></use></svg>
+                <div>IN &bull; dari Storage</div>
+            </div>
+
+            <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
+
+            <div class="center-box active" id="mc-box">
+                <div class="center-header">
+                    <span><svg class="ic"><use xlink:href="#fa-table-cells"></use></svg> Machining Center</span>
+                    <span class="sub">40 WC</span>
+                </div>
+                <div class="center-body tip-anchor" id="mc-wip-tip">
+                    <span class="wip-number" id="mc-wip-text">-</span> <span class="wip-lbl">WIP</span>
+                </div>
+                <div class="center-footer">
+                    <span id="mc-foot">&mdash;</span>
+                    <span class="color-green" id="mc-done">&mdash;</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="pb-done" id="mc-bar-done" style="width: 0%;"></div>
+                    <div class="pb-wip" id="mc-bar-wip" style="width: 0%;"></div>
+                    <div class="pb-queue" id="mc-bar-queue" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
+
+            <div class="center-box" id="ebs-box">
+                <div class="center-header">
+                    <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Edge Banding &amp; Sanding</span>
+                    <span class="sub">20 WC</span>
+                </div>
+                <div class="center-body tip-anchor" id="ebs-wip-tip">
+                    <span class="wip-number" id="ebs-wip-text">-</span> <span class="wip-lbl">WIP</span>
+                </div>
+                <div class="center-footer">
+                    <span id="ebs-foot">&mdash;</span>
+                    <span class="color-green" id="ebs-done">&mdash;</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="pb-done" id="ebs-bar-done" style="width: 0%;"></div>
+                    <div class="pb-wip" id="ebs-bar-wip" style="width: 0%;"></div>
+                    <div class="pb-queue" id="ebs-bar-queue" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
+
+            <div class="storage-box">
+                <svg class="ic"><use xlink:href="#fa-box-open"></use></svg>
+                <div>OUT &bull; ke Storage</div>
+            </div>
+        </div>
+
+        <div class="legend-container">
+            <span class="legend-item"><span class="dot blue"></span> Dikerjakan</span>
+            <span class="legend-item"><span class="dot orange"></span> Antri</span>
+            <span class="legend-item"><span class="dot green"></span> Sudah Lewat</span>
+        </div>
+    </section>
+
+    <section class="wc-map-section">
+        <div class="section-title-container">
+            <h2><svg class="ic"><use xlink:href="#fa-grip"></use></svg> Peta Work Center &mdash; <span id="wc-map-title">Machining Center</span> <small class="hint">klik WC untuk detail</small></h2>
+            <div class="load-legend">
+                Beban:
+                <span class="lbl-load load-low">rendah</span>
+                <span class="lbl-load load-med">sedang</span>
+                <span class="lbl-load load-high">tinggi</span>
+            </div>
+        </div>
+        <div class="wc-grid" id="wc-grid-container">
+        </div>
+    </section>
+
+    <div class="so-detail-row">
+
+    <section class="so-section">
+        <div class="so-head">
+            <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> Sales Order
+                <small class="hint">klik untuk menyaring komponen</small></h2>
+            <div class="so-head-line">
+                <span id="so-buyer-label" class="so-head-buyer">Semua Buyer</span>
+                <div class="search-box-container" style="width:150px; flex:0 0 auto;">
+                    <svg class="ic"><use xlink:href="#fa-magnifying-glass"></use></svg>
+                    <input type="text" placeholder="cari SO / item" id="search-so">
+                </div>
+            </div>
+        </div>
+
+        <div class="so-list-container" id="so-list-container">
+        </div>
+    </section>
+
+    <section class="component-detail-section">
+        <div class="detail-header-row">
+            <div class="section-title-container">
+                <h2><svg class="ic"><use xlink:href="#fa-list-check"></use></svg> Detail Komponen
+                    <span class="tip-anchor" data-tip="<span class='ct-h'>Status dari konfirmasi operasi</span><span class='ct-r'>Satu baris = satu <b>komponen</b> (SO + Item + Material). Statusnya dinilai dari operasi komponen itu <b>di tahap center yang sedang dipilih</b>.</span><span class='ct-r'>&Sigma;LMNGA = 0 &rarr; antri<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; selesai</span><span class='ct-r'>Klik satu baris untuk membentangkan <b>seluruh tahapnya</b>, termasuk Pembahanan di plant 1000.</span><span class='ct-src'>AFPO+AFKO &rarr; AFVC &rarr; AFVV / AFRU<br>tahap dari PWERK + AFKO-DISPO</span><span class='ct-warn'>Angka di sini TIDAK akan sama dengan dua kotak center di atas. Kotak center berbasis saldo stok (MSKA); tabel ini berbasis konfirmasi operasi (AFRU). Dua pertanyaan yang berbeda.</span>"><svg class="ic"><use xlink:href="#fa-triangle-exclamation"></use></svg></span>
+                </h2>
+                <span class="sub-filter" id="detail-sub-label">Semua Buyer &bull; Machining Center</span>
+            </div>
+
+            <div class="search-box-container" style="width:200px;">
+                <svg class="ic"><use xlink:href="#fa-magnifying-glass"></use></svg>
+                <input type="text" placeholder="cari nama / kode / buyer" id="search-component">
+            </div>
+        </div>
+
+        <div class="tab-filters">
+            <button class="tab-btn active" data-tab="dikerjakan">Dikerjakan<span class="cnt" id="cnt-dikerjakan"></span></button>
+            <button class="tab-btn" data-tab="antri">Antri<span class="cnt" id="cnt-antri"></span></button>
+            <button class="tab-btn" data-tab="selesai">Selesai<span class="cnt" id="cnt-selesai"></span></button>
+            <button class="tab-btn" data-tab="semua">Semua<span class="cnt" id="cnt-semua"></span></button>
+        </div>
+
+        <div class="table-wrapper">
+            <table class="component-table">
+                <thead>
+                    <tr>
+                        <th>KOMPONEN</th>
+                        <th>SO / ITEM</th>
+                        <th>OPERASI</th>
+                        <th>STATUS</th>
+                        <th style="text-align: right;">SELESAI</th>
+                    </tr>
+                </thead>
+                <tbody id="component-table-body">
+                </tbody>
+            </table>
+        </div>
+
+        <%-- Timestamp disimpan di ATRIBUT, bukan di dalam <script>.
+             Isi div ini ditimpa innerHTML oleh renderDetailFooter(); atribut
+             bertahan, anak elemen tidak. Tidak ada halaman lain di aplikasi
+             ini yang menaruh tag keluaran ABAP di dalam blok script — pola itu tidak
+             ditiru di sini. --%>
+        <div class="table-footer-note" id="detail-footer"
+             data-ts="<%= lv_ts_date %> <%= lv_ts_time %>">
+            memuat&hellip;
+        </div>
+    </section>
+
+    </div>
+
+</div>
+</main>

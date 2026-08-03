@@ -1,0 +1,310 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — JS inti
+     Disisipkan index2.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     State, pembantu, init, filter buyer, ganti center, peta WC,
+     daftar SO, pemasangan event. Detail Komponen ada di
+     cs2_js_detail.htm; pengambilan angka di cs2_js_kpi.htm.
+     ========================================================== --%>
+/* ====================================================================
+   Logika disalin dari prototype/script.js. Struktur data & nama fungsi
+   DIPERTAHANKAN supaya perbedaan dengan prototype mudah ditelusuri.
+
+   ⚠️ FASE DATA: array di blok "DATA DUMMY UNTUK JS" di bawah nanti diisi
+   dari ABAP (loop tabel internal -> tulis baris array). Logika filter &
+   render di bawahnya TIDAK perlu diubah. Ingat meng-escape tanda kutip
+   pada teks dari SAP sebelum dimasukkan ke string JS.
+   ==================================================================== */
+
+/* ---------- DATA DUMMY UNTUK JS ---------- */
+/* Diisi dari dash_prod.htm?part=stock. Sampai data tiba, kosong —
+   tombol buyer tidak dirender sama sekali, bukan menampilkan nama palsu. */
+var BUYERS = [];
+
+function buildWC(prefix, count, maxVal) {
+    var out = [];
+    for (var i = 1; i <= count; i++) {
+        var value = Math.floor(Math.random() * maxVal) + (prefix === 'MC' ? 1 : 0);
+        var load = 'low';
+        if (prefix === 'MC') {
+            if (value > 4 && value <= 8) { load = 'med'; }
+            if (value > 8) { load = 'high'; }
+        } else {
+            if (value === 2 || value === 3) { load = 'med'; }
+            if (value > 3) { load = 'high'; }
+        }
+        out.push({ id: prefix + '-' + (i < 10 ? '0' + i : i), value: value, load: load });
+    }
+    return out;
+}
+var WORK_CENTERS_MC = buildWC('MC', 40, 12);
+var WORK_CENTERS_EBS = buildWC('EBS', 20, 5);
+
+/* Diisi dari dash_prod.htm?part=stock. Kosong sampai data tiba. */
+var SO_DATA = [];
+
+/* Detail Komponen diisi dash_prod.htm?part=komp — LIVE, bukan dummy.
+   Array dummy COMPONENT_DATA yang lama sudah dibuang seluruhnya. */
+var KOMP = [];
+/* ---------- AKHIR DATA DUMMY UNTUK JS ---------- */
+
+/* STATE */
+var selectedBuyer = null;
+var selectedCenter = 'MC';
+/* Tab dibuka di DIKERJAKAN, bukan "Semua" — permintaan user 2026-08-03.
+   Kelas .active di HTML harus ikut ada di tombol ini. */
+var selectedTab = 'dikerjakan';
+var soQuery = '';
+var soMore = 0;
+var searchQuery = '';
+
+/* Sales Order yang sedang dipilih; null = semua SO.
+   Bukan sekadar penyaring di browser: memilih SO memicu pengambilan ulang
+   part=komp yang discope, sehingga komponennya lepas dari batas 400. */
+var selectedSO = null;
+
+/* Keadaan tabel komponen */
+var kompMore    = 0;      /* komponen di luar batas, dilaporkan apa adanya */
+var kompNook    = 0;      /* komponen tanpa order di tahap center ini      */
+var kompState   = 'load'; /* load | ok | err | wait                        */
+var kompReqSeq  = 0;      /* penanda urutan permintaan — lihat loadKomp()  */
+var kompRetried = false;
+
+/* Baris yang dibentangkan: kunci -> { open, rows, state } */
+var EXPANDED = {};
+
+/* DOM */
+var buyerFilterContainer, btnAllBuyer, mcBox, ebsBox, wcGridContainer, wcMapTitle,
+    soListContainer, componentTableBody, searchComponent, wipDisplayStatus,
+    detailSubLabel, soBuyerLabel, detailFooter;
+
+function icon(name, extraStyle) {
+    return '<svg class="ic"' + (extraStyle ? ' style="' + extraStyle + '"' : '') +
+           '><use xlink:href="#' + name + '"></use></svg>';
+}
+
+/* Teks dari SAP (MAKTX, NAME1) masuk ke innerHTML. Tanpa ini, satu tanda
+   "<" pada deskripsi material sudah cukup merusak tabelnya. */
+function esc(s) {
+    if (s === null || s === undefined) { return ''; }
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function init() {
+    buyerFilterContainer = document.getElementById('buyer-filter-container');
+    btnAllBuyer          = document.getElementById('btn-all-buyer');
+    mcBox                = document.getElementById('mc-box');
+    ebsBox               = document.getElementById('ebs-box');
+    wcGridContainer      = document.getElementById('wc-grid-container');
+    wcMapTitle           = document.getElementById('wc-map-title');
+    soListContainer      = document.getElementById('so-list-container');
+    componentTableBody   = document.getElementById('component-table-body');
+    searchComponent      = document.getElementById('search-component');
+    wipDisplayStatus     = document.getElementById('wip-display-status');
+    detailSubLabel       = document.getElementById('detail-sub-label');
+    soBuyerLabel         = document.getElementById('so-buyer-label');
+    detailFooter         = document.getElementById('detail-footer');
+
+    renderBuyerFilters();
+    renderWCLoadGrid();
+    renderSOList();
+    renderComponentTable();
+    setupEventListeners();
+}
+
+function renderBuyerFilters() {
+    buyerFilterContainer.innerHTML = '';
+    for (var i = 0; i < BUYERS.length; i++) {
+        (function (buyer) {
+            var btn = document.createElement('button');
+            btn.className = 'filter-btn' + (selectedBuyer === buyer.id ? ' active' : '');
+            btn.innerHTML = buyer.name + ' <span class="pct">' + buyer.pct + '%</span>';
+            btn.onclick = function () { selectBuyer(buyer.id); };
+            buyerFilterContainer.appendChild(btn);
+        })(BUYERS[i]);
+    }
+}
+
+function selectBuyer(buyerId) {
+    if (buyerId === null) {
+        selectedBuyer = null;
+        btnAllBuyer.className = 'btn-all-buyer active';
+    } else {
+        selectedBuyer = buyerId;
+        btnAllBuyer.className = 'btn-all-buyer';
+    }
+
+    /* Ganti buyer -> pilihan SO lama hampir pasti bukan milik buyer ini.
+       Dilepas supaya tabel tidak menampilkan SO yang sudah tidak terlihat
+       di daftar sebelahnya. */
+    selectedSO = null;
+
+    /* CATATAN: di sini dulu ada blok yang menimpa mc-wip-text / ebs-wip-text
+       dengan angka tetap (213/167 dan 34/27) untuk buyer contoh 'nordic' dan
+       'westfield'. Setelah BUYERS diisi KUNNR nyata, cabang 'westfield' tidak
+       pernah tercapai sehingga cabang lain SELALU jalan dan menimpa angka
+       asli dari dash_prod.htm dengan angka karangan. Dibuang 2026-08-03.
+       drawCenters() dipanggil supaya angka yang benar kembali terpasang. */
+    drawCenters();
+
+    renderBuyerFilters();
+    updateLabels();
+    renderWCLoadGrid();
+    renderSOList();
+    loadKomp();
+}
+
+function switchCenter(center) {
+    selectedCenter = center;
+    if (center === 'MC') {
+        mcBox.className = 'center-box active';
+        ebsBox.className = 'center-box';
+        wcMapTitle.innerHTML = 'Machining Center';
+    } else {
+        ebsBox.className = 'center-box active';
+        mcBox.className = 'center-box';
+        wcMapTitle.innerHTML = 'Edge Banding &amp; Sanding';
+    }
+    updateLabels();
+    renderWCLoadGrid();
+}
+
+function buyerNameOf(id) {
+    for (var i = 0; i < BUYERS.length; i++) {
+        if (BUYERS[i].id === id) { return BUYERS[i].name; }
+    }
+    return 'Semua Buyer';
+}
+
+function updateLabels() {
+    var buyerName = selectedBuyer ? buyerNameOf(selectedBuyer) : 'Semua Buyer';
+    var soName = selectedSO
+        ? (selectedSO.so + ' / ' + selectedSO.item)
+        : 'Semua SO';
+    wipDisplayStatus.innerHTML = buyerName + ' • ' + soName;
+    detailSubLabel.innerHTML = buyerName + ' • ' + soName + ' • ' +
+        (selectedCenter === 'MC' ? 'Machining Center' : 'Edge Banding &amp; Sanding');
+
+    soBuyerLabel.innerHTML = buyerName;
+}
+
+function renderWCLoadGrid() {
+    wcGridContainer.innerHTML = '';
+    var items = selectedCenter === 'MC' ? WORK_CENTERS_MC : WORK_CENTERS_EBS;
+    for (var i = 0; i < items.length; i++) {
+        var wc = items[i];
+        var div = document.createElement('div');
+        div.className = 'wc-item load-' + wc.load;
+        div.innerHTML =
+            '<span class="wc-name">' + wc.id.split('-')[1] + '</span>' +
+            '<span class="wc-value">' + wc.value + '</span>' +
+            '<span class="wc-sub">/12</span>';
+        wcGridContainer.appendChild(div);
+    }
+}
+
+function renderSOList() {
+    soListContainer.innerHTML = '';
+
+    var q = (soQuery || '').toLowerCase();
+    var shown = 0;
+    for (var i = 0; i < SO_DATA.length; i++) {
+        var so = SO_DATA[i];
+        if (selectedBuyer && so.bid !== selectedBuyer) { continue; }
+        if (q && (so.so + ' ' + so.item + ' ' + so.buyer).toLowerCase().indexOf(q) < 0) { continue; }
+
+        var tot = so.komp || 1;
+        var wCs = Math.round((so.cs || 0) * 100 / tot);
+        var wMc = Math.round((so.mc || 0) * 100 / tot);
+        var wEb = Math.round((so.eb || 0) * 100 / tot);
+
+        var isSel = selectedSO && selectedSO.so === so.so && selectedSO.item === so.item;
+
+        var item = document.createElement('div');
+        item.className = 'so-item-box' + (isSel ? ' active' : '');
+        item.onclick = (function (s) {
+            return function () { selectSO(s.so, s.item); };
+        })(so);
+        item.innerHTML =
+            '<div class="so-item-header">' +
+                '<div>' + so.so +
+                    ' <span style="color:#64748b; font-weight:400;">/ ' + so.item + '</span>' +
+                    '<div class="so-meta">' + icon('fa-user') + ' ' + esc(so.buyer) + '</div>' +
+                    (isSel ? '<div class="so-clear-note">klik lagi untuk menampilkan semua SO</div>' : '') +
+                '</div>' +
+                '<div class="so-pct-val" style="font-size:11px; color:#64748b;">' +
+                    so.komp + ' komp</div>' +
+            '</div>' +
+            '<div class="so-progress-bar">' +
+                '<div class="so-bar-part" style="width:' + wCs + '%; background:#f59e0b;"></div>' +
+                '<div class="so-bar-part" style="width:' + wMc + '%; background:#2563eb;"></div>' +
+                '<div class="so-bar-part" style="width:' + wEb + '%; background:#10b981;"></div>' +
+            '</div>' +
+            '<div class="so-item-footer">' +
+                '<span>' + so.pcs + ' pcs</span>' +
+                '<span>2KCS ' + (so.cs || 0) + ' &middot; MC ' + (so.mc || 0) +
+                    ' &middot; EBS ' + (so.eb || 0) + '</span>' +
+            '</div>';
+        soListContainer.appendChild(item);
+        shown++;
+    }
+
+    if (shown === 0) {
+        soListContainer.innerHTML =
+            '<div style="padding:16px; text-align:center; color:var(--text-muted); font-size:11px;">' +
+            'Tidak ada Sales Order yang cocok</div>';
+        return;
+    }
+
+    /* Kalau daftar dipotong batas, katakan terus terang berapa yang tidak
+       dimuat. Daftar yang diam-diam terpotong lebih berbahaya daripada
+       daftar yang mengaku tidak lengkap. */
+    if (soMore > 0) {
+        var note = document.createElement('div');
+        note.style.cssText = 'font-size:10px; color:#92400e; background:#fef3c7;' +
+            'border:1px solid #fde68a; border-radius:4px; padding:5px 8px; margin-top:4px;';
+        note.innerHTML = 'Menampilkan ' + SO_DATA.length + ' SO+Item pertama; ' +
+                         soMore + ' lainnya tidak dimuat.';
+        soListContainer.appendChild(note);
+    }
+}
+
+function setupEventListeners() {
+    btnAllBuyer.onclick = function () { selectBuyer(null); };
+    /* Ganti center = ganti TAHAP yang dinilai, jadi tabelnya harus diambil
+       ulang dari server, bukan sekadar dirender ulang. */
+    mcBox.onclick  = function () {
+        if (selectedCenter === 'MC') { return; }
+        switchCenter('MC'); loadKomp();
+    };
+    ebsBox.onclick = function () {
+        if (selectedCenter === 'EBS') { return; }
+        switchCenter('EBS'); loadKomp();
+    };
+
+    var tabs = document.getElementsByClassName('tab-btn');
+    for (var i = 0; i < tabs.length; i++) {
+        (function (btn) {
+            btn.onclick = function () {
+                var all = document.getElementsByClassName('tab-btn');
+                for (var j = 0; j < all.length; j++) { all[j].className = 'tab-btn'; }
+                btn.className = 'tab-btn active';
+                selectedTab = btn.getAttribute('data-tab');
+                /* tab hanya menyaring hasil yang sudah ada — tanpa
+                   permintaan baru, supaya perpindahannya seketika */
+                renderComponentTable();
+            };
+        })(tabs[i]);
+    }
+
+    var soBox = document.getElementById('search-so');
+    if (soBox) {
+        soBox.onkeyup = function () { soQuery = soBox.value || ''; renderSOList(); };
+    }
+
+    searchComponent.onkeyup = function () {
+        searchQuery = searchComponent.value || '';
+        renderComponentTable();
+    };
+}
+

@@ -1,0 +1,317 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — CSS panel bawah
+     Disisipkan index2.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     Peta Work Center, Sales Order, Detail Komponen, baris bentang tahap.
+     Lanjutan dari cs2_css_base.htm.
+     ========================================================== --%>
+    /* PETA WORK CENTER GRID */
+    .wc-map-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .hint { font-weight: 400; color: var(--text-muted); font-size: 10px; margin-left: 4px; }
+    .load-legend { font-size: 11px; display: flex; gap: 4px; align-items: center; }
+    .lbl-load { padding: 2px 6px; border-radius: 3px; font-size: 10px; }
+    .load-low { background: var(--load-low); color: var(--load-low-text); }
+    .load-med { background: var(--load-med); color: var(--load-med-text); }
+    .load-high { background: var(--load-high); color: var(--load-high-text); }
+
+    .wc-grid {
+        display: grid;
+        grid-template-columns: repeat(20, 1fr);
+        gap: 4px;
+    }
+    .wc-item {
+        border-radius: 4px;
+        padding: 6px 2px;
+        text-align: center;
+        cursor: pointer;
+        border: 1px solid transparent;
+    }
+    .wc-item:hover { transform: scale(1.05); border-color: #94a3b8; }
+    .wc-name { font-size: 9px; color: var(--text-muted); display: block; margin-bottom: 2px; }
+    .wc-value { font-size: 13px; font-weight: 700; }
+    .wc-sub { font-size: 8px; color: var(--text-muted); display: block; opacity: 0.7; }
+
+    /* ================================================================
+       SALES ORDER + DETAIL KOMPONEN — SATU BARIS
+       Dulu dua section bertumpuk, masing-masing pendek (320/350px).
+       Sekarang bersanding 1fr : 2fr dengan TINGGI SAMA 560px sehingga
+       dua panel rata dan keduanya menampilkan lebih banyak baris.
+
+       Tingginya dikunci di section, lalu bagian yang bergulir memakai
+       flex:1 + min-height:0. Tanpa min-height:0 anak flex menolak
+       menyusut dan panel akan meluber melewati 560px.
+       ================================================================ */
+    .so-detail-row {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 16px;
+        align-items: stretch;
+    }
+    @media (max-width: 1100px) {
+        .so-detail-row { grid-template-columns: 1fr; }
+    }
+
+    /* MONITORING SO */
+    .so-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+        height: 560px;
+        display: flex;
+        flex-direction: column;
+    }
+    /* Kepala panel SO ditumpuk, bukan disebar kiri-kanan: di lebar 1fr
+       (~sepertiga layar) judul + label buyer + kotak cari berebut tempat
+       dan judulnya patah dua baris. */
+    .so-head {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+    .so-head-line { display: flex; align-items: center; gap: 8px; }
+    .so-head-buyer {
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 11px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .so-list-container {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 4px;
+    }
+    .so-all-bar {
+        background: #f8fafc;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 6px 12px;
+        display: flex;
+        justify-content: space-between;
+        font-weight: 600;
+        font-size: 11px;
+    }
+    .so-item-box {
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #ffffff;
+        cursor: pointer;
+    }
+    .so-item-box:hover { border-color: #94a3b8; background: #f8fafc; }
+    /* SO terpilih -> tabel Detail Komponen menyempit ke SO+Item ini saja */
+    .so-item-box.active {
+        border-color: #d97706;
+        background: #fffbeb;
+        box-shadow: inset 3px 0 0 #d97706;
+    }
+    .so-clear-note {
+        font-size: 10px;
+        color: #92400e;
+        margin-top: 2px;
+        font-weight: 400;
+    }
+    .so-item-header {
+        display: flex;
+        justify-content: space-between;
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 4px;
+    }
+    .so-meta { font-size: 10px; color: var(--text-muted); font-weight: 400; margin-top: 2px; }
+    .so-pct-val { font-weight: 700; }
+    .so-progress-bar {
+        height: 8px;
+        background: #e2e8f0;
+        border-radius: 4px;
+        margin: 8px 0;
+        display: flex;
+        overflow: hidden;
+    }
+    .so-bar-part { height: 100%; }
+    .so-item-footer {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+
+    /* DETAIL KOMPONEN TABLE */
+    .component-detail-section {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 16px;
+        height: 560px;
+        display: flex;
+        flex-direction: column;
+    }
+    .detail-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        flex: 0 0 auto;
+    }
+    .search-box-container {
+        position: relative;
+        width: 240px;
+    }
+    .search-box-container .ic {
+        position: absolute;
+        left: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-muted);
+    }
+    .search-box-container input {
+        width: 100%;
+        padding: 5px 8px 5px 26px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        font-size: 11px;
+        outline: none;
+    }
+    .tab-filters {
+        display: flex;
+        gap: 4px;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 8px;
+        margin-bottom: 12px;
+        flex: 0 0 auto;
+    }
+    .tab-btn .cnt { font-size: 9px; opacity: 0.75; margin-left: 3px; }
+    .tab-btn {
+        background: transparent;
+        border: none;
+        padding: 6px 12px;
+        font-size: 11px;
+        cursor: pointer;
+        color: var(--text-muted);
+        border-radius: 4px;
+    }
+    .tab-btn.active {
+        background: #fef3c7;
+        color: #b45309;
+        font-weight: 600;
+    }
+    .table-wrapper {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+    }
+    .component-table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+    }
+    .component-table th {
+        background: #f8fafc;
+        padding: 8px 12px;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-muted);
+        border-bottom: 1px solid var(--border-color);
+        position: sticky;
+        top: 0;
+    }
+    .component-table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #f1f5f9;
+        font-size: 11px;
+        vertical-align: middle;
+    }
+    .comp-name { font-weight: 600; display: block; color: #1e293b; }
+    /* block, bukan inline: di kolom SO/ITEM baris atasnya bukan .comp-name
+       sehingga tanpa ini keduanya menempel jadi "0010440item 000010". */
+    .comp-sub { font-size: 10px; color: var(--text-muted); display: block; }
+    .mat-code { color: var(--color-blue); font-weight: 500; font-family: monospace; }
+    .routing-badge {
+        background: #f1f5f9;
+        border: 1px solid var(--border-color);
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-size: 9px;
+        display: inline-block;
+    }
+    .status-badge {
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        display: inline-block;
+        border: 1px solid transparent;
+    }
+    .status-badge.antri { background: #fff7ed; border-color: #ffedd5; color: #c2410c; }
+    .status-badge.dikerjakan { background: #eff6ff; border-color: #dbeafe; color: #1d4ed8; }
+    .status-badge.selesai { background: #ecfdf5; border-color: #d1fae5; color: #047857; }
+
+    .table-footer-note {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 10px;
+        border-top: 1px dashed var(--border-color);
+        padding-top: 8px;
+        flex: 0 0 auto;
+    }
+
+    /* ---- baris komponen yang dapat dibentangkan ----
+       Isinya TAHAP (order), bukan operasi: diag_routing.htm bagian B
+       membuktikan 86,1% order hanya punya 1 operasi, jadi daftar VORNR
+       hampir selalu berisi satu baris dan tidak berguna. Daftar tahap
+       menjadikannya peta perjalanan komponen. */
+    .comp-row { cursor: pointer; }
+    .comp-row:hover { background: #f8fafc; }
+    .comp-row.open { background: #fffbeb; }
+    .caret {
+        display: inline-block;
+        width: 10px;
+        color: var(--text-muted);
+        font-size: 9px;
+        margin-right: 2px;
+    }
+    .stage-cell { background: #f8fafc; padding: 0 !important; }
+    .stage-table { width: 100%; border-collapse: collapse; }
+    .stage-table td {
+        padding: 6px 12px 6px 30px;
+        border-bottom: 1px solid #eef2f7;
+        font-size: 10px;
+        color: var(--text-muted);
+    }
+    .stage-seq {
+        display: inline-block;
+        min-width: 16px;
+        height: 16px;
+        line-height: 16px;
+        text-align: center;
+        border-radius: 50%;
+        background: #e2e8f0;
+        color: #475569;
+        font-size: 9px;
+        font-weight: 700;
+        margin-right: 6px;
+    }
+    .stage-name { color: #1e293b; font-weight: 600; }
+    .stage-msg { padding: 8px 12px 8px 30px; font-size: 10px; color: var(--text-muted); }
+    .warn-strip {
+        font-size: 10px;
+        color: #92400e;
+        background: #fef3c7;
+        border: 1px solid #fde68a;
+        border-radius: 4px;
+        padding: 5px 8px;
+        margin-top: 6px;
+    }

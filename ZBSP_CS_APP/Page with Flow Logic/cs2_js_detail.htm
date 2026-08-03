@@ -1,0 +1,276 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — JS Detail Komponen
+     Disisipkan index2.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     Tabel komponen: pengambilan part=komp / part=ops1, pilih SO,
+     bentang tahap, render tabel & kaki tabel.
+     ========================================================== --%>
+/* ====================================================================
+   DETAIL KOMPONEN
+
+   Pembagian kerja penyaring — sengaja tidak seluruhnya di satu tempat:
+     center, SO+Item, buyer  -> DI SERVER (part=komp). Ketiganya mengubah
+       cakupan, jadi harus di server supaya hasilnya lepas dari batas 400
+       komponen. Kalau disaring di browser, memilih satu SO hanya akan
+       menyaring 400 komponen pertama — SO di urutan ke-900 akan terlihat
+       kosong padahal datanya ada.
+     tab status, kotak cari  -> DI BROWSER. Instan, tanpa permintaan baru.
+   ==================================================================== */
+
+function kompKey(r) { return r.so + '|' + r.item + '|' + r.mat; }
+
+function selectSO(so, item) {
+    if (selectedSO && selectedSO.so === so && selectedSO.item === item) {
+        selectedSO = null;                 /* klik kedua -> lepas */
+    } else {
+        selectedSO = { so: so, item: item };
+    }
+    EXPANDED = {};
+    updateLabels();
+    renderSOList();
+    loadKomp();
+}
+
+/* Ambil ringkasan komponen. Setiap permintaan diberi nomor urut: jawaban
+   yang datang terlambat dari permintaan LAMA diabaikan, supaya klik cepat
+   berturut-turut tidak membuat tabel menampilkan hasil pilihan sebelumnya. */
+function loadKomp() {
+    var seq = ++kompReqSeq;
+    kompState = 'load';
+    EXPANDED = {};
+    renderComponentTable();
+
+    var url = 'dash_prod.htm?part=komp&ctr=' +
+              (selectedCenter === 'MC' ? 'MC' : 'EB');
+    if (selectedSO) {
+        url += '&so=' + encodeURIComponent(selectedSO.so) +
+               '&item=' + encodeURIComponent(selectedSO.item);
+    }
+    if (selectedBuyer) {
+        url += '&bid=' + encodeURIComponent(selectedBuyer);
+    }
+
+    kpiGet(url, function (d) {
+        if (seq !== kompReqSeq) { return; }      /* jawaban usang */
+
+        if (!d) {
+            KOMP = []; kompState = 'err';
+            renderComponentTable();
+            return;
+        }
+        if (!d.ok) {
+            /* part=stock belum sempat menulis daftar komponennya. Dicoba
+               ulang SEKALI setelah jeda; kalau masih belum ada, dikatakan
+               apa adanya, bukan ditampilkan sebagai "tidak ada data". */
+            KOMP = []; kompState = 'wait';
+            renderComponentTable();
+            if (!kompRetried) {
+                kompRetried = true;
+                setTimeout(loadKomp, 2500);
+            }
+            return;
+        }
+        KOMP = d.rows || [];
+        kompMore = d.more || 0;
+        kompNook = d.nook || 0;
+        kompState = 'ok';
+        renderComponentTable();
+    });
+}
+
+/* Rincian tahap satu komponen — hanya saat barisnya dibentangkan.
+   Hasilnya disimpan di EXPANDED sehingga buka-tutup berikutnya tidak
+   meminta ulang ke server. */
+function loadStages(r) {
+    var key = kompKey(r);
+    var st = EXPANDED[key];
+    st.state = 'load';
+    renderComponentTable();
+
+    kpiGet('dash_prod.htm?part=ops1' +
+           '&so='   + encodeURIComponent(r.so) +
+           '&item=' + encodeURIComponent(r.item) +
+           '&mat='  + encodeURIComponent(r.mat),
+        function (d) {
+            var cur = EXPANDED[key];
+            if (!cur) { return; }
+            if (!d || !d.ok) {
+                cur.state = 'err';
+            } else {
+                cur.rows = d.rows || [];
+                cur.state = 'ok';
+            }
+            renderComponentTable();
+        });
+}
+
+function toggleStages(r) {
+    var key = kompKey(r);
+    if (EXPANDED[key] && EXPANDED[key].open) {
+        EXPANDED[key].open = false;
+        renderComponentTable();
+        return;
+    }
+    if (!EXPANDED[key]) {
+        EXPANDED[key] = { open: true, rows: null, state: 'load' };
+        loadStages(r);
+        return;
+    }
+    EXPANDED[key].open = true;
+    if (EXPANDED[key].state === 'err') {
+        loadStages(r);                        /* gagal sebelumnya -> coba lagi */
+        return;
+    }
+    renderComponentTable();
+}
+
+function centerName() {
+    return selectedCenter === 'MC' ? 'Machining Center' : 'Edge Banding';
+}
+
+function stageRowsHtml(st) {
+    if (st.state === 'load') {
+        return '<div class="stage-msg">memuat tahap&hellip;</div>';
+    }
+    if (st.state === 'err') {
+        return '<div class="stage-msg" style="color:#b91c1c;">Gagal memuat tahap. ' +
+               'Klik baris ini untuk mencoba lagi.</div>';
+    }
+    if (!st.rows || st.rows.length === 0) {
+        return '<div class="stage-msg">Komponen ini tidak punya order produksi sama sekali.</div>';
+    }
+    var h = '<table class="stage-table">';
+    for (var i = 0; i < st.rows.length; i++) {
+        var s = st.rows[i];
+        h += '<tr>' +
+             '<td style="width:42%;">' +
+                '<span class="stage-seq">' + (s.seq || '?') + '</span>' +
+                '<span class="stage-name">' + esc(s.stg) + '</span>' +
+                ' <span style="opacity:0.7;">op ' + esc(s.op) + '</span>' +
+             '</td>' +
+             '<td style="width:20%;">' + (s.wc ? esc(s.wc) : '&mdash;') + '</td>' +
+             '<td style="width:20%;"><span class="status-badge ' + s.st + '">' +
+                String(s.st).toUpperCase() + '</span></td>' +
+             '<td style="width:18%; text-align:right;">' +
+                s.done + ' / ' + (s.need || '&mdash;') + '</td>' +
+             '</tr>';
+    }
+    return h + '</table>';
+}
+
+function renderComponentTable() {
+    componentTableBody.innerHTML = '';
+
+    /* Cacah per status dihitung dari SELURUH hasil (sebelum tab disaring)
+       supaya angka di tombol tab tidak berubah mengikuti tab yang aktif. */
+    var cnt = { dikerjakan: 0, antri: 0, selesai: 0, semua: 0 };
+    var rows = [];
+    var q = searchQuery.toLowerCase();
+    var i, r;
+
+    for (i = 0; i < KOMP.length; i++) {
+        r = KOMP[i];
+        if (q && (r.txt + ' ' + r.mat + ' ' + r.buyer + ' ' + r.so)
+                 .toLowerCase().indexOf(q) < 0) { continue; }
+        cnt.semua++;
+        if (cnt[r.st] !== undefined) { cnt[r.st]++; }
+        if (selectedTab !== 'semua' && r.st !== selectedTab) { continue; }
+        rows.push(r);
+    }
+
+    var tabs = ['dikerjakan', 'antri', 'selesai', 'semua'];
+    for (i = 0; i < tabs.length; i++) {
+        var el = document.getElementById('cnt-' + tabs[i]);
+        if (el) { el.innerHTML = kompState === 'ok' ? '(' + cnt[tabs[i]] + ')' : ''; }
+    }
+
+    if (kompState !== 'ok') {
+        var msg = 'Memuat data komponen&hellip;';
+        if (kompState === 'err') {
+            msg = 'Gagal memuat data komponen dari dash_prod.htm?part=komp.';
+        } else if (kompState === 'wait') {
+            msg = 'Menunggu data stok selesai dihitung&hellip;';
+        }
+        componentTableBody.innerHTML =
+            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:24px;">' +
+            msg + '</td></tr>';
+        renderDetailFooter(0);
+        return;
+    }
+
+    if (rows.length === 0) {
+        componentTableBody.innerHTML =
+            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:24px;">' +
+            'Tidak ada komponen yang cocok</td></tr>';
+        renderDetailFooter(0);
+        return;
+    }
+
+    for (var k = 0; k < rows.length; k++) {
+        r = rows[k];
+        var key = EXPANDED[kompKey(r)];
+        var isOpen = !!(key && key.open);
+
+        var tr = document.createElement('tr');
+        tr.className = 'comp-row' + (isOpen ? ' open' : '');
+        tr.onclick = (function (row) {
+            return function () { toggleStages(row); };
+        })(r);
+        tr.innerHTML =
+            '<td>' +
+                '<span class="comp-name"><span class="caret">' +
+                    (isOpen ? '&#9660;' : '&#9654;') + '</span>' + esc(r.txt) + '</span>' +
+                '<span class="comp-sub"><span class="mat-code">' + esc(r.mat) + '</span>' +
+                    (r.buyer ? ' • ' + esc(r.buyer) : '') + '</span>' +
+            '</td>' +
+            '<td><span class="mat-code">' + esc(r.so) + '</span>' +
+                '<span class="comp-sub">item ' + esc(r.item) + '</span></td>' +
+            '<td><div class="routing-badge">' +
+                '<span style="color:#059669; font-weight:700;">' + r.done + '</span> / ' + r.tot +
+                ' op' + (r.wc ? ' | ' + icon('fa-table-cells', 'font-size:8px;') + ' ' + esc(r.wc) : '') +
+            '</div></td>' +
+            '<td><span class="status-badge ' + r.st + '">' + String(r.st).toUpperCase() + '</span></td>' +
+            '<td style="text-align: right; font-weight:700;">' + r.pct + '%</td>';
+        componentTableBody.appendChild(tr);
+
+        if (isOpen) {
+            var dtr = document.createElement('tr');
+            dtr.innerHTML = '<td class="stage-cell" colspan="5">' +
+                            stageRowsHtml(key) + '</td>';
+            componentTableBody.appendChild(dtr);
+        }
+    }
+
+    renderDetailFooter(rows.length);
+}
+
+/* Kaki tabel: mengaku apa yang TIDAK ditampilkan. Tabel yang diam-diam
+   terpotong jauh lebih berbahaya daripada tabel yang mengaku tidak lengkap. */
+function renderDetailFooter(shown) {
+    if (!detailFooter) { return; }
+
+    var ts = detailFooter.getAttribute('data-ts') || '';
+    var h = ts ? '<span style="float:right;">per ' + esc(ts) + '</span>' : '';
+    h += 'status dari konfirmasi operasi (AFRU) di tahap <strong>' + centerName() +
+         '</strong> &mdash; <strong>bukan</strong> dari saldo stok, jadi tidak sebanding ' +
+         'dengan dua kotak center di atas.';
+
+    if (selectedCenter !== 'MC') {
+        h += '<br>Sanding (229K) tidak punya DISPO tersendiri, jadi tahap ini mencakup ' +
+             'order Edge Banding (EB2) saja.';
+    }
+    if (kompState === 'ok') {
+        h += '<br>menampilkan ' + shown + ' dari ' + KOMP.length + ' komponen di tahap ini';
+        if (kompNook > 0) {
+            h += ' &nbsp;|&nbsp; ' + kompNook +
+                 ' komponen tidak punya order produksi di tahap ini';
+        }
+    }
+    if (kompMore > 0) {
+        h += '<div class="warn-strip">Menampilkan ' + KOMP.length +
+             ' komponen pertama; ' + kompMore + ' lainnya tidak dimuat. ' +
+             'Pilih satu Sales Order atau satu Buyer untuk melihatnya.</div>';
+    }
+    detailFooter.innerHTML = h;
+}
+

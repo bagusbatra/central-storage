@@ -1,0 +1,302 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — JS pengambilan angka & tooltip
+     Disisipkan index2.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     kpiGet/kpiText/kpiNum, dua kotak center, sistem tooltip, loadKpi,
+     boot. Satu-satunya tempat yang memanggil dash_prod.htm untuk
+     part=stock / hist / ops.
+     ========================================================== --%>
+/* ====================================================================
+   Pengambilan angka dari dash_prod.htm — ASINKRON.
+   Halaman sudah tampil sebelum ini berjalan; kalau endpoint lambat atau
+   gagal, yang terlihat cuma kartu bertanda "-", bukan halaman mati.
+
+   Dua bagian dipanggil TERPISAH supaya yang lambat tidak memblokir yang
+   cepat. part=ops jauh lebih berat dari part=stock.
+   ==================================================================== */
+function kpiGet(url, onOk) {
+    var x = window.XMLHttpRequest ? new XMLHttpRequest()
+                                  : new ActiveXObject('Microsoft.XMLHTTP');
+    x.open('GET', url, true);
+    x.onreadystatechange = function () {
+        if (x.readyState !== 4) { return; }
+        if (x.status === 200) {
+            try { onOk(eval('(' + x.responseText + ')')); return; } catch (e) { }
+        }
+        onOk(null);
+    };
+    x.send();
+}
+
+function kpiText(id, txt) {
+    var el = document.getElementById(id);
+    if (el) { el.innerHTML = txt; }
+}
+
+function kpiNum(n) {
+    /* pemisah ribuan: 1850 -> 1.850 */
+    var s = String(n), out = '', c = 0, i;
+    for (i = s.length - 1; i >= 0; i--) {
+        out = s.charAt(i) + out;
+        if (++c % 3 === 0 && i > 0) { out = '.' + out; }
+    }
+    return out;
+}
+
+/* Angka dua kotak center datang dari DUA endpoint: kuning & biru dari
+   part=stock, hijau dari part=hist. Disimpan di sini lalu digambar ulang
+   tiap kali salah satunya tiba, supaya yang datang duluan tidak tertimpa. */
+var CENTER = { mcq: 0, mcp: 0, mcg: null, ebq: 0, ebp: 0, ebg: null };
+
+function drawCenters() {
+    var pairs = [
+        ['mc',  CENTER.mcq, CENTER.mcp, CENTER.mcg, 'antre di 2KCS'],
+        ['ebs', CENTER.ebq, CENTER.ebp, CENTER.ebg, 'antre di 2261/2262']
+    ];
+    for (var i = 0; i < pairs.length; i++) {
+        var p = pairs[i], id = p[0], q = p[1], a = p[2], g = p[3];
+        var tot = q + a + (g || 0);
+        kpiText(id + '-wip-text', kpiNum(a));
+        kpiText(id + '-foot', kpiNum(q) + ' ' + p[4]);
+        /* Selama hist belum tiba, hijau ditulis "menghitung", BUKAN nol.
+           Nol berarti "tidak ada yang lewat"; yang benar "belum dihitung". */
+        kpiText(id + '-done', (g === null)
+            ? 'sudah lewat: menghitung&hellip;'
+            : '&#10003; ' + kpiNum(g) + ' sudah lewat');
+        setBar(id + '-bar-done',  tot ? Math.round((g || 0) * 100 / tot) : 0);
+        setBar(id + '-bar-wip',   tot ? Math.round(a * 100 / tot) : 0);
+        setBar(id + '-bar-queue', tot ? Math.round(q * 100 / tot) : 0);
+
+        var slocQ = (id === 'mc') ? '2KCS' : '2261 / 2262';
+        var slocA = (id === 'mc') ? '2261 / 2262' : '22E2 / 22E3 / 229K';
+        var box = document.getElementById(id + '-wip-tip');
+        if (box) {
+            /* ⚠️ Atribut class di bawah WAJIB memakai kutip GANDA.
+               Sampai 2026-08-03 baris-baris ini memakai kutip tunggal di
+               dalam string berkutip tunggal ('<span class='ct-h'>...'), yang
+               bukan sekadar salah tampil melainkan SYNTAX ERROR — dan satu
+               syntax error menggugurkan SELURUH blok <script> halaman ini,
+               sehingga tidak ada satu pun panel yang terisi. */
+            box.setAttribute('data-tip',
+                '<span class="ct-h">WIP &mdash; komponen sedang di center ini</span>' +
+                '<span class="ct-r">Angka besar = komponen yang stoknya ada di <b>' + slocA + '</b>.</span>' +
+                '<span class="ct-r">Antre <b>' + kpiNum(q) + '</b> (masih di ' + slocQ + ')<br>' +
+                'Dikerjakan <b>' + kpiNum(a) + '</b> (di ' + slocA + ')<br>' +
+                'Sudah lewat <b>' + (g === null ? 'menghitung&hellip;' : kpiNum(g)) + '</b></span>' +
+                '<span class="ct-r">Sudah lewat = pernah diterima di SLoc center ini, tapi stoknya sekarang nol.</span>' +
+                '<span class="ct-src">kuning &amp; biru: MSKA saldo &middot; hijau: MSEG riwayat<br>cacah komponen, bukan qty</span>');
+        }
+    }
+}
+
+/* ====================================================================
+   TOOLTIP MODERN — SATU sistem untuk seluruh halaman.
+   Sebelumnya kartu memakai tooltip CSS sendiri dan peta WC memakai
+   atribut title bawaan browser; dua gaya berbeda di satu halaman.
+
+   Cara pakai: beri elemen apa pun atribut data-tip berisi HTML.
+   Pengikatannya lewat DELEGASI di document, jadi elemen yang dirender
+   belakangan (peta WC, daftar SO) ikut bekerja tanpa perlu dibind ulang.
+
+   Diposisikan lewat JS (position:fixed) supaya TIDAK terpotong oleh
+   panel ber-overflow — masalah yang tidak bisa dihindari tooltip CSS
+   murni di dalam grid dan daftar bergulir.
+   ==================================================================== */
+var TIPEL = null;
+
+function tipEnsure() {
+    if (TIPEL) { return; }
+    TIPEL = document.createElement('div');
+    TIPEL.className = 'mtip';
+    document.body.appendChild(TIPEL);
+}
+
+function tipFind(node) {
+    while (node && node !== document.body) {
+        if (node.getAttribute && node.getAttribute('data-tip')) { return node; }
+        node = node.parentNode;
+    }
+    return null;
+}
+
+function tipShow(el) {
+    tipEnsure();
+    TIPEL.innerHTML = el.getAttribute('data-tip');
+    TIPEL.style.visibility = 'hidden';
+    TIPEL.style.display = 'block';
+
+    var r = el.getBoundingClientRect();
+    var w = TIPEL.offsetWidth, h = TIPEL.offsetHeight;
+    var vw = document.documentElement.clientWidth;
+    var vh = document.documentElement.clientHeight;
+
+    var left = r.left;
+    var top = r.bottom + 8;
+    if (left + w > vw - 8) { left = vw - w - 8; }
+    if (left < 8) { left = 8; }
+    /* kalau tidak muat di bawah, tampilkan di atas elemennya */
+    if (top + h > vh - 8) { top = r.top - h - 8; }
+    if (top < 8) { top = 8; }
+
+    TIPEL.style.left = left + 'px';
+    TIPEL.style.top = top + 'px';
+    TIPEL.style.visibility = 'visible';
+}
+
+function tipHide() {
+    if (TIPEL) { TIPEL.style.display = 'none'; }
+}
+
+function tipBindDelegated() {
+    var over = function (e) {
+        var t = tipFind(e.target || e.srcElement);
+        if (t) { tipShow(t); }
+    };
+    var out = function (e) {
+        var t = tipFind(e.target || e.srcElement);
+        if (t) { tipHide(); }
+    };
+    if (document.addEventListener) {
+        document.addEventListener('mouseover', over, false);
+        document.addEventListener('mouseout', out, false);
+        window.addEventListener('scroll', tipHide, true);
+    } else {
+        document.attachEvent('onmouseover', over);
+        document.attachEvent('onmouseout', out);
+    }
+}
+
+function setBar(id, pct) {
+    var el = document.getElementById(id);
+    if (el) { el.style.width = pct + '%'; }
+}
+
+function loadKpi() {
+    kpiGet('dash_prod.htm?part=stock', function (d) {
+        if (!d || !d.ok) {
+            kpiText('kpi-so', '-');     kpiText('kpi-so-sub', 'gagal memuat');
+            kpiText('kpi-buyer', '-');  kpiText('kpi-buyer-sub', 'gagal memuat');
+            kpiText('kpi-prod', '-');   kpiText('kpi-prod-sub', 'gagal memuat');
+            kpiText('kpi-prod-sub2', '&nbsp;');
+            kpiText('kpi-done', '-');   kpiText('kpi-done-sub', 'gagal memuat');
+            /* part=komp bergantung pada part=stock. Kalau yang ini gagal,
+               tabel tidak akan pernah terisi — dikatakan sekarang, bukan
+               dibiarkan berputar di "memuat" selamanya. */
+            kompState = 'err';
+            renderComponentTable();
+            return;
+        }
+
+        kpiText('kpi-so', kpiNum(d.so));
+        kpiText('kpi-so-sub', kpiNum(d.komp) + ' komponen &middot; ' + kpiNum(d.pcs) + ' pcs');
+
+        kpiText('kpi-buyer', kpiNum(d.buyers));
+        kpiText('kpi-buyer-sub', 'punya stok di enam SLoc');
+        kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
+
+        /* DI PRODUKSI — dua baris: rasio thd seluruh komponen, lalu
+           rinciannya per center. Keduanya dari angka yang sudah dikirim
+           part=stock; tidak ada query tambahan. */
+        kpiText('kpi-prod', kpiNum(d.prod));
+        var prodPct = d.komp ? Math.round(d.prod * 100 / d.komp) : 0;
+        kpiText('kpi-prod-sub', 'dari ' + kpiNum(d.komp) + ' komp (' + prodPct + '%)');
+        kpiText('kpi-prod-sub2', 'MC: ' + kpiNum(d.mcp || 0) + ' &middot; EB: ' + kpiNum(d.ebp || 0));
+
+        /* SELESAI PROD. — definisi baru: order delivered penuh DAN stok
+           kosong di enam SLoc (done_real). Field lama d.done (proxy "stok
+           ada di 229K") SENGAJA masih dikirim endpoint untuk perbandingan
+           sampai angka baru diverifikasi PPIC — jangan dipakai di sini. */
+        if (d.done_real === undefined || d.done_real === null) {
+            kpiText('kpi-done', '-');
+            kpiText('kpi-done-sub', 'endpoint belum mengirim done_real');
+        } else {
+            kpiText('kpi-done', kpiNum(d.done_real));
+            kpiText('kpi-done-sub', 'komponen keluar dari 6 SLoc');
+        }
+
+        /* ---- dua kotak center ----
+           Kuning = antre, biru = dikerjakan. HIJAU sengaja 0 dan diberi
+           keterangan "belum tersedia": barang yang sudah selesai tidak punya
+           stok lagi, jadi saldo stok tidak bisa menjawabnya. Mengisinya nol
+           akan terbaca "tidak ada yang lewat", padahal "belum dihitung". */
+        CENTER.mcq = d.mcq || 0; CENTER.mcp = d.mcp || 0;
+        CENTER.ebq = d.ebq || 0; CENTER.ebp = d.ebp || 0;
+        drawCenters();
+
+        if (d.buyer && d.buyer.length) {
+            BUYERS = d.buyer;
+            renderBuyerFilters();
+        }
+        if (d.solist) {
+            SO_DATA = d.solist;
+            soMore = d.solist_more || 0;
+        }
+        updateLabels();
+        renderSOList();
+
+        /* part=komp HARUS menyusul part=stock: ia membaca daftar komponen
+           yang baru saja ditulis part=stock ke SHARED BUFFER 'DPRODKM'.
+           Dipanggil bersamaan, ia akan membalas "jalankan part=stock lebih
+           dulu". Sejajar dengan part=hist yang punya ketergantungan sama. */
+        loadKomp();
+
+        kpiGet('dash_prod.htm?part=hist', function (h) {
+            if (!h || !h.ok) {
+                CENTER.mcg = 0; CENTER.ebg = 0;
+                drawCenters();
+                kpiText('mc-done', 'sudah lewat: gagal dimuat');
+                kpiText('ebs-done', 'sudah lewat: gagal dimuat');
+                return;
+            }
+            CENTER.mcg = h.mcgone || 0;
+            CENTER.ebg = h.ebgone || 0;
+            drawCenters();
+        });
+    });
+
+    /* hist dipanggil SETELAH stock, karena ia membaca daftar komponen yang
+       baru disiapkan part=stock. Kalau dipanggil bersamaan, hist bisa tiba
+       sebelum daftarnya ada dan membalas "jalankan part=stock lebih dulu". */
+    kpiGet('dash_prod.htm?part=ops', function (d) {
+        if (!d || !d.ok) {
+            kpiText('kpi-conf', '-');
+            kpiText('kpi-conf-sub', 'gagal memuat');
+            return;
+        }
+        kpiText('kpi-conf', d.pct);
+        kpiText('kpi-conf-sub', kpiNum(d.conf) + ' dari ' + kpiNum(d.total) + ' operasi');
+
+        /* Peringatan pembatasan pindah dari sub-teks ke ikon ⚠ + tooltip.
+           CATATAN: spec perbaikan1 menaruh baris peringatan sebagai elemen
+           ber-id di DALAM atribut data-tip lalu menyembunyikannya lewat
+           style.display. Itu tidak bisa bekerja — isi data-tip cuma teks
+           atribut, elemennya tidak pernah ada di DOM sampai tooltip dibuka.
+           Jadi barisnya DITAMBAHKAN ke atribut, pola yang sama dipakai
+           drawCenters(). */
+        var warn = document.getElementById('kpi-conf-warn');
+        var tipc = document.getElementById('tip-conf');
+        if (d.trunc) {
+            if (warn) { warn.style.display = 'inline'; }
+            if (tipc && tipc.getAttribute('data-tip').indexOf('id="ct-trunc"') < 0) {
+                tipc.setAttribute('data-tip', tipc.getAttribute('data-tip') +
+                    '<span class="ct-warn" id="ct-trunc">&#9888; Order melampaui batas ' +
+                    kpiNum(d.ord) + ' &mdash; persentase dihitung dari ' + kpiNum(d.ord) +
+                    ' order teratas. Indikatif, bukan final.</span>');
+            }
+        } else if (warn) {
+            warn.style.display = 'none';
+        }
+    });
+}
+
+function boot() {
+    tipBindDelegated();
+    init();
+    loadKpi();
+}
+
+if (window.addEventListener) {
+    window.addEventListener('DOMContentLoaded', boot, false);
+} else {
+    window.attachEvent('onload', boot);
+}

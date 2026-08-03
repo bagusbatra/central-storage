@@ -1,0 +1,271 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — part=komp & part=ops1 — pengumpulan data
+     Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     Baca daftar komponen, persempit sesuai parameter, ambil order +
+     tahap + operasi + work center. Perakitan jawabannya di
+     dp_komp_out.htm, yang disisipkan di dalam IF yang sama.
+     ========================================================== --%><%
+*&---------------------------------------------------------------------*
+*& BAGIAN KOMP & OPS1 — isi tabel Detail Komponen di index2.htm
+*&---------------------------------------------------------------------*
+*& part=komp : SATU BARIS PER KOMPONEN (SO+Item+Material), berisi status
+*&             ringkas komponen itu DI TAHAP CENTER YANG DIPILIH.
+*& part=ops1 : SELURUH TAHAP satu komponen — dipanggil saat satu baris
+*&             tabel dibentangkan.
+*&
+*& ===== KENAPA SUMBUNYA "TAHAP", BUKAN "OPERASI" =====
+*& diag_routing.htm bagian B (2026-07-30) membuktikan: maksimum 2 operasi
+*& per order, 86,1% order hanya punya 1 operasi, TIDAK ADA yang >= 3.
+*& Alur Machining -> Edge Banding BUKAN routing multi-operasi dalam satu
+*& order, melainkan RANGKAIAN ORDER TERPISAH — satu order per tahap.
+*& Karena itu baris bentang berisi TAHAP, dan pemetaan komponen ke center
+*& diambil dari AFKO-DISPO, bukan ditebak dari nama work center.
+*&
+*&   seq 1  Pembahanan        pwerk 1000, dispo WM1/WM2/PN1/PN2
+*&   seq 2  Machining Center  pwerk 2000, dispo GA1/GA2
+*&   seq 3  Edge Banding      pwerk 2000, dispo EB2
+*&   seq 0  di luar ketiganya
+*&
+*& ⚠️ Sanding (SLoc 229K) TIDAK punya DISPO, jadi tidak ada order yang
+*&    memetakan ke sana. Tombol center "Edge Banding & Sanding" pada
+*&    endpoint ini berarti EB2 saja. Sudah dikatakan di kaki tabel.
+*&
+*& ⚠️ ANGKANYA TIDAK AKAN SAMA dengan dua kotak center di atas layar.
+*&    Kotak center berbasis SALDO STOK (MSKA); tabel ini berbasis
+*&    KONFIRMASI OPERASI (AFRU). Dua pertanyaan berbeda. index2.htm wajib
+*&    menyatakan itu — jangan hapus peringatannya.
+*&
+*& ⚠️ RUMUS STATUS OPERASI di bawah disalin PERSIS dari
+*&    diag_routing.htm:355-365, dipakai juga routing_map.htm dan part=ops
+*&    di berkas ini. Kalau rumusnya berubah, ubah di KEEMPAT tempat.
+*&
+*& Daftar komponen dibaca dari SHARED BUFFER 'DPRODKM' yang ditulis
+*& part=stock — MSKA tidak ditembak untuk kedua kalinya.
+*&---------------------------------------------------------------------*
+IF lv_part = 'komp' OR lv_part = 'ops1'.
+
+  TYPES: BEGIN OF ty_kcomp,
+           vbeln TYPE mska-vbeln,
+           posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr,
+           moved TYPE abap_bool,
+           at_cs TYPE abap_bool,
+           at_mc TYPE abap_bool,
+           at_eb TYPE abap_bool,
+           at_sd TYPE abap_bool,
+         END OF ty_kcomp.
+  DATA: lt_kcomp TYPE STANDARD TABLE OF ty_kcomp WITH DEFAULT KEY,
+        lv_kc_ts TYPE timestamp.
+  FIELD-SYMBOLS <kc> TYPE ty_kcomp.
+
+  IMPORT ts = lv_kc_ts km = lt_kcomp FROM SHARED BUFFER indx(zc) ID 'DPRODKM'.
+  IF sy-subrc <> 0 OR lt_kcomp IS INITIAL.
+    " Dijawab jujur, bukan dengan daftar kosong yang terbaca "tidak ada data".
+    response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+    %>{"ok":0,"msg":"jalankan part=stock lebih dulu"}<%
+    RETURN.
+  ENDIF.
+
+  " ===== Buyer per SO — dipakai untuk filter bid DAN kolom buyer =====
+  TYPES: BEGIN OF ty_kvb, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_kvb.
+  DATA: lt_kvb  TYPE STANDARD TABLE OF ty_kvb WITH DEFAULT KEY, ls_kvb TYPE ty_kvb,
+        lt_kvbn TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY.
+  LOOP AT lt_kcomp ASSIGNING <kc>.
+    APPEND <kc>-vbeln TO lt_kvbn.
+  ENDLOOP.
+  SORT lt_kvbn. DELETE ADJACENT DUPLICATES FROM lt_kvbn.
+  IF lt_kvbn IS NOT INITIAL.
+    SELECT vbeln kunnr FROM vbak INTO TABLE lt_kvb
+      FOR ALL ENTRIES IN lt_kvbn
+      WHERE vbeln = lt_kvbn-table_line.
+    SORT lt_kvb BY vbeln.
+  ENDIF.
+
+  " ===== Persempit sesuai parameter =====
+  TYPES: BEGIN OF ty_ksel,
+           vbeln TYPE mska-vbeln,
+           posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr,
+           kunnr TYPE kna1-kunnr,
+         END OF ty_ksel.
+  DATA: lt_ksel TYPE STANDARD TABLE OF ty_ksel WITH DEFAULT KEY,
+        ls_ksel TYPE ty_ksel.
+  FIELD-SYMBOLS <ks> TYPE ty_ksel.
+
+  LOOP AT lt_kcomp ASSIGNING <kc>.
+    IF lv_part = 'ops1'.
+      IF <kc>-vbeln <> lv_k_so OR <kc>-posnr <> lv_k_item OR <kc>-matnr <> lv_k_mat.
+        CONTINUE.
+      ENDIF.
+    ELSE.
+      IF lv_k_so IS NOT INITIAL AND <kc>-vbeln <> lv_k_so.
+        CONTINUE.
+      ENDIF.
+      IF lv_k_item IS NOT INITIAL AND <kc>-posnr <> lv_k_item.
+        CONTINUE.
+      ENDIF.
+    ENDIF.
+    CLEAR ls_kvb.
+    READ TABLE lt_kvb INTO ls_kvb WITH KEY vbeln = <kc>-vbeln BINARY SEARCH.
+    IF lv_k_bid IS NOT INITIAL AND ls_kvb-kunnr <> lv_k_bid.
+      CONTINUE.
+    ENDIF.
+    CLEAR ls_ksel.
+    ls_ksel-vbeln = <kc>-vbeln.
+    ls_ksel-posnr = <kc>-posnr.
+    ls_ksel-matnr = <kc>-matnr.
+    ls_ksel-kunnr = ls_kvb-kunnr.
+    APPEND ls_ksel TO lt_ksel.
+  ENDLOOP.
+  SORT lt_ksel BY vbeln posnr matnr.
+
+  " Batas. Yang di luar batas DICACAH dan dilaporkan lewat "more" —
+  " daftar yang diam-diam terpotong lebih berbahaya daripada yang mengaku.
+  DATA: lv_kmax TYPE i, lv_kmore TYPE i, lv_kcut TYPE i.
+  IF lv_part = 'ops1'.
+    lv_kmax = 1.
+  ELSEIF lv_k_so IS NOT INITIAL OR lv_k_bid IS NOT INITIAL.
+    lv_kmax = lc_maxkm2.
+  ELSE.
+    lv_kmax = lc_maxkmp.
+  ENDIF.
+  IF lines( lt_ksel ) > lv_kmax.
+    lv_kmore = lines( lt_ksel ) - lv_kmax.
+    lv_kcut  = lv_kmax + 1.
+    DELETE lt_ksel FROM lv_kcut.
+  ENDIF.
+
+  " ===== Order per komponen + tahapnya =====
+  TYPES: BEGIN OF ty_kord,
+           aufnr TYPE afko-aufnr,
+           aufpl TYPE afko-aufpl,
+           kdauf TYPE afpo-kdauf,
+           kdpos TYPE afpo-kdpos,
+           matnr TYPE afpo-matnr,
+           pwerk TYPE afpo-pwerk,
+           dispo TYPE afko-dispo,
+           seq   TYPE i,
+         END OF ty_kord.
+  DATA: lt_kord TYPE STANDARD TABLE OF ty_kord WITH DEFAULT KEY.
+  FIELD-SYMBOLS <ko> TYPE ty_kord.
+
+  IF lt_ksel IS NOT INITIAL.
+    SELECT k~aufnr k~aufpl a~kdauf a~kdpos a~matnr a~pwerk k~dispo
+      FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr
+      INTO CORRESPONDING FIELDS OF TABLE lt_kord
+      FOR ALL ENTRIES IN lt_ksel
+      WHERE a~kdauf = lt_ksel-vbeln
+        AND a~kdpos = lt_ksel-posnr
+        AND a~matnr = lt_ksel-matnr
+        AND k~aufpl <> '0000000000'.
+  ENDIF.
+
+  LOOP AT lt_kord ASSIGNING <ko>.
+    IF <ko>-pwerk = '1000'
+       AND (    <ko>-dispo = 'WM1' OR <ko>-dispo = 'WM2'
+             OR <ko>-dispo = 'PN1' OR <ko>-dispo = 'PN2' ).
+      <ko>-seq = 1.
+    ELSEIF <ko>-pwerk = '2000' AND ( <ko>-dispo = 'GA1' OR <ko>-dispo = 'GA2' ).
+      <ko>-seq = 2.
+    ELSEIF <ko>-pwerk = '2000' AND <ko>-dispo = 'EB2'.
+      <ko>-seq = 3.
+    ELSE.
+      <ko>-seq = 0.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_kord BY kdauf kdpos matnr seq aufnr.
+
+  " ===== Operasi, qty rencana, konfirmasi, work center =====
+  TYPES: BEGIN OF ty_kap, aufpl TYPE afko-aufpl, END OF ty_kap.
+  DATA: lt_kap TYPE STANDARD TABLE OF ty_kap WITH DEFAULT KEY, ls_kap TYPE ty_kap.
+  LOOP AT lt_kord ASSIGNING <ko>.
+    ls_kap-aufpl = <ko>-aufpl.
+    APPEND ls_kap TO lt_kap.
+  ENDLOOP.
+  SORT lt_kap BY aufpl. DELETE ADJACENT DUPLICATES FROM lt_kap COMPARING aufpl.
+
+  TYPES: BEGIN OF ty_kop,
+           aufpl TYPE afvc-aufpl, aplzl TYPE afvc-aplzl,
+           vornr TYPE afvc-vornr, arbid TYPE afvc-arbid,
+         END OF ty_kop.
+  DATA: lt_kop TYPE STANDARD TABLE OF ty_kop WITH DEFAULT KEY, ls_kop TYPE ty_kop.
+
+  TYPES: BEGIN OF ty_kvv,
+           aufpl TYPE afvv-aufpl, aplzl TYPE afvv-aplzl, mgvrg TYPE afvv-mgvrg,
+         END OF ty_kvv.
+  DATA: lt_kvv TYPE STANDARD TABLE OF ty_kvv WITH DEFAULT KEY, ls_kvv TYPE ty_kvv.
+
+  IF lt_kap IS NOT INITIAL.
+    SELECT aufpl aplzl vornr arbid FROM afvc INTO TABLE lt_kop
+      FOR ALL ENTRIES IN lt_kap WHERE aufpl = lt_kap-aufpl.
+    SORT lt_kop BY aufpl vornr aplzl.
+
+    SELECT aufpl aplzl mgvrg FROM afvv INTO TABLE lt_kvv
+      FOR ALL ENTRIES IN lt_kap WHERE aufpl = lt_kap-aufpl.
+    SORT lt_kvv BY aufpl aplzl.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_kru,
+           aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
+           lmnga TYPE afru-lmnga, stokz TYPE afru-stokz, aueru TYPE afru-aueru,
+         END OF ty_kru.
+  DATA: lt_kru TYPE STANDARD TABLE OF ty_kru WITH DEFAULT KEY, ls_kru TYPE ty_kru.
+  IF lt_kord IS NOT INITIAL.
+    SELECT aufnr vornr lmnga stokz aueru FROM afru INTO TABLE lt_kru
+      FOR ALL ENTRIES IN lt_kord WHERE aufnr = lt_kord-aufnr.
+    DELETE lt_kru WHERE stokz = 'X'.        " dibatalkan -> qty ganda
+  ENDIF.
+
+  TYPES: BEGIN OF ty_kagg,
+           aufnr TYPE afru-aufnr, vornr TYPE afru-vornr,
+           lmnga TYPE p LENGTH 15 DECIMALS 3, aueru TYPE c LENGTH 1,
+         END OF ty_kagg.
+  DATA: lt_kagg TYPE STANDARD TABLE OF ty_kagg WITH DEFAULT KEY, ls_kagg TYPE ty_kagg.
+  FIELD-SYMBOLS <kg> TYPE ty_kagg.
+  LOOP AT lt_kru INTO ls_kru.
+    READ TABLE lt_kagg ASSIGNING <kg>
+      WITH KEY aufnr = ls_kru-aufnr vornr = ls_kru-vornr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_kagg ASSIGNING <kg>.
+      <kg>-aufnr = ls_kru-aufnr.
+      <kg>-vornr = ls_kru-vornr.
+    ENDIF.
+    <kg>-lmnga = <kg>-lmnga + ls_kru-lmnga.
+    IF ls_kru-aueru = 'X'.
+      <kg>-aueru = 'X'.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_kagg BY aufnr vornr.
+
+  " AFVC-ARBID -> CRHD-OBJID (OBJTY='A') -> CRHD-ARBPL
+  TYPES: BEGIN OF ty_karb, arbid TYPE afvc-arbid, END OF ty_karb.
+  DATA: lt_karb TYPE STANDARD TABLE OF ty_karb WITH DEFAULT KEY, ls_karb TYPE ty_karb.
+  LOOP AT lt_kop INTO ls_kop.
+    IF ls_kop-arbid IS INITIAL.
+      CONTINUE.
+    ENDIF.
+    ls_karb-arbid = ls_kop-arbid.
+    APPEND ls_karb TO lt_karb.
+  ENDLOOP.
+  SORT lt_karb BY arbid. DELETE ADJACENT DUPLICATES FROM lt_karb COMPARING arbid.
+
+  TYPES: BEGIN OF ty_kwc, objid TYPE crhd-objid, arbpl TYPE crhd-arbpl, END OF ty_kwc.
+  DATA: lt_kwc TYPE STANDARD TABLE OF ty_kwc WITH DEFAULT KEY, ls_kwc TYPE ty_kwc.
+  IF lt_karb IS NOT INITIAL.
+    " CRHD bergantung waktu (DATBI); satu ARBID bisa berbaris lebih dari satu.
+    " Nama work center praktis tidak berubah antar versi, jadi diambil satu.
+    SELECT objid arbpl FROM crhd INTO TABLE lt_kwc
+      FOR ALL ENTRIES IN lt_karb
+      WHERE objty = 'A' AND objid = lt_karb-arbid.
+    SORT lt_kwc BY objid. DELETE ADJACENT DUPLICATES FROM lt_kwc COMPARING objid.
+  ENDIF.
+
+  DATA: lv_kmg  TYPE afvv-mgvrg,
+        lv_kst  TYPE string,
+        lv_kwcn TYPE crhd-arbpl,
+        lv_json2 TYPE string,
+        lv_kfirst TYPE abap_bool VALUE abap_true.
+%><%@include file="dp_komp_out.htm" %><%
+ENDIF.
+%>

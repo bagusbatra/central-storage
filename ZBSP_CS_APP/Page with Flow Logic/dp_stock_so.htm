@@ -1,0 +1,222 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — part=stock — daftar SO, buyer, rakit JSON
+     Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     Lanjutan dp_stock.htm; berjalan di dalam IF milik berkas itu.
+     ========================================================== --%><%
+  " ===== Daftar SO + Item =====
+  "   Ketentuan user: tampilkan SEMUA SO dan Item-nya, urutan jangan
+  "   berantakan -> diurut SO lalu Item menaik, tegas.
+  TYPES: BEGIN OF ty_solist,
+           vbeln TYPE mska-vbeln,
+           posnr TYPE mska-posnr,
+           komp  TYPE i,
+           at_cs TYPE i,
+           at_mc TYPE i,
+           at_eb TYPE i,
+           pcs   TYPE p LENGTH 15 DECIMALS 3,
+         END OF ty_solist.
+  DATA: lt_solist TYPE STANDARD TABLE OF ty_solist WITH DEFAULT KEY.
+  FIELD-SYMBOLS <sl> TYPE ty_solist.
+
+  LOOP AT lt_kmp ASSIGNING <km>.
+    READ TABLE lt_solist ASSIGNING <sl>
+      WITH KEY vbeln = <km>-vbeln posnr = <km>-posnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_solist ASSIGNING <sl>.
+      <sl>-vbeln = <km>-vbeln.
+      <sl>-posnr = <km>-posnr.
+    ENDIF.
+    <sl>-komp = <sl>-komp + 1.
+    IF <km>-at_cs = abap_true.
+      <sl>-at_cs = <sl>-at_cs + 1.
+    ENDIF.
+    IF <km>-at_mc = abap_true.
+      <sl>-at_mc = <sl>-at_mc + 1.
+    ENDIF.
+    IF <km>-at_eb = abap_true.
+      <sl>-at_eb = <sl>-at_eb + 1.
+    ENDIF.
+  ENDLOOP.
+
+  " qty diambil dari lt_stok (lt_kmp tidak menyimpan qty)
+  LOOP AT lt_stok ASSIGNING <st>.
+    READ TABLE lt_solist ASSIGNING <sl>
+      WITH KEY vbeln = <st>-vbeln posnr = <st>-posnr.
+    IF sy-subrc = 0.
+      <sl>-pcs = <sl>-pcs + <st>-qty.
+    ENDIF.
+  ENDLOOP.
+
+  SORT lt_solist BY vbeln ASCENDING posnr ASCENDING.
+
+  " (b) Nama buyer: VBAK-KUNNR -> KNA1-NAME1 (pola dash_cs.htm)
+  TYPES: BEGIN OF ty_kna1, kunnr TYPE kna1-kunnr, name1 TYPE kna1-name1, END OF ty_kna1.
+  DATA: lt_kna1  TYPE STANDARD TABLE OF ty_kna1 WITH DEFAULT KEY, ls_kna1 TYPE ty_kna1,
+        lt_kunnr TYPE STANDARD TABLE OF kna1-kunnr WITH DEFAULT KEY.
+  LOOP AT lt_vbak INTO ls_vbak.
+    IF ls_vbak-kunnr = lc_sample.
+      CONTINUE.
+    ENDIF.
+    APPEND ls_vbak-kunnr TO lt_kunnr.
+  ENDLOOP.
+  SORT lt_kunnr. DELETE ADJACENT DUPLICATES FROM lt_kunnr.
+  IF lt_kunnr IS NOT INITIAL.
+    SELECT kunnr name1 FROM kna1 INTO TABLE lt_kna1
+      FOR ALL ENTRIES IN lt_kunnr
+      WHERE kunnr = lt_kunnr-table_line.
+    SORT lt_kna1 BY kunnr.
+  ENDIF.
+
+  " (c) Agregasi per buyer
+  TYPES: BEGIN OF ty_buy,
+           kunnr TYPE kna1-kunnr,
+           name1 TYPE kna1-name1,
+           tot   TYPE i,          " seluruh komponen buyer
+           mov   TYPE i,          " yang sudah keluar 2KCS
+           so    TYPE i,          " SO berbeda
+           pct   TYPE i,
+         END OF ty_buy.
+  DATA: lt_buy TYPE STANDARD TABLE OF ty_buy WITH DEFAULT KEY.
+  FIELD-SYMBOLS <by> TYPE ty_buy.
+
+  DATA: lv_kunnr TYPE kna1-kunnr,
+        lt_bso   TYPE STANDARD TABLE OF string WITH DEFAULT KEY,
+        lv_bsokey TYPE string.
+
+  LOOP AT lt_kmp ASSIGNING <km>.
+    CLEAR lv_kunnr.
+    READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = <km>-vbeln BINARY SEARCH.
+    IF sy-subrc <> 0 OR ls_vbak-kunnr = lc_sample.
+      CONTINUE.
+    ENDIF.
+    lv_kunnr = ls_vbak-kunnr.
+
+    READ TABLE lt_buy ASSIGNING <by> WITH KEY kunnr = lv_kunnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_buy ASSIGNING <by>.
+      <by>-kunnr = lv_kunnr.
+      READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = lv_kunnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        <by>-name1 = ls_kna1-name1.
+      ELSE.
+        <by>-name1 = lv_kunnr.        " tanpa master data: tampilkan kodenya
+      ENDIF.
+    ENDIF.
+    <by>-tot = <by>-tot + 1.
+    IF <km>-moved = abap_true.
+      <by>-mov = <by>-mov + 1.
+    ENDIF.
+
+    " SO berbeda per buyer
+    lv_bsokey = lv_kunnr && '/' && <km>-vbeln.
+    READ TABLE lt_bso TRANSPORTING NO FIELDS WITH KEY table_line = lv_bsokey.
+    IF sy-subrc <> 0.
+      APPEND lv_bsokey TO lt_bso.
+      <by>-so = <by>-so + 1.
+    ENDIF.
+  ENDLOOP.
+
+  LOOP AT lt_buy ASSIGNING <by>.
+    IF <by>-tot > 0.
+      <by>-pct = <by>-mov * 100 / <by>-tot.
+    ENDIF.
+  ENDLOOP.
+  " Urutan tetap & mudah ditebak: nama menaik. Jangan diurut persen —
+  " tombol akan berpindah-pindah tiap refresh dan sulit dicari.
+  SORT lt_buy BY name1 ASCENDING.
+
+  " (d) Rakit array JSON buyer
+  DATA: lv_buyers TYPE string,
+        lv_bname  TYPE string,
+        lv_first  TYPE abap_bool VALUE abap_true.
+  LOOP AT lt_buy ASSIGNING <by>.
+    lv_bname = <by>-name1.
+    " Escape supaya tanda kutip / garis miring pada nama buyer tidak
+    " mematahkan JSON. Urutan penting: backslash dulu, baru kutip.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_bname WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_bname WITH '\"'.
+    IF lv_first = abap_false.
+      lv_buyers = lv_buyers && ','.
+    ENDIF.
+    lv_first = abap_false.
+    lv_buyers = lv_buyers
+             && '{"id":"'   && <by>-kunnr && '"'
+             && ',"name":"' && lv_bname   && '"'
+             && ',"pct":'   && |{ <by>-pct }|
+             && ',"komp":'  && |{ <by>-tot }|
+             && ',"so":'    && |{ <by>-so }| && '}'.
+  ENDLOOP.
+  lv_buyers = '[' && lv_buyers && ']'.
+
+  " rakit array JSON daftar SO
+  DATA: lv_solist TYPE string, lv_sofirst TYPE abap_bool VALUE abap_true,
+        lv_so_shown TYPE i, lv_so_more TYPE i, lv_pcs_so TYPE i,
+        lv_sbuyer TYPE kna1-name1, lv_sbname TYPE string,
+        lv_skunnr TYPE kna1-kunnr.
+  LOOP AT lt_solist ASSIGNING <sl>.
+    lv_so_shown = lv_so_shown + 1.
+    IF lv_so_shown > lc_maxso.
+      EXIT.
+    ENDIF.
+    CLEAR: lv_skunnr, lv_sbuyer.
+    READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = <sl>-vbeln BINARY SEARCH.
+    IF sy-subrc = 0.
+      lv_skunnr = ls_vbak-kunnr.
+      READ TABLE lt_kna1 INTO ls_kna1 WITH KEY kunnr = lv_skunnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        lv_sbuyer = ls_kna1-name1.
+      ELSE.
+        lv_sbuyer = lv_skunnr.
+      ENDIF.
+    ENDIF.
+    lv_sbname = lv_sbuyer.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_sbname WITH ' '.
+    lv_pcs_so = round( val = <sl>-pcs dec = 0 ).
+    IF lv_sofirst = abap_false.
+      lv_solist = lv_solist && ','.
+    ENDIF.
+    lv_sofirst = abap_false.
+    lv_solist = lv_solist
+             && '{"so":"'    && <sl>-vbeln && '"'
+             && ',"item":"'  && <sl>-posnr && '"'
+             && ',"bid":"'   && lv_skunnr  && '"'
+             && ',"buyer":"' && lv_sbname  && '"'
+             && ',"komp":'   && |{ <sl>-komp }|
+             && ',"pcs":'    && |{ lv_pcs_so }|
+             && ',"cs":'     && |{ <sl>-at_cs }|
+             && ',"mc":'     && |{ <sl>-at_mc }|
+             && ',"eb":'     && |{ <sl>-at_eb }| && '}'.
+  ENDLOOP.
+  lv_solist = '[' && lv_solist && ']'.
+  IF lines( lt_solist ) > lc_maxso.
+    lv_so_more = lines( lt_solist ) - lc_maxso.
+  ENDIF.
+
+  DATA: lv_buy_cnt   TYPE i,
+        lv_buy_cnt_c TYPE string.
+  lv_buy_cnt   = lines( lt_buy ).
+  lv_buy_cnt_c = |{ lv_buy_cnt }|.
+
+  GET RUN TIME FIELD lv_t1.
+  lv_ms = ( lv_t1 - lv_t0 ) / 1000.
+
+  lv_json = '{"ok":1,"komp":'  && |{ lv_komp_cnt }|
+         && ',"pcs":'          && |{ lv_pcs_i }|
+         && ',"so":'           && |{ lv_so_cnt }|
+         && ',"buyers":'       && lv_buy_cnt_c
+         && ',"prod":'        && |{ lv_prod }|
+         && ',"done":'        && |{ lv_done }|
+         " done      = proxy lama (stok ada di 229K) — DIPERTAHANKAN untuk
+         " done_real = definisi baru (delivered penuh + lepas dari 6 SLoc).
+         "             UI memakai done_real; done hanya untuk pembanding.
+         && ',"done_real":'   && |{ lv_done_real }|
+         && ',"mcq":'         && |{ lv_mc_q }|
+         && ',"mcp":'         && |{ lv_mc_p }|
+         && ',"ebq":'         && |{ lv_eb_q }|
+         && ',"ebp":'         && |{ lv_eb_p }|
+         && ',"solist_more":' && |{ lv_so_more }|
+         && ',"buyer":'       && lv_buyers
+         && ',"solist":'      && lv_solist
+         && ',"ms":'          && |{ lv_ms }| && '}'.
+%>

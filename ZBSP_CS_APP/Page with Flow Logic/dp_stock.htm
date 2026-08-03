@@ -1,0 +1,290 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — part=stock — stok, posisi komponen, SELESAI PROD.
+     Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     MSKA enam SLoc -> lt_stok -> lt_kmp, rekap posisi untuk kartu dan
+     dua kotak center, ekspor DPRODKM, hitung done_real.
+     Daftar SO & buyer ada di dp_stock_so.htm.
+     ========================================================== --%><%
+IF lv_part = 'stock'.
+
+  TYPES: BEGIN OF ty_mska,
+           vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr, lgort TYPE mska-lgort,
+           kalab TYPE mska-kalab,
+         END OF ty_mska.
+  DATA: lt_mska TYPE STANDARD TABLE OF ty_mska WITH DEFAULT KEY,
+        ls_mska TYPE ty_mska.
+
+  SELECT vbeln posnr matnr lgort kalab FROM mska
+    INTO CORRESPONDING FIELDS OF TABLE lt_mska
+    WHERE werks = lc_werks
+      AND lgort IN lr_lgort
+      AND sobkz = 'E'
+      AND kalab > 0.
+
+  " Buang sample customer
+  TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
+  DATA: lt_vbak  TYPE STANDARD TABLE OF ty_vbak WITH DEFAULT KEY, ls_vbak TYPE ty_vbak,
+        lt_vbeln TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY.
+  LOOP AT lt_mska INTO ls_mska.
+    APPEND ls_mska-vbeln TO lt_vbeln.
+  ENDLOOP.
+  SORT lt_vbeln. DELETE ADJACENT DUPLICATES FROM lt_vbeln.
+  IF lt_vbeln IS NOT INITIAL.
+    SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
+      FOR ALL ENTRIES IN lt_vbeln
+      WHERE vbeln = lt_vbeln-table_line.
+    SORT lt_vbak BY vbeln.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_stok,
+           vbeln TYPE mska-vbeln, posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr, lgort TYPE lgort_d,
+           qty   TYPE p LENGTH 15 DECIMALS 3,
+         END OF ty_stok.
+  DATA: lt_stok TYPE STANDARD TABLE OF ty_stok WITH DEFAULT KEY,
+        ls_stok TYPE ty_stok.
+
+  LOOP AT lt_mska INTO ls_mska.
+    READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
+    IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
+      CONTINUE.
+    ENDIF.
+    CLEAR ls_stok.
+    ls_stok-vbeln = ls_mska-vbeln.
+    ls_stok-posnr = ls_mska-posnr.
+    ls_stok-matnr = ls_mska-matnr.
+    ls_stok-lgort = ls_mska-lgort.
+    ls_stok-qty   = ls_mska-kalab.
+    COLLECT ls_stok INTO lt_stok.
+  ENDLOOP.
+  SORT lt_stok BY vbeln posnr matnr lgort.
+
+  " Hitung: SO distinct, komponen distinct (vbeln+posnr+matnr), total pcs.
+  " lt_stok satu baris per SLoc -> komponen HARUS dihitung dgn deteksi ganti
+  " kunci, bukan lines( ), supaya material lintas SLoc tidak ganda.
+  DATA: lv_so_cnt   TYPE i,
+        lv_komp_cnt TYPE i,
+        lv_pcs      TYPE p LENGTH 15 DECIMALS 3,
+        lv_pcs_i    TYPE i,
+        lv_prev_so  TYPE mska-vbeln,
+        lv_prev_kmp TYPE string,
+        lv_key_kmp  TYPE string.
+  FIELD-SYMBOLS <st> TYPE ty_stok.
+
+  CLEAR: lv_prev_so, lv_prev_kmp.
+  LOOP AT lt_stok ASSIGNING <st>.
+    IF <st>-vbeln <> lv_prev_so.
+      lv_so_cnt = lv_so_cnt + 1.
+      lv_prev_so = <st>-vbeln.
+      CLEAR ls_soit.
+      ls_soit-vbeln = <st>-vbeln.
+      ls_soit-posnr = <st>-posnr.
+      APPEND ls_soit TO lt_soit.
+    ELSE.
+      ls_soit-vbeln = <st>-vbeln.
+      ls_soit-posnr = <st>-posnr.
+      APPEND ls_soit TO lt_soit.
+    ENDIF.
+    lv_key_kmp = <st>-vbeln && '/' && <st>-posnr && '/' && <st>-matnr.
+    IF lv_key_kmp <> lv_prev_kmp.
+      lv_komp_cnt = lv_komp_cnt + 1.
+      lv_prev_kmp = lv_key_kmp.
+    ENDIF.
+    lv_pcs = lv_pcs + <st>-qty.
+  ENDLOOP.
+  lv_pcs_i = round( val = lv_pcs dec = 0 ).
+
+  SORT lt_soit BY vbeln posnr.
+  DELETE ADJACENT DUPLICATES FROM lt_soit COMPARING vbeln posnr.
+
+  " Simpan daftar SO+Item supaya part=ops tidak perlu menembak MSKA lagi.
+  EXPORT ts = lv_now si = lt_soit TO SHARED BUFFER indx(zc) ID 'DPRODSI'.
+
+
+  " ===================================================================
+  " BUYER — daftar + persen kemajuan
+  " ===================================================================
+  "   Memakai komentar " (bukan *&) karena blok ini MENJOROK ke dalam:
+  "   tanda * hanya dianggap komentar bila berada di KOLOM 1.
+  " ARTI PERSEN (ketetapan user 2026-08-01, K1):
+  "   % = komponen yang SUDAH KELUAR dari 2KCS, dibagi seluruh komponen
+  "       buyer itu. Menjawab "seberapa jauh barang buyer ini sudah masuk
+  "       produksi".
+  "
+  " ⚠️ Komponen yang stoknya TERPECAH — sebagian masih 2KCS, sebagian sudah
+  "    di SLoc proses — dihitung SUDAH JALAN. Alasannya: begitu ada bagian
+  "    yang bergerak, komponen itu bukan lagi diam menunggu. Ini keputusan
+  "    sadar; kalau nanti dianggap terlalu longgar, ubah di sini saja.
+  "
+  " Basis hitungan = KOMPONEN (cacah), bukan qty — qty lintas material
+  " satuannya campur dan tidak bisa dijumlahkan secara bermakna.
+
+  " (a) Rekap per komponen: pernah muncul di SLoc selain 2KCS?
+  TYPES: BEGIN OF ty_kmp,
+           vbeln TYPE mska-vbeln,
+           posnr TYPE mska-posnr,
+           matnr TYPE mska-matnr,
+           moved TYPE abap_bool,
+           at_cs TYPE abap_bool,
+           at_mc TYPE abap_bool,
+           at_eb TYPE abap_bool,
+           at_sd TYPE abap_bool,
+         END OF ty_kmp.
+  DATA: lt_kmp TYPE STANDARD TABLE OF ty_kmp WITH DEFAULT KEY.
+  FIELD-SYMBOLS <km> TYPE ty_kmp.
+
+  LOOP AT lt_stok ASSIGNING <st>.
+    READ TABLE lt_kmp ASSIGNING <km>
+      WITH KEY vbeln = <st>-vbeln posnr = <st>-posnr matnr = <st>-matnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_kmp ASSIGNING <km>.
+      <km>-vbeln = <st>-vbeln.
+      <km>-posnr = <st>-posnr.
+      <km>-matnr = <st>-matnr.
+    ENDIF.
+    IF <st>-lgort <> '2KCS'.
+      <km>-moved = abap_true.
+    ENDIF.
+    IF <st>-lgort = '2KCS'.
+      <km>-at_cs = abap_true.
+    ELSEIF <st>-lgort = '2261' OR <st>-lgort = '2262'.
+      <km>-at_mc = abap_true.
+    ELSE.
+      <km>-at_eb = abap_true.
+      IF <st>-lgort = '229K'.
+        <km>-at_sd = abap_true.
+      ENDIF.
+    ENDIF.
+  ENDLOOP.
+
+  " ===== Rekap posisi: kartu DI PRODUKSI / SELESAI PROD. + dua kotak center
+  "
+  " Arti warna (ketetapan user 2026-08-01):
+  "   Machining Center   kuning = masih di 2KCS
+  "                      biru   = ada di 2261/2262
+  "   Edge Banding&Sand  kuning = belum masuk EB/sanding (masih di 2261/2262)
+  "                      biru   = ada di 22E2/22E3/229K
+  "
+  " HIJAU ("sudah lewat") TIDAK dihitung di sini. Barang yang selesai
+  " diproses otomatis tidak punya stok lagi, jadi saldo stok tidak bisa
+  " menjawabnya — jawabannya ada di riwayat pergerakan (MSEG). Itu K3 yang
+  " belum diputuskan. UI menampilkannya sebagai "belum tersedia", BUKAN nol;
+  " nol berarti "tidak ada yang lewat", padahal yang benar "belum dihitung".
+  DATA: lv_prod TYPE i,
+        lv_done TYPE i,
+        lv_mc_q TYPE i,
+        lv_mc_p TYPE i,
+        lv_eb_q TYPE i,
+        lv_eb_p TYPE i.
+  LOOP AT lt_kmp ASSIGNING <km>.
+    IF <km>-at_mc = abap_true OR <km>-at_eb = abap_true.
+      lv_prod = lv_prod + 1.
+    ENDIF.
+    IF <km>-at_sd = abap_true.
+      lv_done = lv_done + 1.
+    ENDIF.
+    IF <km>-at_cs = abap_true.
+      lv_mc_q = lv_mc_q + 1.
+    ENDIF.
+    IF <km>-at_mc = abap_true.
+      lv_mc_p = lv_mc_p + 1.
+      lv_eb_q = lv_eb_q + 1.
+    ENDIF.
+    IF <km>-at_eb = abap_true.
+      lv_eb_p = lv_eb_p + 1.
+    ENDIF.
+  ENDLOOP.
+
+  " Simpan daftar komponen + posisinya supaya part=hist tidak perlu menembak
+  " MSKA untuk kedua kalinya. HARUS di sini — lt_kmp baru terisi penuh
+  " setelah loop di atas; menaruhnya lebih awal akan menyimpan tabel kosong.
+  EXPORT ts = lv_now km = lt_kmp TO SHARED BUFFER indx(zc) ID 'DPRODKM'.
+
+  " ===================================================================
+  " SELESAI PROD. — komponen yang delivered penuh & sudah lepas dari 6 SLoc
+  " ===================================================================
+  "  Definisi (ketetapan user 2026-08-03, Opsi B / Tafsir X):
+  "    komponen selesai = AFPO-WEMNG >= AFPO-PSMNG
+  "                       DAN tidak ada saldo di 6 SLoc cakupan.
+  "
+  "  Kenapa 6 SLoc TERMASUK 2KCS: kalau order sudah dipenuhi tapi masih ada
+  "  sisa di 2KCS, itu sisa bahan yang tidak jadi dipakai — bukan produksi
+  "  berjalan, tapi juga bukan "selesai bersih". Dipilih yang ketat.
+  "
+  "  Filter DISPO GA1/GA2/EB2 sama dengan part=ops: hanya order yang lewat
+  "  jalur produksi yang dipantau halaman ini.
+  "
+  "  ⚠️ MENGGANTIKAN arti kartu SELESAI PROD. Field lama "done" (proxy:
+  "     stok ada di 229K) SENGAJA TETAP dikirim supaya angka lama & baru
+  "     bisa dibandingkan sampai PPIC memverifikasi. Hapus "done" hanya
+  "     setelah itu — bukan sekarang.
+  "
+  "  ⚠️ DEDUPLIKASI WAJIB: satu komponen bisa punya BEBERAPA order (satu per
+  "     tahap — lihat catatan part=komp). Tanpa DELETE ADJACENT DUPLICATES
+  "     komponen yang punya order Machining DAN Edge Banding akan dihitung
+  "     dua kali dan angkanya menggelembung. Spec perbaikan1 tidak menyebut
+  "     ini; ditambahkan di sini karena tanpa itu hasilnya salah.
+  "
+  "  ⚠️ Setelah deduplikasi, syarat "delivered penuh" berarti SETIDAKNYA
+  "     SATU order komponen itu terpenuhi penuh. Digabung dengan syarat stok
+  "     kosong di enam SLoc, ini sudah ketat; kalau nanti dianggap terlalu
+  "     longgar, ubah menjadi "semua order-nya" di sini saja.
+  TYPES: BEGIN OF ty_afpo_done,
+           kdauf TYPE afpo-kdauf,
+           kdpos TYPE afpo-kdpos,
+           matnr TYPE afpo-matnr,
+         END OF ty_afpo_done.
+  DATA: lt_afpo_done TYPE STANDARD TABLE OF ty_afpo_done WITH DEFAULT KEY,
+        ls_afpo_done TYPE ty_afpo_done.
+
+  " Range SO nyata — seluruh vbeln di lt_stok, sudah bebas sample customer.
+  " Dipakai range (bukan FOR ALL ENTRIES) supaya tabel kosong tidak berubah
+  " menjadi "ambil semua": penjaganya IF lr_dvbeln IS NOT INITIAL di bawah.
+  DATA: lr_dvbeln  TYPE RANGE OF vbak-vbeln,
+        ls_dvbeln  LIKE LINE OF lr_dvbeln,
+        lt_dvbeln  TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY,
+        lv_dvbeln  TYPE vbak-vbeln.
+  LOOP AT lt_stok ASSIGNING <st>.
+    APPEND <st>-vbeln TO lt_dvbeln.
+  ENDLOOP.
+  SORT lt_dvbeln. DELETE ADJACENT DUPLICATES FROM lt_dvbeln.
+  ls_dvbeln-sign = 'I'.
+  ls_dvbeln-option = 'EQ'.
+  LOOP AT lt_dvbeln INTO lv_dvbeln.
+    ls_dvbeln-low = lv_dvbeln.
+    APPEND ls_dvbeln TO lr_dvbeln.
+  ENDLOOP.
+
+  DATA: lv_done_real TYPE i.
+  IF lr_dvbeln IS NOT INITIAL.
+    SELECT a~kdauf a~kdpos a~matnr
+      FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr
+      INTO TABLE lt_afpo_done
+      WHERE a~kdauf IN lr_dvbeln
+        AND a~pwerk = lc_werks
+        AND k~dispo IN ( 'GA1', 'GA2', 'EB2' )
+        AND a~psmng > 0
+        AND a~wemng >= a~psmng.
+
+    SORT lt_afpo_done BY kdauf kdpos matnr.
+    DELETE ADJACENT DUPLICATES FROM lt_afpo_done COMPARING kdauf kdpos matnr.
+
+    " Buang yang MASIH punya stok di 6 SLoc — berarti belum keluar bersih.
+    " lt_stok sudah SORT BY vbeln posnr matnr lgort, jadi BINARY SEARCH atas
+    " tiga field pertama sah.
+    LOOP AT lt_afpo_done INTO ls_afpo_done.
+      READ TABLE lt_stok TRANSPORTING NO FIELDS
+        WITH KEY vbeln = ls_afpo_done-kdauf
+                 posnr = ls_afpo_done-kdpos
+                 matnr = ls_afpo_done-matnr
+        BINARY SEARCH.
+      IF sy-subrc <> 0.
+        lv_done_real = lv_done_real + 1.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+%><%@include file="dp_stock_so.htm" %><%
+ENDIF.
+%>

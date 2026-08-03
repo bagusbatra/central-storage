@@ -76,8 +76,8 @@ Movement punya sumber data di SAP.
 UI disalin dari `reference/prototype-ui/index.html` (permintaan user 2026-08-01). Versi
 sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti total; isinya masih ada di git.
 
-- **Berkas:** `index2.htm` (UI) + `dash_prod.htm` (endpoint JSON) — **keduanya
-  wajib aktif di SE80**
+- **Berkas: 15 objek SE80** (dipecah 2026-08-03 dari 2 berkas 1.863 + 1.439
+  baris). Rinciannya di bawah — **semuanya wajib aktif**
 - **Sumbu utama:** **Buyer** (dulu SO)
 - **Pusat produksi:** 2 center — Machining Center (40 WC) + Edge Banding &
   Sanding (20 WC). Dulu 3 section
@@ -95,10 +95,46 @@ sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti t
     WM1/WM2/PN1/PN2; Machining = 2000 + GA1/GA2; Edge Banding = 2000 + EB2.
     ⚠️ Sanding TIDAK punya DISPO, jadi pada sumbu order "EBS" = EB2 saja
 
+### Daftar objek SE80 — 15, dua di antaranya halaman
+
+⚠️ **Fragment WAJIB dibuat bertipe "Page Fragment".** Kalau salah dibuat
+sebagai "Page with Flow Logic", SE80 mengompilasinya sendirian dan setiap
+variabel dari halaman induk dilaporkan tidak dikenal.
+
+⚠️ **Fragment TETAP membawa `<%@ page language="abap" %>` di baris 1.** Tanpa
+itu aktivasi menolak: *"No language was specified in the page fragment"*.
+Direktifnya ditempel RAPAT ke tag berikutnya — teks apa pun di antaranya ikut
+tercetak ke keluaran, dan untuk endpoint JSON itu merusak jawabannya.
+
+| Objek | Tipe | Isi |
+|---|---|---|
+| `index2.htm` | Page with Flow Logic | rangka halaman, 85 baris |
+| `cs2_css_base.htm` | Page Fragment | CSS: reset, header, kartu, filter, tooltip, Lintasan |
+| `cs2_css_panel.htm` | Page Fragment | CSS: peta WC, Sales Order, Detail Komponen |
+| `cs2_icons.htm` | Page Fragment | 19 symbol SVG pengganti Font Awesome |
+| `cs2_body.htm` | Page Fragment | seluruh markup |
+| `cs2_js_core.htm` | Page Fragment | state, init, buyer, center, WC, daftar SO, event |
+| `cs2_js_detail.htm` | Page Fragment | tabel Detail Komponen |
+| `cs2_js_kpi.htm` | Page Fragment | kpiGet, dua kotak center, tooltip, loadKpi, boot |
+| `dash_prod.htm` | Page with Flow Logic | rangka endpoint: konstanta, parameter, cache |
+| `dp_komp.htm` | Page Fragment | part=komp & ops1 — pengumpulan data |
+| `dp_komp_out.htm` | Page Fragment | part=komp & ops1 — perakitan jawaban |
+| `dp_hist.htm` | Page Fragment | part=hist |
+| `dp_stock.htm` | Page Fragment | part=stock — stok, posisi, `done_real` |
+| `dp_stock_so.htm` | Page Fragment | part=stock — daftar SO, buyer, rakit JSON |
+| `dp_ops.htm` | Page Fragment | part=ops |
+
+`<%@include%>` ditempel saat halaman digenerate, jadi bagi browser hasilnya
+tetap **satu** berkas HTML: CSS & JS seluruhnya inline, nol permintaan
+jaringan tambahan, tidak ada MIME object, tidak ada CDN.
+
+⚠️ Karena semua fragment menjadi **satu method** ABAP, nama TYPES/DATA/
+field-symbol tidak boleh bertabrakan antar-fragment.
+
 ### Halaman ini TIDAK lagi menjalankan query sendiri
 
 Seluruh data lewat `dash_prod.htm` secara asinkron (dibuat 2026-08-01 setelah
-halaman menjadi >1 menit/timeout). **Aktivasi SE80 kini butuh DUA berkas.**
+halaman menjadi >1 menit/timeout).
 
 | part | Isi | Cache |
 |---|---|---|
