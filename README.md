@@ -20,7 +20,8 @@ Satu aturan yang menentukan segalanya:
 
 | Folder | Isi | Diaktifkan di SAP? |
 |---|---|---|
-| `ZBSP_CS_APP/Page with Flow Logic/` | Halaman BSP | **Ya** |
+| `ZBSP_CS_APP/Page with Flow Logic/` | Halaman BSP — **Dashboard Production saja** (`index2.htm` + `dash_prod.htm` + 13 Page Fragment) | **Ya** |
+| `ZBSP_CS_APP/Page with Flow_Logic/` | Halaman BSP lainnya (`index.htm`, `monitoring.htm`, `dash_*.htm`, `diag_routing.htm`, `routing_map.htm`, `main.htm`) | **Ya** |
 | `ZBSP_CS_APP/classes/` | Global class (SE24) | **Ya** |
 | `ZBSP_CS_APP/MIMEs/` | Gambar yang dipakai halaman | **Ya** |
 | `ZBSP_CS_APP/report/CHECKPOINT.md` | Status tiap jalur pengembangan | — |
@@ -36,6 +37,12 @@ lama → `reference/`.
 Jangan menaruh mockup di dalam `Page with Flow Logic/`. Itu pernah terjadi
 (`prototype.html`) dan membuat orang mengira ada halaman BSP yang belum
 diaktifkan.
+
+> ⚠️ **Dua folder itu namanya cuma beda satu karakter** — spasi lawan garis
+> bawah. Pemisahannya murni penataan repo: **di SAP seluruh halaman berada
+> datar dalam satu aplikasi BSP**, jadi folder tidak memengaruhi
+> `<%@include%>`, tautan antar-halaman, maupun aktivasi. Kalau nama ini
+> membingungkan, ganti saja — tidak ada kode yang bergantung padanya.
 
 ## Isi `reference/`
 
