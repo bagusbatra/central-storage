@@ -35,7 +35,8 @@
 *&
 *& Balas JSON:
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
-*&                  "prod":n,"done":n,"mcq":n,"mcp":n,"ebq":n,"ebp":n,
+*&                  "prod":n,"done":n,"done_real":n,
+*&                  "mcq":n,"mcp":n,"ebq":n,"ebp":n,
 *&                  "solist_more":n,"solist":[{so,item,bid,buyer,komp,pcs,cs,mc,eb}],
 *&                  "buyer":[{id,name,pct,komp,so},...],"ms":n}
 *&   part=hist  -> {"ok":1,"mcgone":n,"ebgone":n,"rows":n,"ms":n}
@@ -988,6 +989,90 @@ IF lv_part = 'stock'.
   " setelah loop di atas; menaruhnya lebih awal akan menyimpan tabel kosong.
   EXPORT ts = lv_now km = lt_kmp TO SHARED BUFFER indx(zc) ID 'DPRODKM'.
 
+  " ===================================================================
+  " SELESAI PROD. — komponen yang delivered penuh & sudah lepas dari 6 SLoc
+  " ===================================================================
+  "  Definisi (ketetapan user 2026-08-03, Opsi B / Tafsir X):
+  "    komponen selesai = AFPO-WEMNG >= AFPO-PSMNG
+  "                       DAN tidak ada saldo di 6 SLoc cakupan.
+  "
+  "  Kenapa 6 SLoc TERMASUK 2KCS: kalau order sudah dipenuhi tapi masih ada
+  "  sisa di 2KCS, itu sisa bahan yang tidak jadi dipakai — bukan produksi
+  "  berjalan, tapi juga bukan "selesai bersih". Dipilih yang ketat.
+  "
+  "  Filter DISPO GA1/GA2/EB2 sama dengan part=ops: hanya order yang lewat
+  "  jalur produksi yang dipantau halaman ini.
+  "
+  "  ⚠️ MENGGANTIKAN arti kartu SELESAI PROD. Field lama "done" (proxy:
+  "     stok ada di 229K) SENGAJA TETAP dikirim supaya angka lama & baru
+  "     bisa dibandingkan sampai PPIC memverifikasi. Hapus "done" hanya
+  "     setelah itu — bukan sekarang.
+  "
+  "  ⚠️ DEDUPLIKASI WAJIB: satu komponen bisa punya BEBERAPA order (satu per
+  "     tahap — lihat catatan part=komp). Tanpa DELETE ADJACENT DUPLICATES
+  "     komponen yang punya order Machining DAN Edge Banding akan dihitung
+  "     dua kali dan angkanya menggelembung. Spec perbaikan1 tidak menyebut
+  "     ini; ditambahkan di sini karena tanpa itu hasilnya salah.
+  "
+  "  ⚠️ Setelah deduplikasi, syarat "delivered penuh" berarti SETIDAKNYA
+  "     SATU order komponen itu terpenuhi penuh. Digabung dengan syarat stok
+  "     kosong di enam SLoc, ini sudah ketat; kalau nanti dianggap terlalu
+  "     longgar, ubah menjadi "semua order-nya" di sini saja.
+  TYPES: BEGIN OF ty_afpo_done,
+           kdauf TYPE afpo-kdauf,
+           kdpos TYPE afpo-kdpos,
+           matnr TYPE afpo-matnr,
+         END OF ty_afpo_done.
+  DATA: lt_afpo_done TYPE STANDARD TABLE OF ty_afpo_done WITH DEFAULT KEY,
+        ls_afpo_done TYPE ty_afpo_done.
+
+  " Range SO nyata — seluruh vbeln di lt_stok, sudah bebas sample customer.
+  " Dipakai range (bukan FOR ALL ENTRIES) supaya tabel kosong tidak berubah
+  " menjadi "ambil semua": penjaganya IF lr_dvbeln IS NOT INITIAL di bawah.
+  DATA: lr_dvbeln  TYPE RANGE OF vbak-vbeln,
+        ls_dvbeln  LIKE LINE OF lr_dvbeln,
+        lt_dvbeln  TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY,
+        lv_dvbeln  TYPE vbak-vbeln.
+  LOOP AT lt_stok ASSIGNING <st>.
+    APPEND <st>-vbeln TO lt_dvbeln.
+  ENDLOOP.
+  SORT lt_dvbeln. DELETE ADJACENT DUPLICATES FROM lt_dvbeln.
+  ls_dvbeln-sign = 'I'.
+  ls_dvbeln-option = 'EQ'.
+  LOOP AT lt_dvbeln INTO lv_dvbeln.
+    ls_dvbeln-low = lv_dvbeln.
+    APPEND ls_dvbeln TO lr_dvbeln.
+  ENDLOOP.
+
+  DATA: lv_done_real TYPE i.
+  IF lr_dvbeln IS NOT INITIAL.
+    SELECT a~kdauf a~kdpos a~matnr
+      FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr
+      INTO TABLE lt_afpo_done
+      WHERE a~kdauf IN lr_dvbeln
+        AND a~pwerk = lc_werks
+        AND k~dispo IN ( 'GA1', 'GA2', 'EB2' )
+        AND a~psmng > 0
+        AND a~wemng >= a~psmng.
+
+    SORT lt_afpo_done BY kdauf kdpos matnr.
+    DELETE ADJACENT DUPLICATES FROM lt_afpo_done COMPARING kdauf kdpos matnr.
+
+    " Buang yang MASIH punya stok di 6 SLoc — berarti belum keluar bersih.
+    " lt_stok sudah SORT BY vbeln posnr matnr lgort, jadi BINARY SEARCH atas
+    " tiga field pertama sah.
+    LOOP AT lt_afpo_done INTO ls_afpo_done.
+      READ TABLE lt_stok TRANSPORTING NO FIELDS
+        WITH KEY vbeln = ls_afpo_done-kdauf
+                 posnr = ls_afpo_done-kdpos
+                 matnr = ls_afpo_done-matnr
+        BINARY SEARCH.
+      IF sy-subrc <> 0.
+        lv_done_real = lv_done_real + 1.
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
   " ===== Daftar SO + Item =====
   "   Ketentuan user: tampilkan SEMUA SO dan Item-nya, urutan jangan
   "   berantakan -> diurut SO lalu Item menaik, tegas.
@@ -1191,6 +1276,10 @@ IF lv_part = 'stock'.
          && ',"buyers":'       && lv_buy_cnt_c
          && ',"prod":'        && |{ lv_prod }|
          && ',"done":'        && |{ lv_done }|
+         " done      = proxy lama (stok ada di 229K) — DIPERTAHANKAN untuk
+         " done_real = definisi baru (delivered penuh + lepas dari 6 SLoc).
+         "             UI memakai done_real; done hanya untuk pembanding.
+         && ',"done_real":'   && |{ lv_done_real }|
          && ',"mcq":'         && |{ lv_mc_q }|
          && ',"mcp":'         && |{ lv_mc_p }|
          && ',"ebq":'         && |{ lv_eb_q }|

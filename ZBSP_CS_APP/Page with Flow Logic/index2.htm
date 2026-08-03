@@ -126,11 +126,21 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
+    /* padding body dinolkan supaya header bisa menempel ke tepi viewport;
+       padding isi halaman pindah ke .content */
     body {
         background-color: var(--bg-main);
         color: var(--text-main);
-        padding: 16px;
+        padding: 0;
         font-size: 13px;
+    }
+
+    /* Spec perbaikan1 memberi .content flex-column + gap 16px. Di sini isinya
+       hanya satu anak (.dashboard-container) yang SUDAH melakukan itu, jadi
+       yang dipakai cuma padding-nya — menumpuk dua flex identik tidak
+       mengubah apa pun kecuali menyulitkan pembacaan. */
+    .content {
+        padding: 16px 20px 20px;
     }
 
     /* ikon SVG inline pengganti Font Awesome: ukuran ikut font-size induk */
@@ -145,52 +155,64 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
         gap: 16px;
     }
 
-    /* HEADER */
+    /* HEADER — bar biru penuh dari tepi ke tepi.
+       Sebelumnya kartu putih terapung di dalam padding body: warnanya sama
+       dengan kartu lain sehingga tidak ada pemisah visual antara judul
+       halaman dan isinya. */
     .main-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: var(--bg-card);
-        padding: 12px 20px;
-        border-radius: 8px;
-        border: 1px solid var(--border-color);
+        background: #1e40af;              /* Blue-800 */
+        color: #ffffff;
+        padding: 14px 24px;
+        border-radius: 0;
+        border: none;
+        margin: 0;
     }
     .header-left {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 14px;
     }
     .logo-box {
-        background: #b45309;
+        background: #b45309;              /* amber — sengaja tetap, kontras di biru */
         color: white;
-        width: 36px;
-        height: 36px;
+        width: 40px;
+        height: 40px;
         border-radius: 6px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 18px;
+        font-size: 20px;
     }
     .main-header h1 {
-        font-size: 16px;
+        font-size: 17px;
         font-weight: 700;
+        color: #ffffff;
     }
     .main-header .subtitle {
         font-size: 9px;
-        color: var(--text-muted);
+        color: rgba(255, 255, 255, 0.7);
         letter-spacing: 0.5px;
         margin-top: 2px;
     }
     .header-right {
         text-align: right;
         font-size: 11px;
+        color: #ffffff;
     }
     .flow-info {
-        color: var(--text-muted);
+        color: rgba(255, 255, 255, 0.75);
         margin-right: 15px;
     }
     .status-indicator {
         font-weight: 600;
+        color: #ffffff;
+    }
+    /* --color-green (#10b981) terlalu gelap di atas biru — dinaikkan lokal */
+    .main-header .status-indicator .dot.green {
+        background: #4ade80;
     }
 
     /* CARD SYSTEM */
@@ -227,6 +249,18 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     .card-sub {
         font-size: 10px;
         color: var(--text-muted);
+    }
+    .card-sub-2 {
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-top: 2px;
+    }
+    /* penanda "angka ini dibatasi" di samping nilai kartu */
+    .trunc-warn {
+        font-size: 12px;
+        color: #d97706;
+        margin-left: 4px;
+        cursor: help;
     }
     .bottleneck-card {
         border-left: 4px solid var(--color-red);
@@ -736,23 +770,26 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
   <symbol id="fa-magnifying-glass" viewBox="0 0 24 24"><path d="M10 2a8 8 0 1 0 4.9 14.3l5.4 5.4 1.4-1.4-5.4-5.4A8 8 0 0 0 10 2zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12z"/></symbol>
 </svg>
 
-<div class="dashboard-container">
+<%-- Header SENGAJA di luar .content: itu satu-satunya cara ia bisa menempel
+     ke tepi viewport sementara isi halaman tetap punya padding. --%>
+<header class="main-header">
+    <div class="header-left">
+        <div class="logo-box">
+            <svg class="ic"><use xlink:href="#fa-industry"></use></svg>
+        </div>
+        <div>
+            <h1>Dashboard Production</h1>
+            <p class="subtitle">UNIT ASSEMBLING &bull; MACHINING CENTER &bull; EDGE BANDING &amp; SANDING</p>
+        </div>
+    </div>
+    <div class="header-right">
+        <span class="flow-info">Alur: Storage &rarr; Machining &rarr; Edge Banding &rarr; Storage</span>
+        <span class="status-indicator"><span class="dot green"></span> <span id="hdr-stat">memuat&hellip;</span></span>
+    </div>
+</header>
 
-    <header class="main-header">
-        <div class="header-left">
-            <div class="logo-box">
-                <svg class="ic"><use xlink:href="#fa-industry"></use></svg>
-            </div>
-            <div>
-                <h1>Dashboard Production</h1>
-                <p class="subtitle">UNIT ASSEMBLING &bull; MACHINING CENTER &bull; EDGE BANDING &amp; SANDING</p>
-            </div>
-        </div>
-        <div class="header-right">
-            <span class="flow-info">Alur: Storage &rarr; Machining &rarr; Edge Banding &rarr; Storage</span>
-            <span class="status-indicator"><span class="dot green"></span> <span id="hdr-stat">memuat&hellip;</span></span>
-        </div>
-    </header>
+<main class="content">
+<div class="dashboard-container">
 
     <section class="summary-cards">
         <div class="card">
@@ -765,18 +802,21 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
             <div class="card-value" id="kpi-so">-</div>
             <div class="card-sub" id="kpi-so-sub">memuat&hellip;</div>
         </div>
+        <%-- Label "CONFIRMED" diganti "OPERASI SELESAI": yang dihitung memang
+             operasi, bukan komponen jadi. Definisi & query TIDAK berubah. --%>
         <div class="card">
-            <div class="card-title">CONFIRMED <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Operasi ter-konfirmasi</span><span class='ct-r'>Persentase <b>operasi</b> yang sudah dikonfirmasi selesai, dari seluruh operasi milik order SO dalam cakupan.</span><span class='ct-r'>&Sigma;LMNGA = 0 &rarr; antre<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; selesai</span><span class='ct-src'>AFRU vs AFVV &middot; baris STOKZ=X dibuang</span><span class='ct-warn'>Basisnya OPERASI, bukan komponen diterima. Prototype memaksudkan yang kedua; definisi finalnya belum diputuskan.</span>"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg></span></div>
-            <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span></div>
+            <div class="card-title">OPERASI SELESAI <span class="tip-anchor icon-top-right" id="tip-conf" data-tip="<span class='ct-h'>Operasi Selesai</span><span class='ct-r'>Persentase langkah pengerjaan (<b>operasi</b>) yang sudah dikonfirmasi selesai oleh operator lantai produksi, dihitung dari seluruh operasi milik order produksi yang terkait Sales Order dalam cakupan.</span><span class='ct-r'><b>Satuan</b>: operasi (satu operasi = satu langkah pengerjaan di satu work center). Satu komponen bisa punya banyak operasi berurutan.</span><span class='ct-r'><b>Status per operasi</b>:<br>&bull; Selesai &mdash; qty konfirmasi &ge; qty target, atau operator menandai final<br>&bull; Sedang dikerjakan &mdash; sudah ada qty konfirmasi tapi belum penuh<br>&bull; Antre &mdash; belum ada konfirmasi sama sekali</span><span class='ct-src'>AFRU vs AFVV &middot; baris STOKZ=X dibuang</span><span class='ct-warn'>Angka ini berbicara tentang <b>langkah pengerjaan</b>, bukan <b>komponen yang selesai jadi</b>. Satu komponen dengan 5 operasi baru selesai jika kelimanya selesai.</span>"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg></span></div>
+            <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span><span id="kpi-conf-warn" class="trunc-warn" style="display:none" data-tip="<span class='ct-h'>Angka dibatasi</span><span class='ct-r'>Order melampaui batas 1.500 &mdash; persentase dihitung dari 1.500 order teratas saja. Indikatif, bukan final.</span>">&#9888;</span></div>
             <div class="card-sub" id="kpi-conf-sub">memuat&hellip;</div>
         </div>
         <div class="card">
-            <div class="card-title">DI PRODUKSI <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen di lantai produksi</span><span class='ct-r'>Komponen yang stoknya <b>sudah keluar dari 2KCS</b> — ada di 2261, 2262, 22E2, 22E3, atau 229K.</span><span class='ct-r'>Komponen yang stoknya terpecah (sebagian masih 2KCS) tetap dihitung di sini: begitu ada bagian yang bergerak, ia bukan lagi diam menunggu.</span><span class='ct-src'>MSKA saldo saat ini &middot; cacah komponen</span>"><svg class="ic"><use xlink:href="#fa-gear"></use></svg></span></div>
+            <div class="card-title">DI PRODUKSI <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen di Lantai Produksi</span><span class='ct-r'>Jumlah komponen unik yang stok fisiknya sedang berada di area proses (bukan di storage awal 2KCS). Menunjukkan seberapa banyak barang yang sudah bergerak dan sedang dikerjakan.</span><span class='ct-r'><b>Satuan</b>: komponen unik (kombinasi Sales Order + Item + Material). Material yang sama muncul di dua SO dihitung dua kali; material yang stoknya terpecah antar SLoc dihitung sekali.</span><span class='ct-r'><b>Yang masuk hitungan</b>: komponen yang punya stok di 2261, 2262 (Machining), 22E2, 22E3, 229K (Edge Banding &amp; Sanding). Komponen yang stoknya terpecah &mdash; sebagian masih 2KCS, sebagian sudah bergerak &mdash; tetap dihitung di sini. Begitu ada bagian yang jalan, komponen itu bukan lagi diam menunggu.</span><span class='ct-r'><b>Yang tidak masuk</b>: komponen yang seluruh stoknya masih di 2KCS (belum bergerak sama sekali).</span><span class='ct-src'>Saldo stok saat ini MSKA</span>"><svg class="ic"><use xlink:href="#fa-gear"></use></svg></span></div>
             <div class="card-value color-blue" id="kpi-prod">-</div>
             <div class="card-sub" id="kpi-prod-sub">memuat&hellip;</div>
+            <div class="card-sub card-sub-2" id="kpi-prod-sub2">&nbsp;</div>
         </div>
         <div class="card">
-            <div class="card-title">SELESAI PROD. <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sampai Sanding (sementara)</span><span class='ct-r'>Komponen yang stoknya sudah berada di <b>229K</b>, SLoc terakhir dalam cakupan.</span><span class='ct-warn'>Ini PROXY SEMENTARA, bukan &quot;kembali ke storage&quot; seperti maksud prototype. Definisi sebenarnya belum diputuskan.</span>"><svg class="ic"><use xlink:href="#fa-square-check"></use></svg></span></div>
+            <div class="card-title">SELESAI PROD. <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen Selesai Produksi</span><span class='ct-r'>Komponen yang order produksinya sudah dipenuhi penuh (qty diterima &ge; qty target) DAN stoknya sudah tidak ada lagi di enam SLoc yang kita pantau &mdash; artinya barangnya sudah lanjut ke jalur berikutnya di luar sistem ini.</span><span class='ct-r'><b>Satuan</b>: komponen unik (Sales Order + Item + Material).</span><span class='ct-r'><b>Dua syarat harus terpenuhi</b>:<br>1. <b>Order delivered penuh</b> &mdash; AFPO menunjukkan qty diterima (WEMNG) sudah mencapai atau melewati qty target (PSMNG).<br>2. <b>Stok kosong di 6 SLoc</b> &mdash; tidak ada saldo lagi di 2KCS, 2261, 2262, 22E2, 22E3, 229K.</span><span class='ct-r'><b>Kenapa tidak semua komponen muncul di sini</b>: tidak semua komponen disiplin melewati enam SLoc ini &mdash; beberapa langsung diproses di jalur lain. Kartu ini hanya menghitung yang MEMANG lewat sini dan sudah keluar bersih.</span><span class='ct-src'>AFKO + AFPO (WEMNG vs PSMNG), diverifikasi dengan MSKA (stok kosong di cakupan)</span>"><svg class="ic"><use xlink:href="#fa-square-check"></use></svg></span></div>
             <div class="card-value color-green" id="kpi-done">-</div>
             <div class="card-sub" id="kpi-done-sub">memuat&hellip;</div>
         </div>
@@ -950,6 +990,7 @@ lv_ts_time = sy-uzeit(2) && ':' && sy-uzeit+2(2).
     </div>
 
 </div>
+</main>
 
 <script type="text/javascript">
 /* ====================================================================
@@ -1694,6 +1735,7 @@ function loadKpi() {
             kpiText('kpi-so', '-');     kpiText('kpi-so-sub', 'gagal memuat');
             kpiText('kpi-buyer', '-');  kpiText('kpi-buyer-sub', 'gagal memuat');
             kpiText('kpi-prod', '-');   kpiText('kpi-prod-sub', 'gagal memuat');
+            kpiText('kpi-prod-sub2', '&nbsp;');
             kpiText('kpi-done', '-');   kpiText('kpi-done-sub', 'gagal memuat');
             /* part=komp bergantung pada part=stock. Kalau yang ini gagal,
                tabel tidak akan pernah terisi — dikatakan sekarang, bukan
@@ -1710,11 +1752,25 @@ function loadKpi() {
         kpiText('kpi-buyer-sub', 'punya stok di enam SLoc');
         kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
 
+        /* DI PRODUKSI — dua baris: rasio thd seluruh komponen, lalu
+           rinciannya per center. Keduanya dari angka yang sudah dikirim
+           part=stock; tidak ada query tambahan. */
         kpiText('kpi-prod', kpiNum(d.prod));
-        kpiText('kpi-prod-sub', 'komponen di SLoc proses');
+        var prodPct = d.komp ? Math.round(d.prod * 100 / d.komp) : 0;
+        kpiText('kpi-prod-sub', 'dari ' + kpiNum(d.komp) + ' komp (' + prodPct + '%)');
+        kpiText('kpi-prod-sub2', 'MC: ' + kpiNum(d.mcp || 0) + ' &middot; EB: ' + kpiNum(d.ebp || 0));
 
-        kpiText('kpi-done', kpiNum(d.done));
-        kpiText('kpi-done-sub', 'sampai 229K (sementara)');
+        /* SELESAI PROD. — definisi baru: order delivered penuh DAN stok
+           kosong di enam SLoc (done_real). Field lama d.done (proxy "stok
+           ada di 229K") SENGAJA masih dikirim endpoint untuk perbandingan
+           sampai angka baru diverifikasi PPIC — jangan dipakai di sini. */
+        if (d.done_real === undefined || d.done_real === null) {
+            kpiText('kpi-done', '-');
+            kpiText('kpi-done-sub', 'endpoint belum mengirim done_real');
+        } else {
+            kpiText('kpi-done', kpiNum(d.done_real));
+            kpiText('kpi-done-sub', 'komponen keluar dari 6 SLoc');
+        }
 
         /* ---- dua kotak center ----
            Kuning = antre, biru = dikerjakan. HIJAU sengaja 0 dan diberi
@@ -1766,9 +1822,28 @@ function loadKpi() {
             return;
         }
         kpiText('kpi-conf', d.pct);
-        var sub = kpiNum(d.conf) + ' / ' + kpiNum(d.total) + ' op';
-        if (d.trunc) { sub += ' &mdash; TIDAK LENGKAP (dibatasi ' + kpiNum(d.ord) + ' order)'; }
-        kpiText('kpi-conf-sub', sub);
+        kpiText('kpi-conf-sub', kpiNum(d.conf) + ' dari ' + kpiNum(d.total) + ' operasi');
+
+        /* Peringatan pembatasan pindah dari sub-teks ke ikon ⚠ + tooltip.
+           CATATAN: spec perbaikan1 menaruh baris peringatan sebagai elemen
+           ber-id di DALAM atribut data-tip lalu menyembunyikannya lewat
+           style.display. Itu tidak bisa bekerja — isi data-tip cuma teks
+           atribut, elemennya tidak pernah ada di DOM sampai tooltip dibuka.
+           Jadi barisnya DITAMBAHKAN ke atribut, pola yang sama dipakai
+           drawCenters(). */
+        var warn = document.getElementById('kpi-conf-warn');
+        var tipc = document.getElementById('tip-conf');
+        if (d.trunc) {
+            if (warn) { warn.style.display = 'inline'; }
+            if (tipc && tipc.getAttribute('data-tip').indexOf('id="ct-trunc"') < 0) {
+                tipc.setAttribute('data-tip', tipc.getAttribute('data-tip') +
+                    '<span class="ct-warn" id="ct-trunc">&#9888; Order melampaui batas ' +
+                    kpiNum(d.ord) + ' &mdash; persentase dihitung dari ' + kpiNum(d.ord) +
+                    ' order teratas. Indikatif, bukan final.</span>');
+            }
+        } else if (warn) {
+            warn.style.display = 'none';
+        }
     });
 }
 
