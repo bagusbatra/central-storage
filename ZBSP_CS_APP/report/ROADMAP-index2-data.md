@@ -1,11 +1,29 @@
 # Roadmap — Menyambungkan Data `index2.htm`
 
-Dibuat: 2026-08-01 · Direvisi: 2026-08-01 (ketentuan wajib dari user)
+Dibuat: 2026-08-01 · Direvisi: 2026-08-03 (tahap 5 & 6 selesai, K4 & K6 ditutup)
 Halaman: `ZBSP_CS_APP/Page with Flow Logic/index2.htm` (Dashboard Production)
+Endpoint: `ZBSP_CS_APP/Page with Flow Logic/dash_prod.htm` — **wajib ikut aktif**
 Status UI: **selesai & sudah diaktifkan di SAP**, tampilan sesuai prototype
 
 Dokumen ini pegangan penyambungan data. Kalau Anda membuka sesi baru, baca
 dokumen ini dari atas — isinya cukup untuk melanjutkan tanpa konteks lain.
+
+## Kemajuan per 2026-08-03
+
+| Tahap | Isi | Status |
+|---|---|---|
+| 0 | Perluas cakupan ke enam SLoc | ✅ Selesai |
+| 1 | Filter Buyer + kartu BUYER | ✅ Selesai |
+| 2 | Panel SO | ✅ Selesai — klik SO ditambahkan 2026-08-03 |
+| 3 | Dua kotak center + tiga warna | ✅ Selesai — hijau dari `MSEG` |
+| 4 | Peta Work Center | ⬜ **Belum** — masih `Math.random()`, terhalang K5 |
+| 5 | Detail Komponen | ✅ Selesai 2026-08-03 |
+| 6 | DI PRODUKSI / SELESAI PROD. / BOTTLENECK | 🟡 Dua selesai; BOTTLENECK terhalang K5 |
+| 7 | Finalisasi CONFIRMED | ✅ Ditutup lewat rename **OPERASI SELESAI** |
+
+**K5 adalah satu-satunya keputusan yang tersisa**, dan ia memblokir dua hal
+yang tersisa juga: tahap 4 dan kartu BOTTLENECK. Kalau melanjutkan, mulai
+dari sana.
 
 ---
 
@@ -215,30 +233,54 @@ sudah dihitung halaman. Acuan SO 10446: 41 operasi, 26 confirmed / 5 active /
   pada scope SO 10446 (`diag_routing.htm` bagian D). Grid akan tampak jauh
   lebih kosong — putuskan bentuknya setelah melihat hasil nyatanya
 
-### Tahap 5 — Detail Komponen
+### Tahap 5 — Detail Komponen — ✅ SELESAI 2026-08-03
 
-Tampilan boleh mengikuti prototype, tapi isinya akan dibahas lebih dulu.
+Endpoint `dash_prod.htm?part=komp` (ringkasan) + `?part=ops1` (tahap satu
+komponen). Satu baris = satu komponen (SO+Item+Material), bisa dibentangkan.
 
-- ⚠️ Kolom QTY ROUTING tidak akan pernah menampilkan rantai tahap — maks 2
-  operasi per order, 86,1% hanya 1 operasi (`diag_routing.htm` bagian B)
-- **❓ K4:** kolom itu diisi apa
+- **Status komponen dari konfirmasi operasi (AFRU)**, dinilai **di tahap center
+  yang sedang dipilih** — bukan dari posisi SLoc
+- **Baris bentang berisi TAHAP (order), bukan VORNR.** Alasannya justru
+  temuan bagian B di atas: 86,1% order hanya punya 1 operasi, jadi daftar
+  VORNR hampir selalu satu baris. Daftar tahap menjadikannya peta perjalanan
+- **Komponen dipetakan ke center lewat `AFPO-PWERK` + `AFKO-DISPO`**, bukan
+  dari nama work center — pengelompokan WC memang belum diputuskan (bagian G/I)
+- **Batas 400 komponen** tanpa scope, 2000 bila discope ke satu SO/buyer;
+  sisanya dicacah dan dilaporkan lewat `more`, tidak dibuang diam-diam
+- **✅ K4 ditutup:** kolom QTY ROUTING diganti kolom **OPERASI** berisi
+  `done/tot op` + work center aktif. Rantai 3+ tahap memang tidak akan pernah
+  muncul; kolomnya diisi hal yang benar-benar ada
 
-**Verifikasi:** jumlah baris tanpa filter = jumlah komponen di kartu KOMPONEN.
+⚠️ **Verifikasi lama tidak berlaku lagi.** "Jumlah baris tanpa filter = jumlah
+komponen di kartu KOMPONEN" **salah** untuk tabel ini: kartu berbasis saldo
+stok, tabel berbasis order+operasi, dan komponen tanpa order di tahap itu
+sengaja tidak ditampilkan (dicacah sebagai `nook`). Verifikasi penggantinya:
+`baris tab Dikerjakan + Antri + Selesai = rows.length`, dan
+`rows.length + nook` = jumlah komponen yang punya order di tahap itu.
 
-### Tahap 6 — Kartu DI PRODUKSI / SELESAI PROD. / BOTTLENECK
+### Tahap 6 — Kartu DI PRODUKSI / SELESAI PROD. / BOTTLENECK — 🟡 Sebagian
 
-Bergantung tahap 3 & 4.
+- **DI PRODUKSI** — ✅ selesai. Komponen yang punya stok di SLoc proses
+  (di luar 2KCS). Sub-teks dua baris: rasio thd total komponen, lalu
+  rincian `MC: n · EB: n`. Seluruhnya dari angka yang sudah dikirim
+  `part=stock`; tidak ada query baru
+- **SELESAI PROD.** — ✅ selesai, **didefinisi ulang** 2026-08-03
+  (Opsi B / Tafsir X): `AFPO-WEMNG ≥ PSMNG` **DAN** stok kosong di keenam
+  SLoc → field `done_real`. Definisi lama ("stok ada di 229K") hanya proxy
+  sementara; field `done` sengaja tetap dikirim sebagai pembanding sampai
+  PPIC memverifikasi angka baru
+- **BOTTLENECK** — ⬜ masih dummy, terhalang K5
 
-- **DI PRODUKSI** ("WIP di lantai") — dari segmen biru
-- **SELESAI PROD.** ("kembali ke storage") — terkait langsung masalah warna
-  hijau; **diblokir** sampai itu selesai
-- **BOTTLENECK** — WC dengan beban tertinggi dari tahap 4
+### Tahap 7 — Finalisasi CONFIRMED — ✅ DITUTUP 2026-08-03
 
-### Tahap 7 — Finalisasi CONFIRMED
+**✅ K6 ditutup**, tapi tidak dengan cara yang diduga dokumen ini. Alih-alih
+memilih salah satu dari dua definisi, **labelnya yang diubah**: kartu
+`CONFIRMED` menjadi **`OPERASI SELESAI`**. Definisi & query tidak berubah —
+yang dihitung memang operasi ter-konfirmasi. Kartu tidak lagi mengklaim
+"komponen diterima" seperti maksud prototype.
 
-**❓ K6:** prototype menulis "basis komponen diterima"; angka sekarang berbasis
-**operasi** ter-konfirmasi (AFRU). Setelah tahap 5, data komponen sudah ada
-sehingga kedua definisi bisa dihitung dan dibandingkan.
+Sub-teks jadi `X dari Y operasi`; peringatan pembatasan 1.500 order pindah ke
+ikon ⚠ + tooltip.
 
 ---
 
@@ -246,32 +288,60 @@ sehingga kedua definisi bisa dihitung dan dibandingkan.
 
 | # | Keputusan | Tahap | Status |
 |---|---|---|---|
-| K1 | Arti `%` per buyer | 1 | ❓ belum |
-| K2 | Arti segmen progress bar SO | 2 | ❓ akan didiskusikan |
-| K3 | **Cara menghitung warna hijau "sudah lewat"** | 3 | ❓ **brainstorming mendalam** |
-| K4 | Isi kolom QTY ROUTING | 5 | ❓ akan didiskusikan |
-| K5 | Dasar perhitungan "beban" WC | 4 | ❓ akan didiskusikan |
-| K6 | Definisi CONFIRMED | 7 | ❓ belum |
+| K1 | Arti `%` per buyer | 1 | ✅ Ditutup 2026-08-01 — komponen yang sudah keluar dari 2KCS ÷ seluruh komponen buyer itu |
+| K2 | Arti segmen progress bar SO | 2 | ✅ Ditutup 2026-08-01 — kuning 2KCS · biru MC · hijau EBS |
+| K3 | **Cara menghitung warna hijau "sudah lewat"** | 3 | ✅ Ditutup 2026-08-01 — `MSEG` shkzg='S', pernah masuk & stok kini nol (`part=hist`) |
+| K4 | Isi kolom QTY ROUTING | 5 | ✅ Ditutup 2026-08-03 — jadi kolom OPERASI: `done/tot op` + WC aktif |
+| K5 | Dasar perhitungan "beban" WC | 4 | ❓ **MASIH TERBUKA** |
+| K6 | Definisi CONFIRMED | 7 | ✅ Ditutup 2026-08-03 — label diubah jadi OPERASI SELESAI, definisi tetap operasi |
 
-K3 adalah yang paling menentukan — dia memblokir tahap 3 (sebagian), tahap 6
-(sebagian), dan menyentuh arti kartu SELESAI PROD.
+**K5 kini satu-satunya yang tersisa**, dan ia memblokir dua pekerjaan terakhir
+di halaman ini: peta Work Center (tahap 4) dan kartu BOTTLENECK (tahap 6).
+Pertanyaannya masih sama: "beban" dihitung dari jumlah operasi antre, jumlah
+komponen, atau qty?
+
+Bahan yang sekarang sudah tersedia dan dulu belum ada saat K5 ditulis:
+`part=komp` sudah memetakan komponen → work center aktif lewat
+`AFVC-ARBID → CRHD-ARBPL`, jadi ketiga kandidat dasar perhitungan itu kini
+bisa dihitung dan dibandingkan sebelum memutuskan.
 
 ---
 
-## Ambang kinerja
+## Ambang kinerja — ambangnya SUDAH terlampaui, polanya sudah dipindah
 
-Halaman menjalankan query MSKA + VBAK + AFKO⨝AFPO + AFVC + AFVV + AFRU secara
-sinkron saat dibuka. Tahap 0 memperluas cakupan ke enam SLoc, dan warna hijau
-kemungkinan menambah `MSEG` — tabel besar.
+Peringatan yang ditulis di sini 2026-08-01 terbukti benar dan **sudah
+terjadi**: setelah tahap 0 memperluas cakupan ke enam SLoc, halaman menjadi
+>1 menit / timeout. Query sinkron dipindahkan seluruhnya ke endpoint AJAX
+`dash_prod.htm` + cache SHARED BUFFER `indx(zc)`, TTL **300 detik**.
 
-**Aturan:** kalau waktu muat melewati **5 detik**, hentikan penambahan query
-dan pindah ke pola yang sudah terbukti di aplikasi ini — endpoint AJAX
-terpisah + cache SHARED BUFFER TTL 90 detik, seperti `dash_cs.htm` dan
-`dash_kpi.htm`. `index.htm` dulu ber-TTFB 15 detik karena query stok
-dijalankan sinkron; jangan mengulangi itu.
+**Akibatnya, dua hal yang dulu tertulis di sini tidak berlaku lagi:**
 
-Saat itu terjadi akan ada berkas `.htm` baru yang ikut harus diaktifkan di
-SE80. Saat ini `index2.htm` masih berdiri sendiri tanpa dependensi.
+- ❌ ~~"Halaman menjalankan query … secara sinkron"~~ — `index2.htm` **tidak
+  menjalankan SELECT sama sekali**. HTML keluar seketika, angka menyusul
+- ❌ ~~"`index2.htm` masih berdiri sendiri tanpa dependensi"~~ — **aktivasi SE80
+  kini butuh DUA berkas**: `index2.htm` dan `dash_prod.htm`. Tanpa yang kedua,
+  seluruh kartu tetap bertanda "-"
+
+**Aturan yang menggantikannya:** jangan menambah SELECT baru di `index2.htm`.
+Kalau butuh data, tambahkan di `dash_prod.htm` supaya ikut ter-cache dan tidak
+memblokir tampilan. Batas yang sudah dipasang dan jangan dinaikkan diam-diam:
+`lc_maxord = 1500`, `lc_maxso = 500`, `lc_maxkmp = 400`, `lc_maxkm2 = 2000`.
+Kalau sebuah batas terlampaui, UI **wajib** mengatakannya (`trunc`, `more`,
+`solist_more`) — daftar yang diam-diam terpotong lebih berbahaya daripada
+daftar yang mengaku tidak lengkap.
+
+## Cara menguji tanpa server SAP
+
+Ditambahkan 2026-08-03 setelah satu *syntax error* JavaScript diam-diam
+mematikan seluruh blok `<script>` selama tiga commit (lihat
+`daily/2026-08-03.md` bagian 1).
+
+1. Baca `index2.htm`, buang seluruh tag `<% %>`, `<%= %>`, `<%-- --%>`
+2. Sisipkan `<script>` yang menimpa `window.kpiGet` dengan stub pembalas JSON
+   palsu **berbentuk sama persis** dengan yang dijanjikan `dash_prod.htm`
+3. Sajikan lewat `http://localhost` — `file://` ditolak ekstensi browser
+4. Periksa statis juga: `new Function(isiBlokScript)` menangkap syntax error
+   yang tidak terlihat dari membaca kode
 
 ---
 
