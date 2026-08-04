@@ -9,7 +9,11 @@
 *& Rakit JSON Detail Komponen
 *&---------------------------------------------------------------------*
 *& Satu baris = satu komponen (Material) pada SO+Item yang dipilih.
-*&   p.in/mc/bd/sd/dn  komponen ini muncul di tab mana saja (posisi stok)
+*&   in/mc/bd/sd/dn    komponen ini muncul di tab mana saja (posisi stok)
+*&   st                real stock per SLoc: [{l SLoc, q qty}] — kosong
+*&                     berarti tidak bersaldo di mana pun (baris tab Selesai)
+*&   uom               satuan material; aman ditampilkan karena satu baris
+*&                     = satu material, tidak ada percampuran satuan
 *&   q.tab           qty order WAKIL tahap itu: t target, d del,
 *&                     g Bas. start date (dd.mm.yyyy), dd selisih hari
 *&
@@ -34,7 +38,10 @@
         lv_bmc   TYPE c LENGTH 1,
         lv_bbd   TYPE c LENGTH 1,
         lv_bsd   TYPE c LENGTH 1,
-        lv_bdn   TYPE c LENGTH 1.
+        lv_bdn   TYPE c LENGTH 1,
+        lv_kst   TYPE string,
+        lv_kqty  TYPE i,
+        lv_kuomv TYPE string.
   DATA: ls_kq2 TYPE ty_kq.
   TYPES ty_ktab TYPE c LENGTH 2.
   DATA: lt_ktab TYPE STANDARD TABLE OF ty_ktab WITH DEFAULT KEY,
@@ -73,6 +80,23 @@
       ENDIF.
     ENDLOOP.
 
+    " ---- real stock per SLoc ----
+    CLEAR lv_kst.
+    LOOP AT lt_kstk INTO ls_kstk WHERE matnr = <kr>-matnr.
+      lv_kqty = round( val = ls_kstk-qty dec = 0 ).
+      IF lv_kst IS NOT INITIAL.
+        lv_kst = lv_kst && ','.
+      ENDIF.
+      lv_kst = lv_kst && '{"l":"' && ls_kstk-lgort
+            && '","q":' && |{ lv_kqty }| && '}'.
+    ENDLOOP.
+
+    CLEAR lv_kuomv.
+    READ TABLE lt_kuom INTO ls_kuom WITH KEY matnr = <kr>-matnr BINARY SEARCH.
+    IF sy-subrc = 0.
+      lv_kuomv = ls_kuom-meins.
+    ENDIF.
+
     " ---- teks material: escape sebelum masuk JSON ----
     lv_ktxt = <kr>-txt.
     REPLACE ALL OCCURRENCES OF '\' IN lv_ktxt WITH '\\'.
@@ -100,7 +124,9 @@
             && ',"bd":'    && lv_bbd
             && ',"sd":'    && lv_bsd
             && ',"dn":'    && lv_bdn
-            && ',"q":{'    && lv_kqs && '}}'.
+            && ',"uom":"'  && lv_kuomv && '"'
+            && ',"st":['    && lv_kst   && ']'
+            && ',"q":{'     && lv_kqs   && '}}'.
   ENDLOOP.
 
   GET RUN TIME FIELD lv_t1.

@@ -63,11 +63,12 @@
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,
 *&                  "queue":n,"ord":n,"trunc":0|1,"ms":n}
 *&   part=komp  -> {"ok":1,"so":"..","item":"..","rows":[
-*&                  {mat,txt,in,mc,bd,sd,dn,
-*&                   q:{in|mc|bd|sd|dn:{t,d,g,dd}}}],"ms":n}
+*&                  {mat,txt,in,mc,bd,sd,dn,uom,
+*&                   st:[{l,q}], q:{in|mc|bd|sd|dn:{t,d,g,dd}}}],"ms":n}
 *&                 param: so= item=   WAJIB so; tanpa itu rows kosong.
 *&                 in/mc/bd/sd/dn = komponen muncul di tab mana (posisi stok)
-*&                 q.tab = qty order wakil tahap itu; dd = selisih hari
+*&                 st = real stock per SLoc; q.tab = qty order wakil tahap
+*&                 itu; dd = selisih hari
 *&                 terhadap Bas. start date (negatif kurang, positif telat)
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',

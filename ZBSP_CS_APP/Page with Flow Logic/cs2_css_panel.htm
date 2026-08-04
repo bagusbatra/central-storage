@@ -192,6 +192,28 @@
     }
     .qty-bar span { display: block; height: 100%; }
     .qty-pct { font-size: 10px; color: var(--text-muted); }
+    /* ---- kolom REAL STOCK & SLOC ----
+       SLoc dan qty digabung dalam satu kolom; satu baris per SLoc karena
+       stok satu komponen bisa terpecah ke beberapa SLoc sekaligus. */
+    .stk-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 10px;
+        line-height: 1.6;
+    }
+    .stk-loc {
+        font-family: monospace;
+        color: var(--text-muted);
+        border-radius: 2px;
+        padding: 0 3px;
+    }
+    /* SLoc yang termasuk tahap tab aktif ditebalkan — sisanya tetap
+       ditampilkan supaya posisi barang terlihat utuh, bukan sepotong. */
+    .stk-line.here .stk-loc { background: #f1f5f9; color: #1e293b; font-weight: 700; }
+    .stk-qty { font-weight: 600; color: #1e293b; white-space: nowrap; }
+    .stk-none { font-size: 10px; color: var(--text-muted); }
+
     /* ---- kolom JADWAL ---- */
     .jw-late  { color: #b91c1c; font-weight: 700; }
     .jw-soon  { color: #b45309; font-weight: 700; }

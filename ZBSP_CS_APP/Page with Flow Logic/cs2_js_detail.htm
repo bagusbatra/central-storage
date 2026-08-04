@@ -37,6 +37,10 @@ var TAB_NAMA  = { in: 'IN', mc: 'Machining', bd: 'Banding',
 var TAB_WARNA = { in: '#f59e0b', mc: '#2563eb', bd: '#8b5cf6',
                   sd: '#06b6d4', dn: '#10b981' };
 var TAB_URUT  = ['in', 'mc', 'bd', 'sd', 'dn'];
+/* SLoc milik tiap tahap — dipakai menebalkan baris stok yang termasuk tab
+   aktif. 'dn' tidak punya SLoc: selesai justru berarti tidak bersaldo. */
+var TAB_SLOC  = { in: ['2KCS'], mc: ['2261', '2262'],
+                  bd: ['22EK', '22E2', '22E3'], sd: ['229K', '2292'], dn: [] };
 
 function selectSO(so, item) {
     if (selectedSO && selectedSO.so === so && selectedSO.item === item) {
@@ -95,6 +99,33 @@ function loadKomp() {
 
 function centerName() {
     return TAB_NAMA[selectedTab] || selectedTab;
+}
+
+/* Kolom REAL STOCK & SLOC — SLoc dan kuantitasnya digabung satu kolom.
+   SELURUH SLoc yang berisi stok komponen itu ditampilkan, bukan hanya
+   milik tab aktif: kalau stoknya terpecah, menyembunyikan sebagian akan
+   membuat orang mengira barangnya cuma ada di satu tempat. Yang termasuk
+   tahap tab aktif ditebalkan.
+   Satuan boleh ditampilkan di sini karena satu baris = satu material —
+   tidak ada percampuran satuan seperti di kartu SALES ORDER. */
+function stokSel(r) {
+    var st = r.st || [];
+    if (!st.length) {
+        return '<span class="stk-none">tidak bersaldo</span>';
+    }
+    var milik = TAB_SLOC[selectedTab] || [];
+    var h = '', i, j, disini;
+    for (i = 0; i < st.length; i++) {
+        disini = false;
+        for (j = 0; j < milik.length; j++) {
+            if (milik[j] === st[i].l) { disini = true; }
+        }
+        h += '<div class="stk-line' + (disini ? ' here' : '') + '">' +
+             '<span class="stk-loc">' + esc(st[i].l) + '</span>' +
+             '<span class="stk-qty">' + kpiNum(st[i].q) +
+             (r.uom ? ' ' + esc(r.uom) : '') + '</span></div>';
+    }
+    return h;
 }
 
 /* Kolom PROGRES — Qty Del terhadap Qty Target.
@@ -172,14 +203,14 @@ function renderComponentTable() {
             msg = 'Memuat komponen&hellip;';
         }
         componentTableBody.innerHTML =
-            '<tr><td colspan="5" class="komp-empty">' + msg + '</td></tr>';
+            '<tr><td colspan="6" class="komp-empty">' + msg + '</td></tr>';
         renderDetailFooter(0);
         return;
     }
 
     if (rows.length === 0) {
         componentTableBody.innerHTML =
-            '<tr><td colspan="5" class="komp-empty">Tidak ada komponen di tahap ' +
+            '<tr><td colspan="6" class="komp-empty">Tidak ada komponen di tahap ' +
             esc(centerName()) + '.</td></tr>';
         renderDetailFooter(0);
         return;
@@ -195,6 +226,7 @@ function renderComponentTable() {
                 '<span class="comp-name">' + esc(r.txt) + '</span>' +
                 '<span class="comp-sub"><span class="mat-code">' + esc(r.mat) + '</span></span>' +
             '</td>' +
+            '<td>' + stokSel(r) + '</td>' +
             '<td style="text-align:right; font-weight:700;">' +
                 (qq ? kpiNum(qq.t) : '&mdash;') + '</td>' +
             '<td style="text-align:right; font-weight:700; color:#059669;">' +

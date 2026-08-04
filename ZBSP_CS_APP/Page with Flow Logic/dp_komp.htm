@@ -197,6 +197,65 @@ IF lv_part = 'komp'.
     ENDLOOP.
   ENDIF.
 
+  " ===== Real stock per SLoc =====
+  " Diambil LANGSUNG dari MSKA, bukan dari 'DPRODKM': shared buffer itu hanya
+  " menyimpan BENDERA posisi, tanpa kuantitas. Query ini murah karena sudah
+  " discope ke satu SO+Item — beda jauh dari MSKA delapan SLoc di part=stock.
+  TYPES: BEGIN OF ty_kstk,
+           matnr TYPE mska-matnr,
+           lgort TYPE mska-lgort,
+           qty   TYPE p LENGTH 15 DECIMALS 3,
+         END OF ty_kstk.
+  DATA: lt_kstk TYPE STANDARD TABLE OF ty_kstk WITH DEFAULT KEY,
+        ls_kstk TYPE ty_kstk.
+
+  TYPES: BEGIN OF ty_kms,
+           matnr TYPE mska-matnr,
+           lgort TYPE mska-lgort,
+           kalab TYPE mska-kalab,
+         END OF ty_kms.
+  DATA: lt_kms TYPE STANDARD TABLE OF ty_kms WITH DEFAULT KEY,
+        ls_kms TYPE ty_kms.
+
+  IF lv_k_item IS INITIAL.
+    SELECT matnr lgort kalab FROM mska
+      INTO CORRESPONDING FIELDS OF TABLE lt_kms
+      WHERE werks = lc_werks AND lgort IN lr_lgort
+        AND sobkz = 'E' AND kalab > 0
+        AND vbeln = lv_k_so.
+  ELSE.
+    SELECT matnr lgort kalab FROM mska
+      INTO CORRESPONDING FIELDS OF TABLE lt_kms
+      WHERE werks = lc_werks AND lgort IN lr_lgort
+        AND sobkz = 'E' AND kalab > 0
+        AND vbeln = lv_k_so AND posnr = lv_k_item.
+  ENDIF.
+
+  " Satu material bisa punya beberapa baris MSKA di SLoc yang sama
+  " (item SO berbeda) — dijumlahkan lewat COLLECT.
+  LOOP AT lt_kms INTO ls_kms.
+    CLEAR ls_kstk.
+    ls_kstk-matnr = ls_kms-matnr.
+    ls_kstk-lgort = ls_kms-lgort.
+    ls_kstk-qty   = ls_kms-kalab.
+    COLLECT ls_kstk INTO lt_kstk.
+  ENDLOOP.
+  " Urutan SLoc mengikuti perjalanan barang, bukan abjad: 2KCS lebih dulu
+  " daripada 2261, dan 229K lebih dulu daripada 2292.
+  SORT lt_kstk BY matnr lgort.
+
+  " Satuan material — di sini satu baris = satu material, jadi satuannya
+  " tunggal dan boleh ditampilkan. Beda dengan kartu SALES ORDER yang
+  " menjumlahkan lintas material sehingga satuannya campur.
+  TYPES: BEGIN OF ty_kuom, matnr TYPE mara-matnr, meins TYPE mara-meins, END OF ty_kuom.
+  DATA: lt_kuom TYPE STANDARD TABLE OF ty_kuom WITH DEFAULT KEY, ls_kuom TYPE ty_kuom.
+  IF lt_krow IS NOT INITIAL.
+    SELECT matnr meins FROM mara INTO TABLE lt_kuom
+      FOR ALL ENTRIES IN lt_krow
+      WHERE matnr = lt_krow-matnr.
+    SORT lt_kuom BY matnr.
+  ENDIF.
+
   " ===== Qty per TAB: pilih order wakil tiap tahap =====
   TYPES: BEGIN OF ty_kq,
            matnr TYPE mska-matnr,
