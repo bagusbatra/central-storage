@@ -14,8 +14,13 @@
    apa pun, dan memaksa endpoint bekerja untuk data yang jarang dibaca.
 
    LIMA TAB = LIMA TAHAP, pemetaan sama dengan bar kartu Sales Order:
-     IN 2KCS · Machining 2261/2262 · Banding 22EK/22E2/22E3 ·
-     Sanding 229K/2292 · Selesai (tidak bersaldo, order delivered penuh)
+     Central Storage 2KCS · Machining 2261/2262 · Banding 22E2/22E3 ·
+     Sanding 229K
+
+   SELURUHNYA BERDASARKAN REAL STOCK (ketetapan user 2026-08-04). Tab
+   "Selesai" yang sempat ada dihapus: ia satu-satunya yang tidak bersumber
+   saldo. Akibatnya komponen yang stoknya sudah habis TIDAK muncul sama
+   sekali di tabel ini — itu memang arti "berdasarkan real stock".
 
    Baris masuk tab mana ditentukan POSISI STOK; Qty Target & Qty Del yang
    ditampilkan milik ORDER TAHAP YANG SESUAI TAB. Jadi berpindah tab
@@ -32,15 +37,14 @@ var kompState   = 'idle';   /* idle | load | ok | err | wait */
 var kompReqSeq  = 0;        /* penanda urutan permintaan — lihat loadKomp() */
 var kompRetried = false;
 
-var TAB_NAMA  = { in: 'IN', mc: 'Machining', bd: 'Banding',
-                  sd: 'Sanding', dn: 'Selesai' };
-var TAB_WARNA = { in: '#f59e0b', mc: '#2563eb', bd: '#8b5cf6',
-                  sd: '#06b6d4', dn: '#10b981' };
-var TAB_URUT  = ['in', 'mc', 'bd', 'sd', 'dn'];
+var TAB_NAMA  = { in: 'Central Storage', mc: 'Machining',
+                  bd: 'Banding', sd: 'Sanding' };
+var TAB_WARNA = { in: '#f59e0b', mc: '#2563eb', bd: '#8b5cf6', sd: '#06b6d4' };
+var TAB_URUT  = ['in', 'mc', 'bd', 'sd'];
 /* SLoc milik tiap tahap — dipakai menebalkan baris stok yang termasuk tab
-   aktif. 'dn' tidak punya SLoc: selesai justru berarti tidak bersaldo. */
+   aktif. Keempatnya punya SLoc; itulah arti "berdasarkan real stock". */
 var TAB_SLOC  = { in: ['2KCS'], mc: ['2261', '2262'],
-                  bd: ['22EK', '22E2', '22E3'], sd: ['229K', '2292'], dn: [] };
+                  bd: ['22E2', '22E3'], sd: ['229K'] };
 
 function selectSO(so, item) {
     if (selectedSO && selectedSO.so === so && selectedSO.item === item) {
@@ -111,6 +115,9 @@ function centerName() {
 function stokSel(r) {
     var st = r.st || [];
     if (!st.length) {
+        /* Tidak seharusnya terjadi: tabel ini hanya memuat komponen
+           ber-stok. Ditulis apa adanya kalau toh muncul, bukan dibiarkan
+           sebagai sel kosong yang tak bisa dijelaskan. */
         return '<span class="stk-none">tidak bersaldo</span>';
     }
     var milik = TAB_SLOC[selectedTab] || [];
@@ -171,7 +178,7 @@ function renderComponentTable() {
 
     /* Cacah per tab dihitung dari SELURUH hasil, bukan dari tab yang aktif,
        supaya angka di tombol tidak berubah saat berpindah tab. */
-    var cnt = { in: 0, mc: 0, bd: 0, sd: 0, dn: 0 };
+    var cnt = { in: 0, mc: 0, bd: 0, sd: 0 };
     var rows = [];
     var q = searchQuery.toLowerCase();
     var i, t, r;

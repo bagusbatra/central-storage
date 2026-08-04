@@ -21,7 +21,7 @@
 *& Pemetaan SLoc selesai per tahap (ketetapan user 2026-08-03):
 *&   Machining selesai  2262
 *&   Banding   selesai  22E3
-*&   Sanding   selesai  2292
+*&   Sanding   selesai  TIDAK ADA (2292 di luar cakupan sejak 2026-08-04)
 *&
 *& ⚠️ KENAPA OUT TIDAK BISA DIHITUNG DARI SINI (bug, ditemukan 2026-08-04):
 *&    daftar komponen 'DPRODKM' dibangun dari MSKA dengan KALAB > 0 di
@@ -29,17 +29,25 @@
 *&    salah satunya. Syarat "tidak bersaldo di satu pun" karena itu MUSTAHIL
 *&    terpenuhi — versi pertama OUT selalu menghasilkan 0.
 *&    Komponen yang benar-benar sudah keluar tidak ada di daftar ini sama
-*&    sekali, jadi ia harus dicari dari sumber lain. Itu dikerjakan
-*&    part=stock lewat AFPO (lihat lv_done_real di dp_stock.htm), yang tidak
-*&    terikat saldo MSKA.
+*&    sekali. Sejak 2026-08-04 kotak OUT SENGAJA DIKOSONGKAN — tidak ada
+*&    sumber data yang menghitungnya, dan meminjam angka dari perhitungan
+*&    lain justru yang dulu membuatnya salah tanpa ketahuan.
 *&
 *& Basis hitungan: CACAH KOMPONEN, sama dengan seluruh panel lain.
 *&
 *& ⚠️ MSEG discope lewat MATNR, bukan KDAUF. MSEG punya indeks di MATNR;
 *&    KDAUF tidak, sehingga menyaring lewat SO akan memicu pemindaian penuh.
 *&    Pola ini disalin dari dash_detail.htm yang sudah terbukti.
-*& ⚠️ TIDAK menjoin MKPF: pertanyaannya "pernah masuk atau tidak", bukan
-*&    "kapan". Tanpa join, query jauh lebih ringan.
+*& ⚠️ SEJAK 2026-08-04 MKPF DIJOIN. Dulu sengaja tidak — pertanyaannya
+*&    "pernah masuk atau tidak", bukan "kapan". Tapi pembatasan jendela
+*&    3 bulan menuntut tanggal posting, dan tanggal itu hanya ada di MKPF.
+*&    Join + batas tanggal justru MENGURANGI baris yang dipindai.
+*&
+*& 🔴 AKIBAT PEMBATASAN: gerakan yang lebih tua dari jendela TIDAK terlihat.
+*&    Komponen yang melewati sebuah tahap lebih dari 3 bulan lalu karena itu
+*&    TIDAK terhitung "sudah lewat" lagi, dan angka hijau tiap tahap akan
+*&    LEBIH KECIL daripada sebelum pembatasan. Itu konsekuensi yang dipilih,
+*&    bukan regresi — tapi jangan dikira data hilang.
 *& ⚠️ bwart 321 dikecualikan — itu pelepasan Quality Inspection (lgort =
 *&    umlgo), bukan perpindahan fisik. Aturan global aplikasi ini.
 IF lv_part = 'hist'.
@@ -54,11 +62,9 @@ IF lv_part = 'hist'.
            s_cs  TYPE abap_bool,
            s_261 TYPE abap_bool,
            s_262 TYPE abap_bool,
-           s_ek  TYPE abap_bool,
            s_e2  TYPE abap_bool,
            s_e3  TYPE abap_bool,
            s_29k TYPE abap_bool,
-           s_292 TYPE abap_bool,
          END OF ty_kmp2.
   DATA: lt_kmp2 TYPE STANDARD TABLE OF ty_kmp2 WITH DEFAULT KEY.
   FIELD-SYMBOLS <k2> TYPE ty_kmp2.
@@ -92,14 +98,24 @@ IF lv_part = 'hist'.
   DATA: lt_mv TYPE STANDARD TABLE OF ty_mv WITH DEFAULT KEY, ls_mv TYPE ty_mv.
 
   IF lt_mat IS NOT INITIAL.
-    SELECT matnr kdauf kdpos lgort FROM mseg
+    " ⚠️ MSEG dibatasi JENDELA WAKTU lc_bulan (ketetapan user 2026-08-04).
+    "    Tanggal posting ada di MKPF, bukan MSEG, jadi join-nya WAJIB —
+    "    inilah alasan catatan lama "TIDAK menjoin MKPF" tidak berlaku lagi.
+    "    Pola MSEG INNER JOIN MKPF + budat BETWEEN disalin dari
+    "    diag_movement.htm yang sudah terbukti jalan di sistem ini.
+    "    MSEG-BUDAT_MKPF SENGAJA TIDAK dipakai: tidak satu pun halaman di
+    "    aplikasi ini memakainya, jadi keberadaannya belum terbukti di sini.
+    SELECT m~matnr m~kdauf m~kdpos m~lgort
+      FROM mseg AS m INNER JOIN mkpf AS k
+        ON k~mblnr = m~mblnr AND k~mjahr = m~mjahr
       INTO CORRESPONDING FIELDS OF TABLE lt_mv
       FOR ALL ENTRIES IN lt_mat
-      WHERE matnr = lt_mat-matnr
-        AND werks = lc_werks
-        AND lgort IN lr_lgort
-        AND shkzg = 'S'
-        AND bwart <> '321'.
+      WHERE m~matnr = lt_mat-matnr
+        AND m~werks = lc_werks
+        AND m~lgort IN lr_lgort
+        AND m~shkzg = 'S'
+        AND m~bwart <> '321'
+        AND k~budat >= lv_dfrom.
   ENDIF.
 
   " Tandai per komponen: pernah diterima di SLoc SELESAI tahap mana saja,
@@ -113,7 +129,6 @@ IF lv_part = 'hist'.
            idx   TYPE i,
            h_262 TYPE abap_bool,     " pernah diterima di 2262  (Machining selesai)
            h_e3  TYPE abap_bool,     " pernah diterima di 22E3  (Banding selesai)
-           h_292 TYPE abap_bool,     " pernah diterima di 2292  (Sanding selesai)
          END OF ty_pernah.
   DATA: lt_pernah TYPE STANDARD TABLE OF ty_pernah WITH DEFAULT KEY.
   FIELD-SYMBOLS <ph> TYPE ty_pernah.
@@ -141,7 +156,6 @@ IF lv_part = 'hist'.
     CASE ls_mv-lgort.
       WHEN '2262'. <ph>-h_262 = abap_true.
       WHEN '22E3'. <ph>-h_e3  = abap_true.
-      WHEN '2292'. <ph>-h_292 = abap_true.
     ENDCASE.
   ENDLOOP.
 
@@ -158,9 +172,9 @@ IF lv_part = 'hist'.
     IF <ph>-h_e3 = abap_true AND <k2>-s_e3 = abap_false.
       lv_g_bd = lv_g_bd + 1.
     ENDIF.
-    IF <ph>-h_292 = abap_true AND <k2>-s_292 = abap_false.
-      lv_g_sd = lv_g_sd + 1.
-    ENDIF.
+    " 🔴 lv_g_sd TIDAK PERNAH TERISI: SLoc "selesai Sanding" (2292) sudah
+    "    di luar cakupan sejak 2026-08-04, jadi tidak ada yang bisa dinilai
+    "    "pernah lewat Sanding". Tetap dikirim 0; UI menyatakannya apa adanya.
   ENDLOOP.
 
   GET RUN TIME FIELD lv_t1.

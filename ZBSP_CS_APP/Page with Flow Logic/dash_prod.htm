@@ -31,11 +31,22 @@
 *& Bagian yang mengisi lv_json lalu jatuh ke ekor berkas ini : stock, ops
 *&
 *& ===== KENAPA DIPECAH PER BAGIAN =====
-*& part=stock : MSKA enam SLoc. BERAT (~15 dtk) tapi TERBATAS.
+*& part=stock : MSKA delapan SLoc. BERAT (~15 dtk) tapi TERBATAS.
 *& part=ops   : rantai AFKO -> AFVC -> AFVV -> AFRU. Besarnya sebanding
 *&              JUMLAH ORDER — itulah yang dulu meledak. Dibatasi lc_maxord.
 *& Dipisah supaya yang satu tidak memblokir yang lain: kartu SALES ORDER &
 *& BUYER muncul tanpa menunggu OPERASI SELESAI.
+*&
+*& ===== JENDELA WAKTU =====
+*& lc_bulan (3) membatasi DUA query terberat:
+*&   part=hist  MSEG ⨝ MKPF  -> budat >= awal bulan, 3 bulan ke belakang
+*&   part=stock AFKO ⨝ AFPO  -> gstrp >= tanggal yang sama
+*& MSKA TIDAK bisa dibatasi: saldo stok tidak punya tanggal sama sekali.
+*& Itu justru query paling berat di part=stock (~15 dtk terukur), jadi
+*& pembatasan ini TIDAK menyentuhnya.
+*& part=komp sengaja TIDAK dibatasi: ia sudah discope ke satu SO+Item
+*& sehingga murah, dan menyembunyikan order lama akan mengosongkan kolom
+*& Qty Target/Qty Del untuk komponen yang ordernya memang sudah lama.
 *&
 *& ===== CACHE =====
 *& SHARED BUFFER indx(zc), TTL 300 dtk, ID terpisah per bagian.
@@ -54,19 +65,20 @@
 *&
 *& ===== BENTUK JAWABAN =====
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
-*&                  "prod":n,"done":n,"done_real":n,
+*&                  "prod":n,"done":n,
 *&                  "in":n,"mcq":n,"mcd":n,"bdq":n,"bdd":n,"sdq":n,"sdd":n,
-*&                  "out":n,"solist_more":n,"solist_done":n,
+*&                  "dfrom":"YYYYMMDD",
+*&                  "solist_more":n,"solist_done":n,
 *&                  "solist":[{so,item,bid,buyer,komp,pcs,in,mc,bd,sd,dn}],
 *&                  "buyer":[{id,name,pct,komp,so}],"ms":n}
 *&   part=hist  -> {"ok":1,"mcgone":n,"bdgone":n,"sdgone":n,"rows":n,"ms":n}
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,
 *&                  "queue":n,"ord":n,"trunc":0|1,"ms":n}
 *&   part=komp  -> {"ok":1,"so":"..","item":"..","rows":[
-*&                  {mat,txt,in,mc,bd,sd,dn,uom,
-*&                   st:[{l,q}], q:{in|mc|bd|sd|dn:{t,d,g,dd}}}],"ms":n}
+*&                  {mat,txt,in,mc,bd,sd,uom,
+*&                   st:[{l,q}], q:{in|mc|bd|sd:{t,d,g,dd}}}],"ms":n}
 *&                 param: so= item=   WAJIB so; tanpa itu rows kosong.
-*&                 in/mc/bd/sd/dn = komponen muncul di tab mana (posisi stok)
+*&                 in/mc/bd/sd = komponen muncul di tab mana (posisi stok)
 *&                 st = real stock per SLoc; q.tab = qty order wakil tahap
 *&                 itu; dd = selisih hari
 *&                 terhadap Bas. start date (negatif kurang, positif telat)
@@ -88,7 +100,11 @@ CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
            " longgar karena rantai AFPO->AFVC->AFRU-nya ikut mengecil.
            " Sisanya DIHITUNG dan dilaporkan lewat "more", sama seperti maxso.
            lc_maxkmp TYPE i          VALUE 400,
-           lc_maxkm2 TYPE i          VALUE 2000.
+           lc_maxkm2 TYPE i          VALUE 2000,
+           " Jendela waktu data (ketetapan user 2026-08-04). Dipakai MSEG
+           " (part=hist) dan AFKO-GSTRP (part=stock). Menaikkannya berarti
+           " menaikkan beban query — ubah sadar-sadar, jangan diam-diam.
+           lc_bulan  TYPE i          VALUE 3.
 
 TYPES: BEGIN OF ty_soit,
          vbeln TYPE mska-vbeln,
@@ -167,14 +183,19 @@ DATA: lr_lgort  TYPE RANGE OF lgort_d,
       ls_rlgort LIKE LINE OF lr_lgort,
       lt_slocs  TYPE STANDARD TABLE OF lgort_d WITH DEFAULT KEY,
       lv_sloc   TYPE lgort_d.
-" Urut sesuai perjalanan barang. Diperluas 6 -> 8 SLoc 2026-08-03 atas
-" ketetapan user: 22EK (EBD Karantina) & 2292 (Sanding D-OUT) ikut masuk.
-" Akibatnya angka kartu BUYER / SALES ORDER / komponen NAIK — itu benar,
-" bukan regresi, persis seperti waktu cakupan naik dari 1 ke 6 SLoc.
+" Urut sesuai perjalanan barang.
+" ⚠️ DIKEMBALIKAN ke ENAM SLoc 2026-08-04 atas ketetapan user. 22EK (EBD
+"    Karantina) dan 2292 (Sanding D-OUT) yang sempat masuk 2026-08-03
+"    DIKELUARKAN lagi. Angka BUYER / SALES ORDER / komponen ikut TURUN —
+"    itu benar, kebalikan dari waktu cakupan naik kemarin.
+" 🔴 AKIBATNYA SANDING KEHILANGAN SLoc KELUAR. 2292 adalah satu-satunya
+"    penanda "selesai Sanding"; tanpa itu tahap Sanding hanya punya antrean
+"    (229K) dan tidak punya cara menyatakan selesai dari saldo stok.
+"    Lihat catatan di dp_stock.htm dan di UI Lintasan Produksi.
 lt_slocs = VALUE #( ( '2KCS' )                        " IN  dari Storage
                     ( '2261' ) ( '2262' )             " Machining  antri -> selesai
-                    ( '22EK' ) ( '22E2' ) ( '22E3' )  " Banding    antri -> selesai
-                    ( '229K' ) ( '2292' ) ).          " Sanding    antri -> selesai
+                    ( '22E2' ) ( '22E3' )             " Banding    antri -> selesai
+                    ( '229K' ) ).                     " Sanding    antri (tanpa keluar)
 ls_rlgort-sign = 'I'.
 ls_rlgort-option = 'EQ'.
 LOOP AT lt_slocs INTO lv_sloc.
@@ -184,6 +205,29 @@ ENDLOOP.
 
 DATA: lt_soit TYPE tt_soit,
       ls_soit TYPE ty_soit.
+
+" ===== Batas bawah jendela waktu =====
+"   Diambil dari AWAL BULAN, lc_bulan bulan ke belakang. Sengaja tanggal 01,
+"   bukan "hari ini dikurangi 90 hari": mengurangi bulan dari tanggal 31
+"   menghasilkan tanggal yang tidak ada (31 Mei - 3 bln = 31 Feb), dan
+"   pembulatannya berbeda-beda antar cara hitung. Awal bulan selalu sah.
+"   Akibatnya jendelanya sedikit LEBIH panjang dari 3 bulan penuh — itu
+"   disengaja; memotong terlalu pendek lebih berbahaya daripada kelebihan.
+"
+"   Tanpa panggilan FM: aritmetika bulan dikerjakan manual supaya tidak
+"   menambah ketergantungan yang bisa gagal saat aktivasi.
+DATA: lv_dfrom TYPE d,
+      lv_yy    TYPE n LENGTH 4,
+      lv_mm    TYPE n LENGTH 2.
+lv_yy = sy-datum(4).
+lv_mm = sy-datum+4(2).
+IF lv_mm > lc_bulan.
+  lv_mm = lv_mm - lc_bulan.
+ELSE.
+  lv_mm = lv_mm + 12 - lc_bulan.
+  lv_yy = lv_yy - 1.
+ENDIF.
+lv_dfrom = lv_yy && lv_mm && '01'.
 
 " Header di-set SEKARANG, sebelum fragment mana pun disisipkan. Setelah
 " pemecahan, tiap fragment yang dilewati bisa menyumbang keluaran kosong;

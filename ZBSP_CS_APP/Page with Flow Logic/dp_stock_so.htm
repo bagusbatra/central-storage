@@ -15,8 +15,8 @@
            komp  TYPE i,
            s_in  TYPE i,      " 2KCS
            s_mc  TYPE i,      " 2261 / 2262
-           s_bd  TYPE i,      " 22EK / 22E2 / 22E3
-           s_sd  TYPE i,      " 229K / 2292
+           s_bd  TYPE i,      " 22E2 / 22E3
+           s_sd  TYPE i,      " 229K
            s_dn  TYPE i,      " sudah lewat SEMUA SLoc (dari AFPO, bukan saldo)
            pcs   TYPE p LENGTH 15 DECIMALS 3,
          END OF ty_solist.
@@ -41,10 +41,10 @@
     IF <km>-s_261 = abap_true OR <km>-s_262 = abap_true.
       <sl>-s_mc = <sl>-s_mc + 1.
     ENDIF.
-    IF <km>-s_ek = abap_true OR <km>-s_e2 = abap_true OR <km>-s_e3 = abap_true.
+    IF <km>-s_e2 = abap_true OR <km>-s_e3 = abap_true.
       <sl>-s_bd = <sl>-s_bd + 1.
     ENDIF.
-    IF <km>-s_29k = abap_true OR <km>-s_292 = abap_true.
+    IF <km>-s_29k = abap_true.
       <sl>-s_sd = <sl>-s_sd + 1.
     ENDIF.
   ENDLOOP.
@@ -263,11 +263,9 @@
          && ',"buyers":'       && lv_buy_cnt_c
          && ',"prod":'        && |{ lv_prod }|
          && ',"done":'        && |{ lv_done }|
-         " done      = ada stok di 229K. ⚠️ Sejak 2026-08-03 itu berarti
-         "             ANTRI SANDING, bukan selesai. Disimpan hanya sebagai
-         "             pembanding historis; UI TIDAK memakainya.
-         " done_real = delivered penuh (AFPO) + lepas dari 8 SLoc cakupan.
-         && ',"done_real":'   && |{ lv_done_real }|
+         " done = ada stok di 229K. ⚠️ Sejak 2026-08-03 itu berarti ANTRI
+         " SANDING, bukan selesai. Tanpa konsumen di UI; disimpan sebagai
+         " pembanding historis saja.
          " ---- Lintasan Produksi, empat tahap, basis cacah komponen ----
          && ',"in":'          && |{ lv_in }|
          && ',"mcq":'         && |{ lv_mc_q }|
@@ -276,9 +274,8 @@
          && ',"bdd":'         && |{ lv_bd_d }|
          && ',"sdq":'         && |{ lv_sd_q }|
          && ',"sdd":'         && |{ lv_sd_d }|
-         " OUT = done_real. Dihitung dari AFPO, BUKAN dari saldo MSKA —
-         " komponen yang sudah keluar tidak ada di lt_kmp sama sekali.
-         && ',"out":'         && |{ lv_done_real }|
+         " Batas bawah jendela waktu, supaya UI bisa menyatakannya.
+         && ',"dfrom":"'      && lv_dfrom && '"' 
          && ',"solist_more":' && |{ lv_so_more }|
          && ',"solist_done":' && |{ lv_so_done }|
          && ',"buyer":'       && lv_buyers

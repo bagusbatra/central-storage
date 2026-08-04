@@ -1,9 +1,9 @@
 <%@ page language="abap" %><%-- ==========================================================
-     PAGE FRAGMENT — part=stock — stok, posisi komponen, SELESAI PROD.
+     PAGE FRAGMENT — part=stock — stok, posisi komponen, jadwal order
      Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
-     MSKA enam SLoc -> lt_stok -> lt_kmp, rekap posisi untuk kartu dan
-     dua kotak center, ekspor DPRODKM, hitung done_real.
+     MSKA delapan SLoc -> lt_stok -> lt_kmp, rekap posisi untuk kartu dan
+     tiga tahap Lintasan, ekspor DPRODKM, daftar komponen selesai.
      Daftar SO & buyer ada di dp_stock_so.htm.
      ========================================================== --%><%
 IF lv_part = 'stock'.
@@ -136,11 +136,9 @@ IF lv_part = 'stock'.
            s_cs  TYPE abap_bool,      " 2KCS  IN
            s_261 TYPE abap_bool,      " 2261  Machining antri
            s_262 TYPE abap_bool,      " 2262  Machining selesai
-           s_ek  TYPE abap_bool,      " 22EK  Banding antri (EBD Karantina)
-           s_e2  TYPE abap_bool,      " 22E2  Banding antri (Banding D-IN)
+           s_e2  TYPE abap_bool,      " 22E2  Banding antri
            s_e3  TYPE abap_bool,      " 22E3  Banding selesai
            s_29k TYPE abap_bool,      " 229K  Sanding antri
-           s_292 TYPE abap_bool,      " 2292  Sanding selesai (Sanding D-OUT)
          END OF ty_kmp.
   DATA: lt_kmp TYPE STANDARD TABLE OF ty_kmp WITH DEFAULT KEY.
   FIELD-SYMBOLS <km> TYPE ty_kmp.
@@ -161,11 +159,9 @@ IF lv_part = 'stock'.
       WHEN '2KCS'. <km>-s_cs  = abap_true.
       WHEN '2261'. <km>-s_261 = abap_true.
       WHEN '2262'. <km>-s_262 = abap_true.
-      WHEN '22EK'. <km>-s_ek  = abap_true.
       WHEN '22E2'. <km>-s_e2  = abap_true.
       WHEN '22E3'. <km>-s_e3  = abap_true.
       WHEN '229K'. <km>-s_29k = abap_true.
-      WHEN '2292'. <km>-s_292 = abap_true.
     ENDCASE.
   ENDLOOP.
 
@@ -176,9 +172,9 @@ IF lv_part = 'stock'.
   "
   "   IN dari Storage        2KCS
   "   Machining Center       antri 2261        -> selesai 2262
-  "   Banding                antri 22EK/22E2   -> selesai 22E3
-  "   Sanding                antri 229K        -> selesai 2292
-  "   OUT ke Storage         tidak punya SLoc  -> dihitung part=hist dari MSEG
+  "   Banding                antri 22E2        -> selesai 22E3
+  "   Sanding                antri 229K        -> TIDAK ADA SLoc keluar
+  "   OUT ke Storage         tidak punya SLoc  -> SENGAJA KOSONG, tanpa sumber
   "
   " ⚠️ 229K SEKARANG BERARTI "ANTRI SANDING", bukan "selesai". Seluruh
   "    aplikasi sebelumnya memperlakukannya sebagai CP4 = 100% selesai
@@ -197,17 +193,21 @@ IF lv_part = 'stock'.
         lv_in   TYPE i,      " IN        2KCS
         lv_mc_q TYPE i,      " Machining antri    2261
         lv_mc_d TYPE i,      " Machining selesai  2262
-        lv_bd_q TYPE i,      " Banding   antri    22EK / 22E2
+        lv_bd_q TYPE i,      " Banding   antri    22E2
         lv_bd_d TYPE i,      " Banding   selesai  22E3
         lv_sd_q TYPE i,      " Sanding   antri    229K
-        lv_sd_d TYPE i.      " Sanding   selesai  2292
+        lv_sd_d TYPE i.      " Sanding   selesai  — tidak ada SLoc keluar
   LOOP AT lt_kmp ASSIGNING <km>.
-    " DI PRODUKSI = punya stok di SLoc proses mana pun (di luar 2KCS)
+    " prod = punya stok di SLoc proses mana pun (di luar 2KCS).
+    " ⚠️ Sejak kartu DI PRODUKSI dihapus 2026-08-04, field ini TIDAK punya
+    "    konsumen di UI. Dipertahankan karena murah dan sudah lama dipakai
+    "    sebagai angka pembanding; hapus kalau tetap tidak terpakai.
     IF <km>-moved = abap_true.
       lv_prod = lv_prod + 1.
     ENDIF.
-    " Dipertahankan HANYA sebagai pembanding kartu SELESAI PROD. lama.
-    " ⚠️ Artinya kini "ada stok di 229K" = ANTRI SANDING, bukan selesai.
+    " ⚠️ Artinya "ada stok di 229K" = ANTRI SANDING, bukan selesai. Kartu
+    "    SELESAI PROD. yang dulu memakainya sudah dihapus 2026-08-04, jadi
+    "    field ini pun kini tanpa konsumen.
     IF <km>-s_29k = abap_true.
       lv_done = lv_done + 1.
     ENDIF.
@@ -215,12 +215,13 @@ IF lv_part = 'stock'.
     IF <km>-s_cs  = abap_true. lv_in   = lv_in   + 1. ENDIF.
     IF <km>-s_261 = abap_true. lv_mc_q = lv_mc_q + 1. ENDIF.
     IF <km>-s_262 = abap_true. lv_mc_d = lv_mc_d + 1. ENDIF.
-    IF <km>-s_ek = abap_true OR <km>-s_e2 = abap_true.
-      lv_bd_q = lv_bd_q + 1.
-    ENDIF.
+    IF <km>-s_e2 = abap_true. lv_bd_q = lv_bd_q + 1. ENDIF.
     IF <km>-s_e3  = abap_true. lv_bd_d = lv_bd_d + 1. ENDIF.
     IF <km>-s_29k = abap_true. lv_sd_q = lv_sd_q + 1. ENDIF.
-    IF <km>-s_292 = abap_true. lv_sd_d = lv_sd_d + 1. ENDIF.
+    " 🔴 lv_sd_d TIDAK PERNAH TERISI. 2292 (Sanding D-OUT) dikeluarkan dari
+    "    cakupan 2026-08-04, dan itu satu-satunya SLoc "selesai Sanding".
+    "    Dikirim tetap 0 dan UI menyatakannya sebagai "tidak ada SLoc keluar",
+    "    BUKAN sebagai "nol komponen selesai" — dua hal yang sangat berbeda.
   ENDLOOP.
 
   " Simpan daftar komponen + posisinya supaya part=hist tidak perlu menembak
@@ -229,7 +230,7 @@ IF lv_part = 'stock'.
   EXPORT ts = lv_now km = lt_kmp TO SHARED BUFFER indx(zc) ID 'DPRODKM'.
 
   " ===================================================================
-  " SELESAI PROD. — komponen yang delivered penuh & sudah lepas dari 6 SLoc
+  " lt_afpo_done — komponen yang delivered penuh & sudah lepas dari cakupan
   " ===================================================================
   "  Definisi (ketetapan user 2026-08-03, Opsi B / Tafsir X):
   "    komponen selesai = AFPO-WEMNG >= AFPO-PSMNG
@@ -242,10 +243,9 @@ IF lv_part = 'stock'.
   "  Filter DISPO GA1/GA2/EB2 sama dengan part=ops: hanya order yang lewat
   "  jalur produksi yang dipantau halaman ini.
   "
-  "  ⚠️ MENGGANTIKAN arti kartu SELESAI PROD. Field lama "done" (proxy:
-  "     stok ada di 229K) SENGAJA TETAP dikirim supaya angka lama & baru
-  "     bisa dibandingkan sampai PPIC memverifikasi. Hapus "done" hanya
-  "     setelah itu — bukan sekarang.
+  "  Dipakai kotak OUT di Lintasan Produksi, dan segmen hijau "Selesai"
+  "  pada bar kartu Sales Order. Kartu SELESAI PROD. yang dulu memakainya
+  "  sudah dihapus 2026-08-04.
   "
   "  ⚠️ DEDUPLIKASI WAJIB: satu komponen bisa punya BEBERAPA order (satu per
   "     tahap — lihat catatan part=komp). Tanpa DELETE ADJACENT DUPLICATES
@@ -255,7 +255,7 @@ IF lv_part = 'stock'.
   "
   "  ⚠️ Setelah deduplikasi, syarat "delivered penuh" berarti SETIDAKNYA
   "     SATU order komponen itu terpenuhi penuh. Digabung dengan syarat stok
-  "     kosong di enam SLoc, ini sudah ketat; kalau nanti dianggap terlalu
+  "     kosong di delapan SLoc, ini sudah ketat; kalau nanti dianggap terlalu
   "     longgar, ubah menjadi "semua order-nya" di sini saja.
   TYPES: BEGIN OF ty_afpo_done,
            kdauf TYPE afpo-kdauf,
@@ -283,16 +283,45 @@ IF lv_part = 'stock'.
     APPEND ls_dvbeln TO lr_dvbeln.
   ENDLOOP.
 
-  DATA: lv_done_real TYPE i.
+  " Satu SELECT melayani lt_afpo_done: komponen delivered penuh dan sudah
+  " tidak bersaldo. Filter wemng >= psmng ditaruh di LOOP, bukan di WHERE —
+  " peninggalan waktu SELECT ini juga melayani kartu MULAI MINGGU INI &
+  " SIAP LANJUT (dihapus 2026-08-04). Dibiarkan begitu: memindahkannya ke
+  " WHERE tidak mengubah hasil dan hanya menambah risiko salah ketik.
+  TYPES: BEGIN OF ty_afpo_all,
+           kdauf TYPE afpo-kdauf,
+           kdpos TYPE afpo-kdpos,
+           matnr TYPE afpo-matnr,
+           psmng TYPE afpo-psmng,
+           wemng TYPE afpo-wemng,
+           gstrp TYPE afko-gstrp,
+         END OF ty_afpo_all.
+  DATA: lt_afpo_all TYPE STANDARD TABLE OF ty_afpo_all WITH DEFAULT KEY,
+        ls_afpo_all TYPE ty_afpo_all.
+
   IF lr_dvbeln IS NOT INITIAL.
-    SELECT a~kdauf a~kdpos a~matnr
+    SELECT a~kdauf a~kdpos a~matnr a~psmng a~wemng k~gstrp
       FROM afko AS k INNER JOIN afpo AS a ON a~aufnr = k~aufnr
-      INTO TABLE lt_afpo_done
+      INTO CORRESPONDING FIELDS OF TABLE lt_afpo_all
       WHERE a~kdauf IN lr_dvbeln
         AND a~pwerk = lc_werks
         AND k~dispo IN ( 'GA1', 'GA2', 'EB2' )
-        AND a~psmng > 0
-        AND a~wemng >= a~psmng.
+        AND k~gstrp >= lv_dfrom.
+    " ⚠️ Dibatasi jendela lc_bulan. Order yang Bas. start date-nya lebih tua
+    "    dari itu TIDAK ikut terbaca, sehingga segmen hijau
+    "    "Selesai" pada bar kartu SO ikut MENGECIL. Disengaja.
+    "    Order tanpa GSTRP juga ikut tersaring keluar oleh syarat ini.
+
+    " ---- lt_afpo_done: hanya order yang delivered penuh ----
+    LOOP AT lt_afpo_all INTO ls_afpo_all.
+      IF ls_afpo_all-psmng > 0 AND ls_afpo_all-wemng >= ls_afpo_all-psmng.
+        CLEAR ls_afpo_done.
+        ls_afpo_done-kdauf = ls_afpo_all-kdauf.
+        ls_afpo_done-kdpos = ls_afpo_all-kdpos.
+        ls_afpo_done-matnr = ls_afpo_all-matnr.
+        APPEND ls_afpo_done TO lt_afpo_done.
+      ENDIF.
+    ENDLOOP.
 
     SORT lt_afpo_done BY kdauf kdpos matnr.
     DELETE ADJACENT DUPLICATES FROM lt_afpo_done COMPARING kdauf kdpos matnr.
@@ -307,7 +336,6 @@ IF lv_part = 'stock'.
                  matnr = ls_afpo_done-matnr
         BINARY SEARCH.
       IF sy-subrc <> 0.
-        lv_done_real = lv_done_real + 1.
       ENDIF.
     ENDLOOP.
   ENDIF.

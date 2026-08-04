@@ -34,27 +34,9 @@
             <div class="card-sub" id="kpi-buyer-sub">memuat&hellip;</div>
         </div>
         <div class="card">
-            <div class="card-title">SALES ORDER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sales Order ber-stok nyata</span><span class='ct-r'>Jumlah <b>SO berbeda</b> yang punya stok di enam SLoc. Sub-teks memerinci isinya: berapa komponen dan berapa pcs.</span><span class='ct-r'>Komponen = kombinasi unik <b>SO + Item + Material</b>. Material sama di dua SO dihitung dua kali; lintas SLoc dihitung sekali.</span><span class='ct-src'>MSKA &middot; SOBKZ=E &middot; KALAB&gt;0</span><span class='ct-warn'>Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg></span></div>
+            <div class="card-title">SALES ORDER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sales Order ber-stok nyata</span><span class='ct-r'>Jumlah <b>SO berbeda</b> yang punya stok di delapan SLoc. Sub-teks memerinci isinya: berapa komponen dan berapa pcs.</span><span class='ct-r'>Komponen = kombinasi unik <b>SO + Item + Material</b>. Material sama di dua SO dihitung dua kali; lintas SLoc dihitung sekali.</span><span class='ct-src'>MSKA &middot; SOBKZ=E &middot; KALAB&gt;0</span><span class='ct-warn'>Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg></span></div>
             <div class="card-value" id="kpi-so">-</div>
             <div class="card-sub" id="kpi-so-sub">memuat&hellip;</div>
-        </div>
-        <%-- Label "CONFIRMED" diganti "OPERASI SELESAI": yang dihitung memang
-             operasi, bukan komponen jadi. Definisi & query TIDAK berubah. --%>
-        <div class="card">
-            <div class="card-title">OPERASI SELESAI <span class="tip-anchor icon-top-right" id="tip-conf" data-tip="<span class='ct-h'>Operasi Selesai</span><span class='ct-r'>Persentase langkah pengerjaan (<b>operasi</b>) yang sudah dikonfirmasi selesai oleh operator lantai produksi, dihitung dari seluruh operasi milik order produksi yang terkait Sales Order dalam cakupan.</span><span class='ct-r'><b>Satuan</b>: operasi (satu operasi = satu langkah pengerjaan). Satu komponen bisa punya banyak operasi berurutan.</span><span class='ct-r'><b>Status per operasi</b>:<br>&bull; Selesai &mdash; qty konfirmasi &ge; qty target, atau operator menandai final<br>&bull; Sedang dikerjakan &mdash; sudah ada qty konfirmasi tapi belum penuh<br>&bull; Antre &mdash; belum ada konfirmasi sama sekali</span><span class='ct-src'>AFRU vs AFVV &middot; baris STOKZ=X dibuang</span><span class='ct-warn'>Angka ini berbicara tentang <b>langkah pengerjaan</b>, bukan <b>komponen yang selesai jadi</b>. Satu komponen dengan 5 operasi baru selesai jika kelimanya selesai.</span>"><svg class="ic"><use xlink:href="#fa-circle-check"></use></svg></span></div>
-            <div class="card-value color-green"><span id="kpi-conf">-</span> <span class="unit">%</span><span id="kpi-conf-warn" class="trunc-warn" style="display:none" data-tip="<span class='ct-h'>Angka dibatasi</span><span class='ct-r'>Order melampaui batas 1.500 &mdash; persentase dihitung dari 1.500 order teratas saja. Indikatif, bukan final.</span>">&#9888;</span></div>
-            <div class="card-sub" id="kpi-conf-sub">memuat&hellip;</div>
-        </div>
-        <div class="card">
-            <div class="card-title">DI PRODUKSI <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen di Lantai Produksi</span><span class='ct-r'>Jumlah komponen unik yang stok fisiknya sedang berada di area proses (bukan di storage awal 2KCS). Menunjukkan seberapa banyak barang yang sudah bergerak dan sedang dikerjakan.</span><span class='ct-r'><b>Satuan</b>: komponen unik (kombinasi Sales Order + Item + Material). Material yang sama muncul di dua SO dihitung dua kali; material yang stoknya terpecah antar SLoc dihitung sekali.</span><span class='ct-r'><b>Yang masuk hitungan</b>: komponen yang punya stok di 2261, 2262 (Machining), 22E2, 22E3, 229K (Edge Banding &amp; Sanding). Komponen yang stoknya terpecah &mdash; sebagian masih 2KCS, sebagian sudah bergerak &mdash; tetap dihitung di sini. Begitu ada bagian yang jalan, komponen itu bukan lagi diam menunggu.</span><span class='ct-r'><b>Yang tidak masuk</b>: komponen yang seluruh stoknya masih di 2KCS (belum bergerak sama sekali).</span><span class='ct-src'>Saldo stok saat ini MSKA</span>"><svg class="ic"><use xlink:href="#fa-gear"></use></svg></span></div>
-            <div class="card-value color-blue" id="kpi-prod">-</div>
-            <div class="card-sub" id="kpi-prod-sub">memuat&hellip;</div>
-            <div class="card-sub card-sub-2" id="kpi-prod-sub2">&nbsp;</div>
-        </div>
-        <div class="card">
-            <div class="card-title">SELESAI PROD. <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Komponen Selesai Produksi</span><span class='ct-r'>Komponen yang order produksinya sudah dipenuhi penuh (qty diterima &ge; qty target) DAN stoknya sudah tidak ada lagi di enam SLoc yang kita pantau &mdash; artinya barangnya sudah lanjut ke jalur berikutnya di luar sistem ini.</span><span class='ct-r'><b>Satuan</b>: komponen unik (Sales Order + Item + Material).</span><span class='ct-r'><b>Dua syarat harus terpenuhi</b>:<br>1. <b>Order delivered penuh</b> &mdash; AFPO menunjukkan qty diterima (WEMNG) sudah mencapai atau melewati qty target (PSMNG).<br>2. <b>Stok kosong di 6 SLoc</b> &mdash; tidak ada saldo lagi di 2KCS, 2261, 2262, 22E2, 22E3, 229K.</span><span class='ct-r'><b>Kenapa tidak semua komponen muncul di sini</b>: tidak semua komponen disiplin melewati enam SLoc ini &mdash; beberapa langsung diproses di jalur lain. Kartu ini hanya menghitung yang MEMANG lewat sini dan sudah keluar bersih.</span><span class='ct-src'>AFKO + AFPO (WEMNG vs PSMNG), diverifikasi dengan MSKA (stok kosong di cakupan)</span>"><svg class="ic"><use xlink:href="#fa-square-check"></use></svg></span></div>
-            <div class="card-value color-green" id="kpi-done">-</div>
-            <div class="card-sub" id="kpi-done-sub">memuat&hellip;</div>
         </div>
     </section>
 
@@ -90,18 +72,18 @@
                 </div>
                 <div class="stage-area tip-anchor" id="mc-tip">
                     <div class="stage-line">
-                        <span class="stage-lbl"><span class="dot orange"></span> Antri</span>
+                        <span class="stage-lbl"><span class="dot orange"></span> IN</span>
                         <span class="stage-val" id="mc-q">-</span>
                     </div>
                     <div class="stage-line">
-                        <span class="stage-lbl"><span class="dot green"></span> Selesai</span>
+                        <span class="stage-lbl"><span class="dot green"></span> OUT</span>
                         <span class="stage-val" id="mc-d">-</span>
                     </div>
                     <div class="progress-bar-container">
                         <div class="pb-queue" id="mc-bar-q" style="width: 0%;"></div>
                         <div class="pb-done" id="mc-bar-d" style="width: 0%;"></div>
                     </div>
-                    <div class="stage-sloc">antri 2261 &rarr; selesai 2262</div>
+                    <div class="stage-sloc">IN 2261 &rarr; OUT 2262</div>
                 </div>
             </div>
 
@@ -116,52 +98,55 @@
                     <div class="stage-area tip-anchor" id="bd-tip">
                         <div class="stage-name">Banding</div>
                         <div class="stage-line">
-                            <span class="stage-lbl"><span class="dot orange"></span> Antri</span>
+                            <span class="stage-lbl"><span class="dot orange"></span> IN</span>
                             <span class="stage-val" id="bd-q">-</span>
                         </div>
                         <div class="stage-line">
-                            <span class="stage-lbl"><span class="dot green"></span> Selesai</span>
+                            <span class="stage-lbl"><span class="dot green"></span> OUT</span>
                             <span class="stage-val" id="bd-d">-</span>
                         </div>
                         <div class="progress-bar-container">
                             <div class="pb-queue" id="bd-bar-q" style="width: 0%;"></div>
                             <div class="pb-done" id="bd-bar-d" style="width: 0%;"></div>
                         </div>
-                        <div class="stage-sloc">antri 22EK/22E2 &rarr; selesai 22E3</div>
+                        <div class="stage-sloc">IN 22E2 &rarr; OUT 22E3</div>
                     </div>
                     <div class="stage-area tip-anchor" id="sd-tip">
                         <div class="stage-name">Sanding</div>
                         <div class="stage-line">
-                            <span class="stage-lbl"><span class="dot orange"></span> Antri</span>
+                            <span class="stage-lbl"><span class="dot orange"></span> IN</span>
                             <span class="stage-val" id="sd-q">-</span>
                         </div>
                         <div class="stage-line">
-                            <span class="stage-lbl"><span class="dot green"></span> Selesai</span>
+                            <span class="stage-lbl"><span class="dot green"></span> OUT</span>
                             <span class="stage-val" id="sd-d">-</span>
                         </div>
                         <div class="progress-bar-container">
                             <div class="pb-queue" id="sd-bar-q" style="width: 0%;"></div>
                             <div class="pb-done" id="sd-bar-d" style="width: 0%;"></div>
                         </div>
-                        <div class="stage-sloc">antri 229K &rarr; selesai 2292</div>
+                        <div class="stage-sloc">IN 229K</div>
                     </div>
                 </div>
             </div>
 
             <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
 
+            <%-- Kotak OUT sengaja TANPA ANGKA (ketetapan user 2026-08-04):
+                 ia tidak mengambil data dari mana pun. Menampilkan angka di
+                 sini berarti meminjam arti dari sumber lain, dan itu yang
+                 dulu membuat kartu OUT selalu 0 tanpa ketahuan. --%>
             <div class="storage-box tip-anchor" id="out-box"
-                 data-tip="<span class='ct-h'>OUT &mdash; keluar dari cakupan</span><span class='ct-r'>Komponen yang <b>pernah</b> masuk salah satu dari delapan SLoc yang dipantau, tapi <b>sekarang tidak punya saldo di satu pun</b> &mdash; barangnya sudah lanjut ke luar sistem ini.</span><span class='ct-src'>MSEG riwayat penerimaan &times; MSKA saldo</span><span class='ct-warn'>OUT adalah TAFSIRAN. User menyebut empat tahap tanpa memberi SLoc untuk OUT &mdash; memang tidak ada, karena \"keluar\" berarti tidak berada di mana pun dalam cakupan.</span>">
+                 data-tip="<span class='ct-h'>OUT &mdash; keluar dari cakupan</span><span class='ct-r'>Kotak ini <b>sengaja tanpa angka</b>. Tidak ada sumber data yang menghitung barang keluar dari enam SLoc yang dipantau.</span><span class='ct-warn'>Kosong berarti TIDAK DIHITUNG, bukan nol. Jangan diisi dengan angka yang artinya dipinjam dari perhitungan lain.</span>">
                 <svg class="ic"><use xlink:href="#fa-box-open"></use></svg>
-                <div class="storage-num" id="out-num">-</div>
                 <div>OUT &bull; ke Storage</div>
-                <div class="storage-sub" id="out-sub">menghitung&hellip;</div>
-            </div>
+        </div>
         </div>
 
         <div class="legend-container">
-            <span class="legend-item"><span class="dot orange"></span> Antri &mdash; masih di SLoc masuk tahap itu</span>
-            <span class="legend-item"><span class="dot green"></span> Selesai &mdash; sudah di SLoc keluar tahap itu, atau sudah lewat (MSEG)</span>
+            <span class="legend-item"><span class="dot orange"></span> IN &mdash; masih di SLoc masuk tahap itu</span>
+            <span class="legend-item"><span class="dot green"></span> OUT &mdash; sudah di SLoc keluar tahap itu, atau sudah lewat (MSEG)</span>
+            <span class="legend-item legend-window" id="lgd-window"></span>
         </div>
     </section>
 
@@ -176,7 +161,7 @@
                 <span><i style="background:#2563eb"></i>Machining</span>
                 <span><i style="background:#8b5cf6"></i>Banding</span>
                 <span><i style="background:#06b6d4"></i>Sanding</span>
-                <span><i style="background:#10b981"></i>Selesai</span>
+                <span><i style="background:#10b981"></i>OUT</span>
             </div>
             <div class="so-head-line">
                 <span id="so-buyer-label" class="so-head-buyer">Semua Buyer</span>
@@ -195,7 +180,7 @@
         <div class="detail-header-row">
             <div class="section-title-container">
                 <h2><svg class="ic"><use xlink:href="#fa-list-check"></use></svg> Detail Komponen
-                    <span class="tip-anchor" data-tip="<span class='ct-h'>Status dari konfirmasi operasi</span><span class='ct-r'>Satu baris = satu <b>komponen</b> (SO + Item + Material). Statusnya dinilai dari operasi komponen itu <b>di tahap center yang sedang dipilih</b>.</span><span class='ct-r'>&Sigma;LMNGA = 0 &rarr; antri<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; selesai</span><span class='ct-r'>Klik satu baris untuk membentangkan <b>seluruh tahapnya</b>, termasuk Pembahanan di plant 1000.</span><span class='ct-src'>AFPO+AFKO &rarr; AFVC &rarr; AFVV / AFRU<br>tahap dari PWERK + AFKO-DISPO</span><span class='ct-warn'>Angka di sini TIDAK akan sama dengan dua kotak center di atas. Kotak center berbasis saldo stok (MSKA); tabel ini berbasis konfirmasi operasi (AFRU). Dua pertanyaan yang berbeda.</span>"><svg class="ic"><use xlink:href="#fa-triangle-exclamation"></use></svg></span>
+                    <span class="tip-anchor" data-tip="<span class='ct-h'>Status dari konfirmasi operasi</span><span class='ct-r'>Satu baris = satu <b>komponen</b> (SO + Item + Material). Statusnya dinilai dari operasi komponen itu <b>di tahap center yang sedang dipilih</b>.</span><span class='ct-r'>&Sigma;LMNGA = 0 &rarr; IN<br>0 &lt; &Sigma;LMNGA &lt; MGVRG &rarr; dikerjakan<br>&Sigma;LMNGA &ge; MGVRG atau AUERU=X &rarr; OUT</span><span class='ct-r'>Klik satu baris untuk membentangkan <b>seluruh tahapnya</b>, termasuk Pembahanan di plant 1000.</span><span class='ct-src'>AFPO+AFKO &rarr; AFVC &rarr; AFVV / AFRU<br>tahap dari PWERK + AFKO-DISPO</span><span class='ct-warn'>Angka di sini TIDAK akan sama dengan dua kotak center di atas. Kotak center berbasis saldo stok (MSKA); tabel ini berbasis konfirmasi operasi (AFRU). Dua pertanyaan yang berbeda.</span>"><svg class="ic"><use xlink:href="#fa-triangle-exclamation"></use></svg></span>
                 </h2>
                 <span class="sub-filter" id="detail-sub-label">Semua Buyer &bull; Machining Center</span>
             </div>
@@ -209,11 +194,10 @@
         <%-- Lima tab = lima tahap, warnanya sama dengan bar kartu Sales
              Order supaya mata langsung menghubungkan keduanya. --%>
         <div class="tab-filters">
-            <button class="tab-btn active" data-tab="in"><i style="background:#f59e0b"></i>IN<span class="cnt" id="cnt-in"></span></button>
+            <button class="tab-btn active" data-tab="in"><i style="background:#f59e0b"></i>Central Storage<span class="cnt" id="cnt-in"></span></button>
             <button class="tab-btn" data-tab="mc"><i style="background:#2563eb"></i>Machining<span class="cnt" id="cnt-mc"></span></button>
             <button class="tab-btn" data-tab="bd"><i style="background:#8b5cf6"></i>Banding<span class="cnt" id="cnt-bd"></span></button>
             <button class="tab-btn" data-tab="sd"><i style="background:#06b6d4"></i>Sanding<span class="cnt" id="cnt-sd"></span></button>
-            <button class="tab-btn" data-tab="dn"><i style="background:#10b981"></i>Selesai<span class="cnt" id="cnt-dn"></span></button>
         </div>
 
         <div class="table-wrapper">
@@ -233,11 +217,14 @@
             </table>
         </div>
 
-        <%-- Timestamp disimpan di ATRIBUT, bukan di dalam <script>.
+        <%-- Timestamp disimpan di ATRIBUT, bukan di dalam blok script.
              Isi div ini ditimpa innerHTML oleh renderDetailFooter(); atribut
              bertahan, anak elemen tidak. Tidak ada halaman lain di aplikasi
-             ini yang menaruh tag keluaran ABAP di dalam blok script — pola itu tidak
-             ditiru di sini. --%>
+             ini yang menaruh tag keluaran ABAP di dalam blok script — pola itu
+             tidak ditiru di sini.
+             ⚠️ JANGAN menulis tag HTML lengkap dengan kurung sudut di dalam
+             komentar mana pun. Sebuah "script" ber-kurung-sudut di sini
+             sempat menelan 37 KB isi halaman saat halaman dipindai. --%>
         <div class="table-footer-note" id="detail-footer"
              data-ts="<%= lv_ts_date %> <%= lv_ts_time %>">
             memuat&hellip;

@@ -9,7 +9,7 @@
 *& Rakit JSON Detail Komponen
 *&---------------------------------------------------------------------*
 *& Satu baris = satu komponen (Material) pada SO+Item yang dipilih.
-*&   in/mc/bd/sd/dn    komponen ini muncul di tab mana saja (posisi stok)
+*&   in/mc/bd/sd       komponen ini muncul di tab mana saja (posisi stok)
 *&   st                real stock per SLoc: [{l SLoc, q qty}] — kosong
 *&                     berarti tidak bersaldo di mana pun (baris tab Selesai)
 *&   uom               satuan material; aman ditampilkan karena satu baris
@@ -38,7 +38,6 @@
         lv_bmc   TYPE c LENGTH 1,
         lv_bbd   TYPE c LENGTH 1,
         lv_bsd   TYPE c LENGTH 1,
-        lv_bdn   TYPE c LENGTH 1,
         lv_kst   TYPE string,
         lv_kqty  TYPE i,
         lv_kuomv TYPE string.
@@ -46,7 +45,7 @@
   TYPES ty_ktab TYPE c LENGTH 2.
   DATA: lt_ktab TYPE STANDARD TABLE OF ty_ktab WITH DEFAULT KEY,
         lv_ktab TYPE ty_ktab.
-  lt_ktab = VALUE #( ( 'in' ) ( 'mc' ) ( 'bd' ) ( 'sd' ) ( 'dn' ) ).
+  lt_ktab = VALUE #( ( 'in' ) ( 'mc' ) ( 'bd' ) ( 'sd' ) ).
 
   LOOP AT lt_krow ASSIGNING <kr>.
 
@@ -104,13 +103,12 @@
 
     " Bendera posisi -> '0'/'1'. Ditulis panjang lebar dengan IF biasa;
     " berkas lain di endpoint ini juga tidak memakai konstruksi ringkas.
-    CLEAR: lv_bin, lv_bmc, lv_bbd, lv_bsd, lv_bdn.
-    lv_bin = '0'. lv_bmc = '0'. lv_bbd = '0'. lv_bsd = '0'. lv_bdn = '0'.
+    CLEAR: lv_bin, lv_bmc, lv_bbd, lv_bsd.
+    lv_bin = '0'. lv_bmc = '0'. lv_bbd = '0'. lv_bsd = '0'.
     IF <kr>-p_in = abap_true. lv_bin = '1'. ENDIF.
     IF <kr>-p_mc = abap_true. lv_bmc = '1'. ENDIF.
     IF <kr>-p_bd = abap_true. lv_bbd = '1'. ENDIF.
     IF <kr>-p_sd = abap_true. lv_bsd = '1'. ENDIF.
-    IF <kr>-p_dn = abap_true. lv_bdn = '1'. ENDIF.
 
     IF lv_jfirst = abap_false.
       lv_json2 = lv_json2 && ','.
@@ -123,7 +121,6 @@
             && ',"mc":'    && lv_bmc
             && ',"bd":'    && lv_bbd
             && ',"sd":'    && lv_bsd
-            && ',"dn":'    && lv_bdn
             && ',"uom":"'  && lv_kuomv && '"'
             && ',"st":['    && lv_kst   && ']'
             && ',"q":{'     && lv_kqs   && '}}'.

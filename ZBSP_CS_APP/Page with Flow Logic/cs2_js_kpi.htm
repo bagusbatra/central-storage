@@ -12,7 +12,9 @@
    gagal, yang terlihat cuma kartu bertanda "-", bukan halaman mati.
 
    Dua bagian dipanggil TERPISAH supaya yang lambat tidak memblokir yang
-   cepat. part=ops jauh lebih berat dari part=stock.
+   cepat.
+   ⚠️ part=ops sudah tidak dipanggil sejak kartu OPERASI SELESAI dihapus
+      (2026-08-04) — lihat catatan di dekat akhir loadKpi().
    ==================================================================== */
 function kpiGet(url, onOk) {
     var x = window.XMLHttpRequest ? new XMLHttpRequest()
@@ -31,6 +33,12 @@ function kpiGet(url, onOk) {
 function kpiText(id, txt) {
     var el = document.getElementById(id);
     if (el) { el.innerHTML = txt; }
+}
+
+/* 'YYYYMMDD' -> 'dd.mm.yyyy' */
+function tglPanjang(d8) {
+    if (!d8 || d8.length < 8) { return ''; }
+    return d8.substr(6, 2) + '.' + d8.substr(4, 2) + '.' + d8.substr(0, 4);
 }
 
 function kpiNum(n) {
@@ -68,7 +76,7 @@ var LINTASAN = {
     mcq: 0, mcd: 0, bdq: 0, bdd: 0, sdq: 0, sdd: 0,
     /* null = belum tiba dari part=hist. Sengaja BUKAN 0: nol berarti
        "tidak ada yang lewat", padahal yang benar "belum dihitung". */
-    mcg: null, bdg: null, sdg: null, out: null
+    mcg: null, bdg: null, sdg: null
 };
 
 function drawCenters() {
@@ -79,8 +87,12 @@ function drawCenters() {
           g: LINTASAN.mcg, sq: '2261', sd: '2262' },
         { id: 'bd', nama: 'Banding',          q: LINTASAN.bdq, d: LINTASAN.bdd,
           g: LINTASAN.bdg, sq: '22EK / 22E2', sd: '22E3' },
+        /* 🔴 Sanding TANPA SLoc keluar sejak 2292 dikeluarkan dari cakupan
+           2026-08-04. sdd & sdg karena itu selalu 0 — bukan "nol komponen
+           selesai" melainkan "tidak ada cara menghitungnya". Ditandai
+           sd:null supaya drawCenters() menulisnya apa adanya. */
         { id: 'sd', nama: 'Sanding',          q: LINTASAN.sdq, d: LINTASAN.sdd,
-          g: LINTASAN.sdg, sq: '229K', sd: '2292' }
+          g: LINTASAN.sdg, sq: '229K', sd: null }
     ];
 
     for (var i = 0; i < tahap.length; i++) {
@@ -92,9 +104,16 @@ function drawCenters() {
         var tot = t.q + selesai;
 
         kpiText(t.id + '-q', kpiNum(t.q));
-        kpiText(t.id + '-d', (t.g === null)
-            ? kpiNum(t.d) + '<span class="stage-pending">+?</span>'
-            : kpiNum(selesai));
+        if (t.sd === null) {
+            /* Tidak ada SLoc keluar: menulis "0" akan terbaca sebagai
+               "tidak ada yang selesai", padahal yang benar "tidak bisa
+               dihitung dari data yang ada". */
+            kpiText(t.id + '-d', '<span class="stage-pending">tanpa SLoc</span>');
+        } else {
+            kpiText(t.id + '-d', (t.g === null)
+                ? kpiNum(t.d) + '<span class="stage-pending">+?</span>'
+                : kpiNum(selesai));
+        }
         setBar(t.id + '-bar-q', tot ? Math.round(t.q * 100 / tot) : 0);
         setBar(t.id + '-bar-d', tot ? Math.round(selesai * 100 / tot) : 0);
 
@@ -107,15 +126,15 @@ function drawCenters() {
             box.setAttribute('data-tip',
                 '<span class="ct-h">' + t.nama + '</span>' +
                 '<span class="ct-r"><b>Antri ' + kpiNum(t.q) + '</b> &mdash; stoknya masih di ' + t.sq + '</span>' +
-                '<span class="ct-r"><b>Selesai ' + (t.g === null ? kpiNum(t.d) + ' (+ riwayat menghitung&hellip;)' : kpiNum(selesai)) + '</b> &mdash; stoknya sudah di ' + t.sd +
-                (t.g === null ? '' : ', atau pernah di situ tapi kini sudah lanjut (<b>' + kpiNum(t.g) + '</b>)') + '</span>' +
+                (t.sd === null
+                    ? '<span class="ct-warn">Tahap ini TIDAK punya SLoc keluar dalam cakupan enam SLoc, jadi &quot;selesai&quot; tidak bisa dihitung dari saldo stok maupun riwayat. Bukan nol &mdash; memang tidak terukur.</span>'
+                    : '<span class="ct-r"><b>Selesai ' + (t.g === null ? kpiNum(t.d) + ' (+ riwayat menghitung&hellip;)' : kpiNum(selesai)) + '</b> &mdash; stoknya sudah di ' + t.sd +
+                      (t.g === null ? '' : ', atau pernah di situ tapi kini sudah lanjut (<b>' + kpiNum(t.g) + '</b>)') + '</span>') +
                 '<span class="ct-src">antri &amp; selesai: MSKA saldo &middot; sudah lanjut: MSEG riwayat<br>cacah komponen (SO + Item + Material), bukan qty</span>' +
                 '<span class="ct-warn">Satu komponen bisa muncul di lebih dari satu tahap kalau stoknya terpecah antar SLoc. Jumlah seluruh tahap karena itu TIDAK harus sama dengan kartu SALES ORDER.</span>');
         }
     }
 
-    kpiText('out-num', LINTASAN.out === null ? '&hellip;' : kpiNum(LINTASAN.out));
-    kpiText('out-sub', LINTASAN.out === null ? 'menghitung&hellip;' : 'sudah keluar cakupan');
 }
 
 /* ====================================================================
@@ -205,9 +224,6 @@ function loadKpi() {
         if (!d || !d.ok) {
             kpiText('kpi-so', '-');     kpiText('kpi-so-sub', 'gagal memuat');
             kpiText('kpi-buyer', '-');  kpiText('kpi-buyer-sub', 'gagal memuat');
-            kpiText('kpi-prod', '-');   kpiText('kpi-prod-sub', 'gagal memuat');
-            kpiText('kpi-prod-sub2', '&nbsp;');
-            kpiText('kpi-done', '-');   kpiText('kpi-done-sub', 'gagal memuat');
             /* part=komp bergantung pada part=stock. Kalau yang ini gagal,
                tabel tidak akan pernah terisi — dikatakan sekarang, bukan
                dibiarkan berputar di "memuat" selamanya. */
@@ -220,28 +236,16 @@ function loadKpi() {
         kpiText('kpi-so-sub', kpiNum(d.komp) + ' komponen &middot; ' + kpiNum(d.pcs) + ' pcs');
 
         kpiText('kpi-buyer', kpiNum(d.buyers));
-        kpiText('kpi-buyer-sub', 'punya stok di enam SLoc');
+        kpiText('kpi-buyer-sub', 'punya stok di delapan SLoc');
         kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
 
-        /* DI PRODUKSI — dua baris: rasio thd seluruh komponen, lalu
-           rinciannya per center. Keduanya dari angka yang sudah dikirim
-           part=stock; tidak ada query tambahan. */
-        kpiText('kpi-prod', kpiNum(d.prod));
-        var prodPct = d.komp ? Math.round(d.prod * 100 / d.komp) : 0;
-        kpiText('kpi-prod-sub', 'dari ' + kpiNum(d.komp) + ' komp (' + prodPct + '%)');
-        kpiText('kpi-prod-sub2', 'MC: ' + kpiNum(d.mcp || 0) + ' &middot; EB: ' + kpiNum(d.ebp || 0));
-
-        /* SELESAI PROD. — definisi baru: order delivered penuh DAN stok
-           kosong di enam SLoc (done_real). Field lama d.done (proxy "stok
-           ada di 229K") SENGAJA masih dikirim endpoint untuk perbandingan
-           sampai angka baru diverifikasi PPIC — jangan dipakai di sini. */
-        if (d.done_real === undefined || d.done_real === null) {
-            kpiText('kpi-done', '-');
-            kpiText('kpi-done-sub', 'endpoint belum mengirim done_real');
-        } else {
-            kpiText('kpi-done', kpiNum(d.done_real));
-            kpiText('kpi-done-sub', 'komponen keluar dari 6 SLoc');
+        /* Jendela waktu dinyatakan di legenda Lintasan Produksi — di situ
+           segmen hijau (dari MSEG) paling terpengaruh pembatasan. */
+        if (d.dfrom) {
+            kpiText('lgd-window', '&#9888; data sejak ' + tglPanjang(d.dfrom) +
+                    ' &mdash; gerakan &amp; order lebih tua tidak dihitung');
         }
+
 
         /* ---- dua kotak center ----
            Kuning = antre, biru = dikerjakan. HIJAU sengaja 0 dan diberi
@@ -252,10 +256,6 @@ function loadKpi() {
         LINTASAN.mcq = d.mcq || 0; LINTASAN.mcd = d.mcd || 0;
         LINTASAN.bdq = d.bdq || 0; LINTASAN.bdd = d.bdd || 0;
         LINTASAN.sdq = d.sdq || 0; LINTASAN.sdd = d.sdd || 0;
-        /* OUT datang dari part=stock (AFPO), BUKAN part=hist. Versi pertama
-           menghitungnya dari saldo dan selalu menghasilkan 0 — komponen yang
-           sudah keluar tidak ada di daftar saldo sama sekali. */
-        LINTASAN.out = (d.out === undefined) ? null : d.out;
         drawCenters();
 
         if (d.buyer && d.buyer.length) {
@@ -280,7 +280,6 @@ function loadKpi() {
             if (!h || !h.ok) {
                 LINTASAN.mcg = 0; LINTASAN.bdg = 0; LINTASAN.sdg = 0;
                 drawCenters();
-                kpiText('out-sub', 'riwayat gagal dimuat');
                 return;
             }
             LINTASAN.mcg = h.mcgone || 0;
@@ -290,39 +289,14 @@ function loadKpi() {
         });
     });
 
-    /* hist dipanggil SETELAH stock, karena ia membaca daftar komponen yang
-       baru disiapkan part=stock. Kalau dipanggil bersamaan, hist bisa tiba
-       sebelum daftarnya ada dan membalas "jalankan part=stock lebih dulu". */
-    kpiGet('dash_prod.htm?part=ops', function (d) {
-        if (!d || !d.ok) {
-            kpiText('kpi-conf', '-');
-            kpiText('kpi-conf-sub', 'gagal memuat');
-            return;
-        }
-        kpiText('kpi-conf', d.pct);
-        kpiText('kpi-conf-sub', kpiNum(d.conf) + ' dari ' + kpiNum(d.total) + ' operasi');
-
-        /* Peringatan pembatasan pindah dari sub-teks ke ikon ⚠ + tooltip.
-           CATATAN: spec perbaikan1 menaruh baris peringatan sebagai elemen
-           ber-id di DALAM atribut data-tip lalu menyembunyikannya lewat
-           style.display. Itu tidak bisa bekerja — isi data-tip cuma teks
-           atribut, elemennya tidak pernah ada di DOM sampai tooltip dibuka.
-           Jadi barisnya DITAMBAHKAN ke atribut, pola yang sama dipakai
-           drawCenters(). */
-        var warn = document.getElementById('kpi-conf-warn');
-        var tipc = document.getElementById('tip-conf');
-        if (d.trunc) {
-            if (warn) { warn.style.display = 'inline'; }
-            if (tipc && tipc.getAttribute('data-tip').indexOf('id="ct-trunc"') < 0) {
-                tipc.setAttribute('data-tip', tipc.getAttribute('data-tip') +
-                    '<span class="ct-warn" id="ct-trunc">&#9888; Order melampaui batas ' +
-                    kpiNum(d.ord) + ' &mdash; persentase dihitung dari ' + kpiNum(d.ord) +
-                    ' order teratas. Indikatif, bukan final.</span>');
-            }
-        } else if (warn) {
-            warn.style.display = 'none';
-        }
-    });
+    /* ⚠️ part=ops TIDAK lagi dipanggil. Satu-satunya konsumennya adalah
+       kartu OPERASI SELESAI, yang dihapus 2026-08-04. Fragment dp_ops.htm
+       sengaja DIBIARKAN ada di SE80 — rantai AFKO->AFVC->AFVV->AFRU di
+       dalamnya mahal dibangun ulang, dan mungkin dipakai lagi kalau salah
+       satu kartu baru ternyata butuh status konfirmasi operasi.
+       Kedua kartu yang sempat menggantikannya (MULAI MINGGU INI, SIAP
+       LANJUT) juga sudah dihapus 2026-08-04, jadi sekarang TIDAK ADA
+       kartu ringkasan selain BUYER & SALES ORDER. */
 }
 
 function boot() {

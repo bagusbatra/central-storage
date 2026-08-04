@@ -122,7 +122,10 @@
     /* CARD SYSTEM */
     .summary-cards {
         display: grid;
-        grid-template-columns: repeat(5, 1fr);   /* semula 6; satu kartu dibuang */
+        /* Dua kartu saja sejak 2026-08-04. Lebarnya DIBATASI, bukan 1fr:
+           dua kartu yang direntangkan selebar layar terlihat seperti
+           panel kosong yang gagal terisi. */
+        grid-template-columns: repeat(2, minmax(200px, 300px));
         gap: 12px;
     }
     .card {
@@ -153,18 +156,6 @@
     .card-sub {
         font-size: 10px;
         color: var(--text-muted);
-    }
-    .card-sub-2 {
-        font-size: 10px;
-        color: var(--text-muted);
-        margin-top: 2px;
-    }
-    /* penanda "angka ini dibatasi" di samping nilai kartu */
-    .trunc-warn {
-        font-size: 12px;
-        color: #d97706;
-        margin-left: 4px;
-        cursor: help;
     }
 
     /* ---- TOOLTIP MODERN (satu sistem utk seluruh halaman) ----
@@ -387,6 +378,10 @@
         font-size: 11px;
     }
     .legend-item { display: flex; align-items: center; gap: 4px; }
+    /* Keterangan jendela waktu. Ditulis di legenda, bukan disembunyikan di
+       tooltip: angka yang dipotong tanpa keterangan lebih berbahaya
+       daripada angka yang mengaku dipotong. */
+    .legend-window { margin-left: auto; color: #92400e; font-weight: 600; }
     .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .dot.green { background: var(--color-green); }
     .dot.blue { background: var(--color-blue); }

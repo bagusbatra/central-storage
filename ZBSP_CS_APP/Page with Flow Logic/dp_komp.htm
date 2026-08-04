@@ -17,9 +17,14 @@
 *& bar kartu Sales Order:
 *&   IN        stok di 2KCS
 *&   Machining stok di 2261 / 2262
-*&   Banding   stok di 22EK / 22E2 / 22E3
-*&   Sanding   stok di 229K / 2292
-*&   Selesai   TIDAK bersaldo di satu pun, dan ordernya delivered penuh
+*&   Banding   stok di 22E2 / 22E3
+*&   Sanding   stok di 229K
+*&
+*& ⚠️ SELURUHNYA BERDASARKAN REAL STOCK (ketetapan user 2026-08-04). Tab
+*&    "Selesai" yang sempat ada DIHAPUS: ia satu-satunya yang tidak
+*&    bersumber saldo — basisnya AFPO (delivered penuh + tidak bersaldo).
+*&    Konsekuensinya komponen yang stoknya sudah habis TIDAK muncul sama
+*&    sekali di tabel ini. Itu memang arti "berdasarkan real stock".
 *&
 *& ⚠️ Satu komponen bisa muncul di LEBIH DARI SATU tab kalau stoknya
 *&    terpecah antar SLoc. Itu bukan duplikat — memang barangnya terbelah.
@@ -30,9 +35,8 @@
 *& adalah milik ORDER TAHAP YANG SESUAI TAB (ketetapan user 2026-08-04):
 *&   Machining  pwerk 2000 + DISPO GA1/GA2
 *&   Banding    pwerk 2000 + DISPO EB2
-*&   IN         order paling AWAL   (GSTRP terkecil)
-*&   Sanding    order paling AKHIR  (GSTRP terbesar)
-*&   Selesai    order paling AKHIR
+*&   Central Storage  order paling AWAL   (GSTRP terkecil)
+*&   Sanding          order paling AKHIR  (GSTRP terbesar)
 *&
 *& ⚠️ Sanding TIDAK punya DISPO sendiri — sudah dicatat di CHECKPOINT.
 *&    Karena itu tabnya memakai order paling akhir sebagai WAKIL, bukan
@@ -73,11 +77,9 @@ IF lv_part = 'komp'.
            s_cs  TYPE abap_bool,
            s_261 TYPE abap_bool,
            s_262 TYPE abap_bool,
-           s_ek  TYPE abap_bool,
            s_e2  TYPE abap_bool,
            s_e3  TYPE abap_bool,
            s_29k TYPE abap_bool,
-           s_292 TYPE abap_bool,
          END OF ty_kcomp.
   DATA: lt_kcomp TYPE STANDARD TABLE OF ty_kcomp WITH DEFAULT KEY,
         lv_kc_ts TYPE timestamp.
@@ -98,8 +100,6 @@ IF lv_part = 'komp'.
            p_mc  TYPE abap_bool,
            p_bd  TYPE abap_bool,
            p_sd  TYPE abap_bool,
-           p_dn  TYPE abap_bool,
-           stok  TYPE abap_bool,     " punya saldo di salah satu 8 SLoc
          END OF ty_krow.
   DATA: lt_krow TYPE STANDARD TABLE OF ty_krow WITH DEFAULT KEY.
   FIELD-SYMBOLS <kr> TYPE ty_krow.
@@ -116,17 +116,16 @@ IF lv_part = 'komp'.
       APPEND INITIAL LINE TO lt_krow ASSIGNING <kr>.
       <kr>-matnr = <kc>-matnr.
     ENDIF.
-    <kr>-stok = abap_true.
     IF <kc>-s_cs = abap_true.
       <kr>-p_in = abap_true.
     ENDIF.
     IF <kc>-s_261 = abap_true OR <kc>-s_262 = abap_true.
       <kr>-p_mc = abap_true.
     ENDIF.
-    IF <kc>-s_ek = abap_true OR <kc>-s_e2 = abap_true OR <kc>-s_e3 = abap_true.
+    IF <kc>-s_e2 = abap_true OR <kc>-s_e3 = abap_true.
       <kr>-p_bd = abap_true.
     ENDIF.
-    IF <kc>-s_29k = abap_true OR <kc>-s_292 = abap_true.
+    IF <kc>-s_29k = abap_true.
       <kr>-p_sd = abap_true.
     ENDIF.
   ENDLOOP.
@@ -159,24 +158,11 @@ IF lv_part = 'komp'.
   ENDIF.
   SORT lt_kord BY matnr gstrp aufnr.
 
-  " Komponen yang punya order tapi TIDAK bersaldo -> kandidat "Selesai"
-  LOOP AT lt_kord ASSIGNING <ko>.
-    READ TABLE lt_krow ASSIGNING <kr> WITH KEY matnr = <ko>-matnr.
-    IF sy-subrc <> 0.
-      APPEND INITIAL LINE TO lt_krow ASSIGNING <kr>.
-      <kr>-matnr = <ko>-matnr.
-    ENDIF.
-    IF <kr>-stok = abap_false
-       AND <ko>-psmng > 0 AND <ko>-wemng >= <ko>-psmng.
-      <kr>-p_dn = abap_true.
-    ENDIF.
-  ENDLOOP.
+  " ⚠️ Order TIDAK menambah baris. Dulu komponen tanpa stok tapi ber-order
+  "    delivered penuh ikut dimunculkan sebagai "Selesai"; sejak tabel ini
+  "    murni berdasarkan real stock, sumber barisnya hanya saldo MSKA.
+  "    lt_kord dipakai semata untuk qty target/del dan Bas. start date.
 
-  " Komponen tanpa stok DAN tanpa order delivered penuh tidak masuk tab mana
-  " pun — dibuang supaya tabel tidak berisi baris yang tak muncul di mana-mana.
-  DELETE lt_krow WHERE p_in = abap_false AND p_mc = abap_false
-                   AND p_bd = abap_false AND p_sd = abap_false
-                   AND p_dn = abap_false.
   SORT lt_krow BY matnr.
 
   " ===== Teks material =====
@@ -241,7 +227,7 @@ IF lv_part = 'komp'.
     COLLECT ls_kstk INTO lt_kstk.
   ENDLOOP.
   " Urutan SLoc mengikuti perjalanan barang, bukan abjad: 2KCS lebih dulu
-  " daripada 2261, dan 229K lebih dulu daripada 2292.
+  " daripada 2261, dan 22E2 lebih dulu daripada 22E3.
   SORT lt_kstk BY matnr lgort.
 
   " Satuan material — di sini satu baris = satu material, jadi satuannya
@@ -259,7 +245,7 @@ IF lv_part = 'komp'.
   " ===== Qty per TAB: pilih order wakil tiap tahap =====
   TYPES: BEGIN OF ty_kq,
            matnr TYPE mska-matnr,
-           tab   TYPE c LENGTH 2,     " in mc bd sd dn
+           tab   TYPE c LENGTH 2,     " in mc bd sd
            aufnr TYPE afko-aufnr,
            psmng TYPE afpo-psmng,
            wemng TYPE afpo-wemng,
@@ -302,12 +288,10 @@ IF lv_part = 'komp'.
         APPEND ls_kq TO lt_kq.
       ENDIF.
 
-      " Sanding & Selesai = order paling AKHIR. Ditimpa terus sampai baris
-      " terakhir, sehingga yang tersisa adalah GSTRP terbesar.
-      DELETE lt_kq WHERE matnr = lv_kmat AND ( tab = 'sd' OR tab = 'dn' ).
+      " Sanding = order paling AKHIR. Ditimpa terus sampai baris terakhir,
+      " sehingga yang tersisa adalah GSTRP terbesar.
+      DELETE lt_kq WHERE matnr = lv_kmat AND tab = 'sd'.
       ls_kq-tab = 'sd'.
-      APPEND ls_kq TO lt_kq.
-      ls_kq-tab = 'dn'.
       APPEND ls_kq TO lt_kq.
     ENDLOOP.
   ENDLOOP.
