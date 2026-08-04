@@ -178,6 +178,32 @@
         flex: 0 0 auto;
     }
     .tab-btn .cnt { font-size: 9px; opacity: 0.75; margin-left: 3px; }
+    .tab-btn i {
+        width: 8px; height: 8px; border-radius: 2px;
+        display: inline-block; margin-right: 5px;
+    }
+    /* ---- kolom PROGRES: Qty Del terhadap Qty Target ---- */
+    .qty-bar {
+        height: 7px;
+        background: #e2e8f0;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 3px;
+    }
+    .qty-bar span { display: block; height: 100%; }
+    .qty-pct { font-size: 10px; color: var(--text-muted); }
+    /* ---- kolom JADWAL ---- */
+    .jw-late  { color: #b91c1c; font-weight: 700; }
+    .jw-soon  { color: #b45309; font-weight: 700; }
+    .jw-ok    { color: var(--text-muted); }
+    .jw-date  { font-size: 9px; color: var(--text-muted); font-family: monospace; display: block; }
+    .komp-empty {
+        text-align: center;
+        color: var(--text-muted);
+        padding: 28px 16px;
+        font-size: 11px;
+        line-height: 1.7;
+    }
     .tab-btn {
         background: transparent;
         border: none;

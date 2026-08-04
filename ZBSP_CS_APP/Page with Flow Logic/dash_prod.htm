@@ -27,7 +27,7 @@
 *&    semua fragment, dan nama di fragment mana pun TIDAK BOLEH bertabrakan.
 *&
 *& ===== ALUR =====
-*& Bagian yang menjawab sendiri lalu RETURN : komp, ops1, hist
+*& Bagian yang menjawab sendiri lalu RETURN : komp, hist
 *& Bagian yang mengisi lv_json lalu jatuh ke ekor berkas ini : stock, ops
 *&
 *& ===== KENAPA DIPECAH PER BAGIAN =====
@@ -48,7 +48,7 @@
 *& ===== KETERGANTUNGAN ANTAR-BAGIAN =====
 *& part=stock menulis dua SHARED BUFFER yang dibaca bagian lain:
 *&   'DPRODSI' daftar SO+Item  -> dibaca part=ops   (ada fallback)
-*&   'DPRODKM' daftar komponen -> dibaca part=hist & part=komp/ops1
+*&   'DPRODKM' daftar komponen -> dibaca part=hist & part=komp
 *& Karena itu part=stock HARUS dipanggil lebih dulu; yang lain menjawab
 *& jujur "jalankan part=stock lebih dulu" bila datanya belum ada.
 *&
@@ -62,11 +62,13 @@
 *&   part=hist  -> {"ok":1,"mcgone":n,"bdgone":n,"sdgone":n,"rows":n,"ms":n}
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,
 *&                  "queue":n,"ord":n,"trunc":0|1,"ms":n}
-*&   part=komp  -> {"ok":1,"more":n,"nook":n,"ctr":"MC|EB","rows":[
-*&                  {so,item,mat,txt,bid,buyer,st,done,tot,pct}],"ms":n}
-*&                 param: ctr=MC|EB · so= · item= · bid=
-*&   part=ops1  -> {"ok":1,"rows":[{seq,stg,aufnr,op,st,done,need}],"ms":n}
-*&                 param: so= item= mat=
+*&   part=komp  -> {"ok":1,"so":"..","item":"..","rows":[
+*&                  {mat,txt,in,mc,bd,sd,dn,
+*&                   q:{in|mc|bd|sd|dn:{t,d,g,dd}}}],"ms":n}
+*&                 param: so= item=   WAJIB so; tanpa itu rows kosong.
+*&                 in/mc/bd/sd/dn = komponen muncul di tab mana (posisi stok)
+*&                 q.tab = qty order wakil tahap itu; dd = selisih hari
+*&                 terhadap Bas. start date (negatif kurang, positif telat)
 *&---------------------------------------------------------------------*
 CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
            lc_sample TYPE kna1-kunnr VALUE '2000000004',
@@ -106,53 +108,36 @@ DATA: lv_part  TYPE string,
 
 lv_part  = request->get_form_field( 'part' ).
 lv_fresh = request->get_form_field( 'fresh' ).
-IF lv_part <> 'ops'  AND lv_part <> 'hist'
-   AND lv_part <> 'komp' AND lv_part <> 'ops1'.
+IF lv_part <> 'ops' AND lv_part <> 'hist' AND lv_part <> 'komp'.
   lv_part = 'stock'.
 ENDIF.
 
-" ===== Parameter cakupan untuk part=komp / part=ops1 =====
+" ===== Parameter cakupan untuk part=komp =====
 "   Dibaca DI SINI, sebelum blok cache, karena permintaan yang discope
 "   TIDAK BOLEH dilayani dari cache: cache hanya menyimpan jawaban tanpa
 "   scope. Melayaninya dari cache akan menampilkan komponen SO lain.
 DATA: lv_k_so   TYPE mska-vbeln,
-      lv_k_item TYPE mska-posnr,
-      lv_k_mat  TYPE mska-matnr,
-      lv_k_bid  TYPE kna1-kunnr,
-      lv_k_ctr  TYPE string.
-IF lv_part = 'komp' OR lv_part = 'ops1'.
+      lv_k_item TYPE mska-posnr.
+IF lv_part = 'komp'.
   lv_k_so   = request->get_form_field( 'so' ).
   lv_k_item = request->get_form_field( 'item' ).
-  lv_k_mat  = request->get_form_field( 'mat' ).
-  lv_k_bid  = request->get_form_field( 'bid' ).
-  lv_k_ctr  = request->get_form_field( 'ctr' ).
-  IF lv_k_ctr <> 'EB'.
-    lv_k_ctr = 'MC'.
-  ENDIF.
 ENDIF.
 
 IF lv_part = 'ops'.
   lv_cid = 'DPRODOP'.
 ELSEIF lv_part = 'hist'.
   lv_cid = 'DPRODHI'.
-ELSEIF lv_part = 'ops1'.
-  lv_cid = 'DPRODK1'.
 ELSEIF lv_part = 'komp'.
-  IF lv_k_ctr = 'EB'.
-    lv_cid = 'DPRODKPE'.
-  ELSE.
-    lv_cid = 'DPRODKPM'.
-  ENDIF.
+  lv_cid = 'DPRODKP'.
 ELSE.
   lv_cid = 'DPRODST'.
 ENDIF.
 
-" Permintaan ber-scope & seluruh ops1 selalu dihitung segar dan TIDAK
-" disimpan ke cache — lihat alasan di atas.
+" part=komp SELALU discope ke satu SO+Item, jadi TIDAK PERNAH di-cache:
+" cache hanya menyimpan jawaban tanpa scope, dan melayaninya dari cache
+" akan menampilkan komponen SO lain.
 DATA lv_k_nocache TYPE abap_bool.
-IF lv_part = 'ops1'
-   OR ( lv_part = 'komp'
-        AND ( lv_k_so IS NOT INITIAL OR lv_k_bid IS NOT INITIAL ) ).
+IF lv_part = 'komp'.
   lv_k_nocache = abap_true.
   lv_fresh     = 'X'.
 ENDIF.

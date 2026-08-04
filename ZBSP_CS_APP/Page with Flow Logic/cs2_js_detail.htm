@@ -2,22 +2,41 @@
      PAGE FRAGMENT — JS Detail Komponen
      Disisipkan index2.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
-     Tabel komponen: pengambilan part=komp / part=ops1, pilih SO,
-     bentang tahap, render tabel & kaki tabel.
+     Tabel komponen satu SO+Item: lima tab tahap, qty target vs del,
+     progres, dan jadwal terhadap Bas. start date.
      ========================================================== --%>
 /* ====================================================================
    DETAIL KOMPONEN
 
-   Pembagian kerja penyaring — sengaja tidak seluruhnya di satu tempat:
-     center, SO+Item, buyer  -> DI SERVER (part=komp). Ketiganya mengubah
-       cakupan, jadi harus di server supaya hasilnya lepas dari batas 400
-       komponen. Kalau disaring di browser, memilih satu SO hanya akan
-       menyaring 400 komponen pertama — SO di urutan ke-900 akan terlihat
-       kosong padahal datanya ada.
-     tab status, kotak cari  -> DI BROWSER. Instan, tanpa permintaan baru.
+   KOSONG SAMPAI SEBUAH SALES ORDER DIKLIK (ketetapan user 2026-08-04).
+   Sebelumnya tabel memuat 400 komponen pertama begitu halaman dibuka —
+   daftar sepanjang itu tanpa konteks SO tidak bisa dipakai memutuskan
+   apa pun, dan memaksa endpoint bekerja untuk data yang jarang dibaca.
+
+   LIMA TAB = LIMA TAHAP, pemetaan sama dengan bar kartu Sales Order:
+     IN 2KCS · Machining 2261/2262 · Banding 22EK/22E2/22E3 ·
+     Sanding 229K/2292 · Selesai (tidak bersaldo, order delivered penuh)
+
+   Baris masuk tab mana ditentukan POSISI STOK; Qty Target & Qty Del yang
+   ditampilkan milik ORDER TAHAP YANG SESUAI TAB. Jadi berpindah tab
+   mengubah DUA hal sekaligus: daftar barisnya, dan angkanya.
+
+   Satu komponen bisa muncul di lebih dari satu tab kalau stoknya terpecah
+   antar SLoc. Itu bukan duplikat.
    ==================================================================== */
 
-function kompKey(r) { return r.so + '|' + r.item + '|' + r.mat; }
+/* Baris komponen SO+Item yang sedang dipilih. Kosong = belum ada SO. */
+var KOMP = [];
+
+var kompState   = 'idle';   /* idle | load | ok | err | wait */
+var kompReqSeq  = 0;        /* penanda urutan permintaan — lihat loadKomp() */
+var kompRetried = false;
+
+var TAB_NAMA  = { in: 'IN', mc: 'Machining', bd: 'Banding',
+                  sd: 'Sanding', dn: 'Selesai' };
+var TAB_WARNA = { in: '#f59e0b', mc: '#2563eb', bd: '#8b5cf6',
+                  sd: '#06b6d4', dn: '#10b981' };
+var TAB_URUT  = ['in', 'mc', 'bd', 'sd', 'dn'];
 
 function selectSO(so, item) {
     if (selectedSO && selectedSO.so === so && selectedSO.item === item) {
@@ -25,251 +44,196 @@ function selectSO(so, item) {
     } else {
         selectedSO = { so: so, item: item };
     }
-    EXPANDED = {};
     updateLabels();
     renderSOList();
     loadKomp();
 }
 
-/* Ambil ringkasan komponen. Setiap permintaan diberi nomor urut: jawaban
-   yang datang terlambat dari permintaan LAMA diabaikan, supaya klik cepat
-   berturut-turut tidak membuat tabel menampilkan hasil pilihan sebelumnya. */
+/* Ambil komponen SO+Item terpilih. Tiap permintaan diberi nomor urut:
+   jawaban yang datang terlambat dari permintaan LAMA diabaikan, supaya
+   klik cepat berturut-turut tidak menampilkan hasil pilihan sebelumnya. */
 function loadKomp() {
+    if (!selectedSO) {
+        KOMP = [];
+        kompState = 'idle';
+        renderComponentTable();
+        return;
+    }
+
     var seq = ++kompReqSeq;
     kompState = 'load';
-    EXPANDED = {};
     renderComponentTable();
 
-    var url = 'dash_prod.htm?part=komp&ctr=' +
-              (selectedCenter === 'MC' ? 'MC' : 'EB');
-    if (selectedSO) {
-        url += '&so=' + encodeURIComponent(selectedSO.so) +
-               '&item=' + encodeURIComponent(selectedSO.item);
-    }
-    if (selectedBuyer) {
-        url += '&bid=' + encodeURIComponent(selectedBuyer);
-    }
-
-    kpiGet(url, function (d) {
-        if (seq !== kompReqSeq) { return; }      /* jawaban usang */
-
-        if (!d) {
-            KOMP = []; kompState = 'err';
-            renderComponentTable();
-            return;
-        }
-        if (!d.ok) {
-            /* part=stock belum sempat menulis daftar komponennya. Dicoba
-               ulang SEKALI setelah jeda; kalau masih belum ada, dikatakan
-               apa adanya, bukan ditampilkan sebagai "tidak ada data". */
-            KOMP = []; kompState = 'wait';
-            renderComponentTable();
-            if (!kompRetried) {
-                kompRetried = true;
-                setTimeout(loadKomp, 2500);
-            }
-            return;
-        }
-        KOMP = d.rows || [];
-        kompMore = d.more || 0;
-        kompNook = d.nook || 0;
-        kompState = 'ok';
-        renderComponentTable();
-    });
-}
-
-/* Rincian tahap satu komponen — hanya saat barisnya dibentangkan.
-   Hasilnya disimpan di EXPANDED sehingga buka-tutup berikutnya tidak
-   meminta ulang ke server. */
-function loadStages(r) {
-    var key = kompKey(r);
-    var st = EXPANDED[key];
-    st.state = 'load';
-    renderComponentTable();
-
-    kpiGet('dash_prod.htm?part=ops1' +
-           '&so='   + encodeURIComponent(r.so) +
-           '&item=' + encodeURIComponent(r.item) +
-           '&mat='  + encodeURIComponent(r.mat),
+    kpiGet('dash_prod.htm?part=komp' +
+           '&so='   + encodeURIComponent(selectedSO.so) +
+           '&item=' + encodeURIComponent(selectedSO.item),
         function (d) {
-            var cur = EXPANDED[key];
-            if (!cur) { return; }
-            if (!d || !d.ok) {
-                cur.state = 'err';
-            } else {
-                cur.rows = d.rows || [];
-                cur.state = 'ok';
+            if (seq !== kompReqSeq) { return; }      /* jawaban usang */
+
+            if (!d) {
+                KOMP = []; kompState = 'err';
+                renderComponentTable();
+                return;
             }
+            if (!d.ok) {
+                /* part=stock belum sempat menulis daftar komponennya.
+                   Dicoba ulang SEKALI; kalau masih belum ada, dikatakan
+                   apa adanya, bukan ditampilkan sebagai "tidak ada data". */
+                KOMP = []; kompState = 'wait';
+                renderComponentTable();
+                if (!kompRetried) {
+                    kompRetried = true;
+                    setTimeout(loadKomp, 2500);
+                }
+                return;
+            }
+            KOMP = d.rows || [];
+            kompState = 'ok';
             renderComponentTable();
         });
 }
 
-function toggleStages(r) {
-    var key = kompKey(r);
-    if (EXPANDED[key] && EXPANDED[key].open) {
-        EXPANDED[key].open = false;
-        renderComponentTable();
-        return;
-    }
-    if (!EXPANDED[key]) {
-        EXPANDED[key] = { open: true, rows: null, state: 'load' };
-        loadStages(r);
-        return;
-    }
-    EXPANDED[key].open = true;
-    if (EXPANDED[key].state === 'err') {
-        loadStages(r);                        /* gagal sebelumnya -> coba lagi */
-        return;
-    }
-    renderComponentTable();
-}
-
 function centerName() {
-    return selectedCenter === 'MC' ? 'Machining Center' : 'Edge Banding';
+    return TAB_NAMA[selectedTab] || selectedTab;
 }
 
-function stageRowsHtml(st) {
-    if (st.state === 'load') {
-        return '<div class="stage-msg">memuat tahap&hellip;</div>';
+/* Kolom PROGRES — Qty Del terhadap Qty Target.
+   Target 0 TIDAK digambar sebagai 0%: tanpa target, persentase tidak punya
+   arti. Ditulis "tanpa target" supaya tidak terbaca sebagai "belum jalan". */
+function qtyBar(q, warna) {
+    if (!q) { return '<span class="qty-pct">&mdash;</span>'; }
+    if (!q.t) { return '<span class="qty-pct">tanpa target</span>'; }
+    var pct = Math.round(q.d * 100 / q.t);
+    var lebar = pct > 100 ? 100 : pct;
+    return '<div class="qty-bar"><span style="width:' + lebar +
+           '%; background:' + warna + ';"></span></div>' +
+           '<span class="qty-pct">' + pct + '%' +
+           (pct > 100 ? ' (lebih dari target)' : '') + '</span>';
+}
+
+/* Kolom JADWAL — selisih hari terhadap Bas. start date (AFKO-GSTRP).
+   dd dihitung DI SERVER dengan sy-datum; jangan hitung ulang di sini,
+   jam browser operator bisa berbeda dari jam sistem.
+   "terlambat" di sini berarti SEHARUSNYA SUDAH MULAI, bukan seharusnya
+   sudah selesai — acuannya start date, ketetapan user. */
+function jadwalSel(q) {
+    if (!q || !q.g) {
+        return '<span class="jw-ok">&mdash;</span>' +
+               '<span class="jw-date">tanpa Bas. start date</span>';
     }
-    if (st.state === 'err') {
-        return '<div class="stage-msg" style="color:#b91c1c;">Gagal memuat tahap. ' +
-               'Klik baris ini untuk mencoba lagi.</div>';
+    var dd = q.dd, teks, kelas;
+    if (dd === null || dd === undefined) {
+        teks = '&mdash;'; kelas = 'jw-ok';
+    } else if (dd > 0) {
+        teks = 'terlambat ' + kpiNum(dd) + ' hari'; kelas = 'jw-late';
+    } else if (dd === 0) {
+        teks = 'mulai hari ini'; kelas = 'jw-soon';
+    } else {
+        teks = 'kurang ' + kpiNum(-dd) + ' hari'; kelas = 'jw-ok';
     }
-    if (!st.rows || st.rows.length === 0) {
-        return '<div class="stage-msg">Komponen ini tidak punya order produksi sama sekali.</div>';
-    }
-    var h = '<table class="stage-table">';
-    for (var i = 0; i < st.rows.length; i++) {
-        var s = st.rows[i];
-        h += '<tr>' +
-             '<td style="width:56%;">' +
-                '<span class="stage-seq">' + (s.seq || '?') + '</span>' +
-                '<span class="stage-name">' + esc(s.stg) + '</span>' +
-                ' <span style="opacity:0.7;">op ' + esc(s.op) + '</span>' +
-             '</td>' +
-             '<td style="width:24%;"><span class="status-badge ' + s.st + '">' +
-                String(s.st).toUpperCase() + '</span></td>' +
-             '<td style="width:20%; text-align:right;">' +
-                s.done + ' / ' + (s.need || '&mdash;') + '</td>' +
-             '</tr>';
-    }
-    return h + '</table>';
+    return '<span class="' + kelas + '">' + teks + '</span>' +
+           '<span class="jw-date">' + esc(q.g) + '</span>';
 }
 
 function renderComponentTable() {
     componentTableBody.innerHTML = '';
 
-    /* Cacah per status dihitung dari SELURUH hasil (sebelum tab disaring)
-       supaya angka di tombol tab tidak berubah mengikuti tab yang aktif. */
-    var cnt = { dikerjakan: 0, antri: 0, selesai: 0, semua: 0 };
+    /* Cacah per tab dihitung dari SELURUH hasil, bukan dari tab yang aktif,
+       supaya angka di tombol tidak berubah saat berpindah tab. */
+    var cnt = { in: 0, mc: 0, bd: 0, sd: 0, dn: 0 };
     var rows = [];
     var q = searchQuery.toLowerCase();
-    var i, r;
+    var i, t, r;
 
     for (i = 0; i < KOMP.length; i++) {
         r = KOMP[i];
-        if (q && (r.txt + ' ' + r.mat + ' ' + r.buyer + ' ' + r.so)
-                 .toLowerCase().indexOf(q) < 0) { continue; }
-        cnt.semua++;
-        if (cnt[r.st] !== undefined) { cnt[r.st]++; }
-        if (selectedTab !== 'semua' && r.st !== selectedTab) { continue; }
-        rows.push(r);
+        if (q && (r.txt + ' ' + r.mat).toLowerCase().indexOf(q) < 0) { continue; }
+        for (t = 0; t < TAB_URUT.length; t++) {
+            if (r[TAB_URUT[t]]) { cnt[TAB_URUT[t]]++; }
+        }
+        if (r[selectedTab]) { rows.push(r); }
     }
 
-    var tabs = ['dikerjakan', 'antri', 'selesai', 'semua'];
-    for (i = 0; i < tabs.length; i++) {
-        var el = document.getElementById('cnt-' + tabs[i]);
-        if (el) { el.innerHTML = kompState === 'ok' ? '(' + cnt[tabs[i]] + ')' : ''; }
+    for (i = 0; i < TAB_URUT.length; i++) {
+        var el = document.getElementById('cnt-' + TAB_URUT[i]);
+        if (el) { el.innerHTML = kompState === 'ok' ? '(' + cnt[TAB_URUT[i]] + ')' : ''; }
     }
 
     if (kompState !== 'ok') {
-        var msg = 'Memuat data komponen&hellip;';
-        if (kompState === 'err') {
+        var msg;
+        if (kompState === 'idle') {
+            msg = 'Pilih satu <strong>Sales Order</strong> di panel kiri' +
+                  '<br>untuk melihat komponennya.';
+        } else if (kompState === 'err') {
             msg = 'Gagal memuat data komponen dari dash_prod.htm?part=komp.';
         } else if (kompState === 'wait') {
             msg = 'Menunggu data stok selesai dihitung&hellip;';
+        } else {
+            msg = 'Memuat komponen&hellip;';
         }
         componentTableBody.innerHTML =
-            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:24px;">' +
-            msg + '</td></tr>';
+            '<tr><td colspan="5" class="komp-empty">' + msg + '</td></tr>';
         renderDetailFooter(0);
         return;
     }
 
     if (rows.length === 0) {
         componentTableBody.innerHTML =
-            '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:24px;">' +
-            'Tidak ada komponen yang cocok</td></tr>';
+            '<tr><td colspan="5" class="komp-empty">Tidak ada komponen di tahap ' +
+            esc(centerName()) + '.</td></tr>';
         renderDetailFooter(0);
         return;
     }
 
+    var warna = TAB_WARNA[selectedTab];
     for (var k = 0; k < rows.length; k++) {
         r = rows[k];
-        var key = EXPANDED[kompKey(r)];
-        var isOpen = !!(key && key.open);
-
+        var qq = (r.q || {})[selectedTab];
         var tr = document.createElement('tr');
-        tr.className = 'comp-row' + (isOpen ? ' open' : '');
-        tr.onclick = (function (row) {
-            return function () { toggleStages(row); };
-        })(r);
         tr.innerHTML =
             '<td>' +
-                '<span class="comp-name"><span class="caret">' +
-                    (isOpen ? '&#9660;' : '&#9654;') + '</span>' + esc(r.txt) + '</span>' +
-                '<span class="comp-sub"><span class="mat-code">' + esc(r.mat) + '</span>' +
-                    (r.buyer ? ' • ' + esc(r.buyer) : '') + '</span>' +
+                '<span class="comp-name">' + esc(r.txt) + '</span>' +
+                '<span class="comp-sub"><span class="mat-code">' + esc(r.mat) + '</span></span>' +
             '</td>' +
-            '<td><span class="mat-code">' + esc(r.so) + '</span>' +
-                '<span class="comp-sub">item ' + esc(r.item) + '</span></td>' +
-            '<td><div class="routing-badge">' +
-                '<span style="color:#059669; font-weight:700;">' + r.done + '</span> / ' + r.tot +
-                ' op' +
-            '</div></td>' +
-            '<td><span class="status-badge ' + r.st + '">' + String(r.st).toUpperCase() + '</span></td>' +
-            '<td style="text-align: right; font-weight:700;">' + r.pct + '%</td>';
+            '<td style="text-align:right; font-weight:700;">' +
+                (qq ? kpiNum(qq.t) : '&mdash;') + '</td>' +
+            '<td style="text-align:right; font-weight:700; color:#059669;">' +
+                (qq ? kpiNum(qq.d) : '&mdash;') + '</td>' +
+            '<td>' + qtyBar(qq, warna) + '</td>' +
+            '<td>' + jadwalSel(qq) + '</td>';
         componentTableBody.appendChild(tr);
-
-        if (isOpen) {
-            var dtr = document.createElement('tr');
-            dtr.innerHTML = '<td class="stage-cell" colspan="5">' +
-                            stageRowsHtml(key) + '</td>';
-            componentTableBody.appendChild(dtr);
-        }
     }
 
     renderDetailFooter(rows.length);
 }
 
-/* Kaki tabel: mengaku apa yang TIDAK ditampilkan. Tabel yang diam-diam
-   terpotong jauh lebih berbahaya daripada tabel yang mengaku tidak lengkap. */
+/* Kaki tabel: mengaku dari mana angkanya, dan apa yang tidak ditampilkan. */
 function renderDetailFooter(shown) {
     if (!detailFooter) { return; }
 
     var ts = detailFooter.getAttribute('data-ts') || '';
     var h = ts ? '<span style="float:right;">per ' + esc(ts) + '</span>' : '';
-    h += 'status dari konfirmasi operasi (AFRU) di tahap <strong>' + centerName() +
-         '</strong> &mdash; <strong>bukan</strong> dari saldo stok, jadi tidak sebanding ' +
-         'dengan dua kotak center di atas.';
 
-    if (selectedCenter !== 'MC') {
-        h += '<br>Sanding (229K) tidak punya DISPO tersendiri, jadi tahap ini mencakup ' +
-             'order Edge Banding (EB2) saja.';
+    if (kompState === 'idle') {
+        h += 'Tabel ini terisi setelah satu Sales Order dipilih.';
+        detailFooter.innerHTML = h;
+        return;
+    }
+
+    h += 'Baris masuk tab ini karena <strong>stoknya</strong> ada di SLoc tahap ' +
+         esc(centerName()) + '. Qty Target &amp; Qty Del diambil dari ' +
+         '<strong>order tahap itu</strong> (AFPO); jadwal dihitung terhadap ' +
+         'Bas. start date (AFKO-GSTRP), jadi "terlambat" berarti seharusnya ' +
+         'sudah MULAI.';
+
+    if (selectedTab === 'sd') {
+        h += '<div class="warn-strip">Sanding tidak punya DISPO tersendiri, jadi ' +
+             'qty yang ditampilkan diambil dari <strong>order paling akhir</strong> ' +
+             'komponen itu &mdash; wakil, bukan order Sanding yang sesungguhnya.</div>';
     }
     if (kompState === 'ok') {
-        h += '<br>menampilkan ' + shown + ' dari ' + KOMP.length + ' komponen di tahap ini';
-        if (kompNook > 0) {
-            h += ' &nbsp;|&nbsp; ' + kompNook +
-                 ' komponen tidak punya order produksi di tahap ini';
-        }
-    }
-    if (kompMore > 0) {
-        h += '<div class="warn-strip">Menampilkan ' + KOMP.length +
-             ' komponen pertama; ' + kompMore + ' lainnya tidak dimuat. ' +
-             'Pilih satu Sales Order atau satu Buyer untuk melihatnya.</div>';
+        h += '<br>menampilkan ' + shown + ' dari ' + KOMP.length +
+             ' komponen pada Sales Order ini';
     }
     detailFooter.innerHTML = h;
 }
-

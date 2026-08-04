@@ -206,11 +206,14 @@
             </div>
         </div>
 
+        <%-- Lima tab = lima tahap, warnanya sama dengan bar kartu Sales
+             Order supaya mata langsung menghubungkan keduanya. --%>
         <div class="tab-filters">
-            <button class="tab-btn active" data-tab="dikerjakan">Dikerjakan<span class="cnt" id="cnt-dikerjakan"></span></button>
-            <button class="tab-btn" data-tab="antri">Antri<span class="cnt" id="cnt-antri"></span></button>
-            <button class="tab-btn" data-tab="selesai">Selesai<span class="cnt" id="cnt-selesai"></span></button>
-            <button class="tab-btn" data-tab="semua">Semua<span class="cnt" id="cnt-semua"></span></button>
+            <button class="tab-btn active" data-tab="in"><i style="background:#f59e0b"></i>IN<span class="cnt" id="cnt-in"></span></button>
+            <button class="tab-btn" data-tab="mc"><i style="background:#2563eb"></i>Machining<span class="cnt" id="cnt-mc"></span></button>
+            <button class="tab-btn" data-tab="bd"><i style="background:#8b5cf6"></i>Banding<span class="cnt" id="cnt-bd"></span></button>
+            <button class="tab-btn" data-tab="sd"><i style="background:#06b6d4"></i>Sanding<span class="cnt" id="cnt-sd"></span></button>
+            <button class="tab-btn" data-tab="dn"><i style="background:#10b981"></i>Selesai<span class="cnt" id="cnt-dn"></span></button>
         </div>
 
         <div class="table-wrapper">
@@ -218,10 +221,10 @@
                 <thead>
                     <tr>
                         <th>KOMPONEN</th>
-                        <th>SO / ITEM</th>
-                        <th>OPERASI</th>
-                        <th>STATUS</th>
-                        <th style="text-align: right;">SELESAI</th>
+                        <th style="text-align: right;">QTY TARGET</th>
+                        <th style="text-align: right;">QTY DEL</th>
+                        <th style="width: 24%;">PROGRES</th>
+                        <th>JADWAL &mdash; BAS. START DATE</th>
                     </tr>
                 </thead>
                 <tbody id="component-table-body">

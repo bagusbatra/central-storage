@@ -1,216 +1,118 @@
 <%@ page language="abap" %><%-- ==========================================================
-     PAGE FRAGMENT — part=komp & part=ops1 — perakitan jawaban
+     PAGE FRAGMENT — part=komp — perakitan jawaban
      Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
      Lanjutan dp_komp.htm; berjalan di dalam IF milik berkas itu dan
      memakai tabel yang sudah disiapkan di sana.
      ========================================================== --%><%
 *&---------------------------------------------------------------------*
-*& part=ops1 — seluruh tahap SATU komponen
+*& Rakit JSON Detail Komponen
 *&---------------------------------------------------------------------*
-  IF lv_part = 'ops1'.
-
-    DATA: lv_kstg TYPE string.
-    LOOP AT lt_kord ASSIGNING <ko>.
-      CASE <ko>-seq.
-        WHEN 1. lv_kstg = 'Pembahanan'.
-        WHEN 2. lv_kstg = 'Machining Center'.
-        WHEN 3. lv_kstg = 'Edge Banding'.
-        WHEN OTHERS.
-          " Tahapnya tidak dikenali dari plant+DISPO. Ditampilkan apa adanya
-          " supaya kelihatan ada order yang belum terpetakan, bukan disembunyikan.
-          lv_kstg = 'Tahap lain (' && <ko>-pwerk && '/' && <ko>-dispo && ')'.
-      ENDCASE.
-
-      LOOP AT lt_kop INTO ls_kop WHERE aufpl = <ko>-aufpl.
-        CLEAR lv_kmg.
-        READ TABLE lt_kvv INTO ls_kvv
-          WITH KEY aufpl = ls_kop-aufpl aplzl = ls_kop-aplzl BINARY SEARCH.
-        IF sy-subrc = 0.
-          lv_kmg = ls_kvv-mgvrg.
-        ENDIF.
-
-        CLEAR ls_kagg.
-        READ TABLE lt_kagg INTO ls_kagg
-          WITH KEY aufnr = <ko>-aufnr vornr = ls_kop-vornr BINARY SEARCH.
-
-        " RUMUS BAKU — diag_routing.htm:355-365
-        IF ls_kagg-aueru = 'X' OR ( lv_kmg > 0 AND ls_kagg-lmnga >= lv_kmg ).
-          lv_kst = 'selesai'.
-        ELSEIF ls_kagg-lmnga > 0.
-          lv_kst = 'dikerjakan'.
-        ELSE.
-          lv_kst = 'antri'.
-        ENDIF.
-
-
-        IF lv_kfirst = abap_false.
-          lv_json2 = lv_json2 && ','.
-        ENDIF.
-        lv_kfirst = abap_false.
-        lv_json2 = lv_json2
-                && '{"seq":'      && |{ <ko>-seq }|
-                && ',"stg":"'     && lv_kstg     && '"'
-                && ',"aufnr":"'   && <ko>-aufnr  && '"'
-                && ',"op":"'      && ls_kop-vornr && '"'
-                && ',"st":"'      && lv_kst      && '"'
-                && ',"done":'     && |{ round( val = ls_kagg-lmnga dec = 0 ) }|
-                && ',"need":'     && |{ round( val = lv_kmg dec = 0 ) }| && '}'.
-      ENDLOOP.
-    ENDLOOP.
-
-    GET RUN TIME FIELD lv_t1.
-    lv_ms = ( lv_t1 - lv_t0 ) / 1000.
-    lv_json = '{"ok":1,"rows":[' && lv_json2 && '],"ms":' && |{ lv_ms }| && '}'.
-
-    response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
-    %><%= lv_json %><%
-    RETURN.
-  ENDIF.
-
+*& Satu baris = satu komponen (Material) pada SO+Item yang dipilih.
+*&   p.in/mc/bd/sd/dn  komponen ini muncul di tab mana saja (posisi stok)
+*&   q.tab           qty order WAKIL tahap itu: t target, d del,
+*&                     g Bas. start date (dd.mm.yyyy), dd selisih hari
+*&
+*& dd dihitung DI SERVER dengan sy-datum, bukan di browser: jam browser
+*& operator bisa berbeda dari jam sistem, dan "terlambat 1 hari" yang
+*& meleset karena beda zona waktu lebih buruk daripada tidak ada sama sekali.
+*&   dd < 0  masih kurang |dd| hari menuju tanggal mulai
+*&   dd > 0  sudah terlambat dd hari dari tanggal mulai
+*&   dd = 0  tepat hari ini
+*& Order tanpa GSTRP mengirim g:"" dan dd:null — UI menampilkan "—",
+*& bukan menghitung dari tanggal kosong.
 *&---------------------------------------------------------------------*
-*& part=komp — satu baris per komponen, dinilai di tahap center terpilih
-*&---------------------------------------------------------------------*
-  DATA: lv_kseq  TYPE i,
-        lv_ktot  TYPE i,
-        lv_kconf TYPE i,
-        lv_kact  TYPE i,
-        lv_kpct  TYPE i,
-        lv_knook TYPE i,
+  DATA: lv_json2 TYPE string,
+        lv_jfirst TYPE abap_bool VALUE abap_true,
         lv_ktxt  TYPE string,
-        lv_kbuy  TYPE string.
-  IF lv_k_ctr = 'EB'.
-    lv_kseq = 3.
-  ELSE.
-    lv_kseq = 2.
-  ENDIF.
+        lv_kqs   TYPE string,
+        lv_kdd   TYPE i,
+        lv_kt    TYPE i,
+        lv_kd    TYPE i,
+        lv_kgs   TYPE string,
+        lv_bin   TYPE c LENGTH 1,
+        lv_bmc   TYPE c LENGTH 1,
+        lv_bbd   TYPE c LENGTH 1,
+        lv_bsd   TYPE c LENGTH 1,
+        lv_bdn   TYPE c LENGTH 1.
+  DATA: ls_kq2 TYPE ty_kq.
+  TYPES ty_ktab TYPE c LENGTH 2.
+  DATA: lt_ktab TYPE STANDARD TABLE OF ty_ktab WITH DEFAULT KEY,
+        lv_ktab TYPE ty_ktab.
+  lt_ktab = VALUE #( ( 'in' ) ( 'mc' ) ( 'bd' ) ( 'sd' ) ( 'dn' ) ).
 
-  " Teks material & nama buyer
-  TYPES: BEGIN OF ty_kmk, matnr TYPE makt-matnr, maktx TYPE makt-maktx, END OF ty_kmk.
-  DATA: lt_kmk TYPE STANDARD TABLE OF ty_kmk WITH DEFAULT KEY, ls_kmk TYPE ty_kmk.
-  IF lt_ksel IS NOT INITIAL.
-    SELECT matnr maktx FROM makt INTO TABLE lt_kmk
-      FOR ALL ENTRIES IN lt_ksel
-      WHERE matnr = lt_ksel-matnr AND spras = sy-langu.
-    SORT lt_kmk BY matnr. DELETE ADJACENT DUPLICATES FROM lt_kmk COMPARING matnr.
-  ENDIF.
+  LOOP AT lt_krow ASSIGNING <kr>.
 
-  TYPES: BEGIN OF ty_kkn, kunnr TYPE kna1-kunnr, name1 TYPE kna1-name1, END OF ty_kkn.
-  DATA: lt_kkn  TYPE STANDARD TABLE OF ty_kkn WITH DEFAULT KEY, ls_kkn TYPE ty_kkn,
-        lt_kkun TYPE STANDARD TABLE OF kna1-kunnr WITH DEFAULT KEY.
-  LOOP AT lt_ksel ASSIGNING <ks>.
-    IF <ks>-kunnr IS NOT INITIAL.
-      APPEND <ks>-kunnr TO lt_kkun.
-    ENDIF.
-  ENDLOOP.
-  SORT lt_kkun. DELETE ADJACENT DUPLICATES FROM lt_kkun.
-  IF lt_kkun IS NOT INITIAL.
-    SELECT kunnr name1 FROM kna1 INTO TABLE lt_kkn
-      FOR ALL ENTRIES IN lt_kkun
-      WHERE kunnr = lt_kkun-table_line.
-    SORT lt_kkn BY kunnr.
-  ENDIF.
-
-  LOOP AT lt_ksel ASSIGNING <ks>.
-    CLEAR: lv_ktot, lv_kconf, lv_kact.
-
-    LOOP AT lt_kord ASSIGNING <ko>
-      WHERE kdauf = <ks>-vbeln AND kdpos = <ks>-posnr
-        AND matnr = <ks>-matnr AND seq   = lv_kseq.
-
-      LOOP AT lt_kop INTO ls_kop WHERE aufpl = <ko>-aufpl.
-        lv_ktot = lv_ktot + 1.
-
-        CLEAR lv_kmg.
-        READ TABLE lt_kvv INTO ls_kvv
-          WITH KEY aufpl = ls_kop-aufpl aplzl = ls_kop-aplzl BINARY SEARCH.
-        IF sy-subrc = 0.
-          lv_kmg = ls_kvv-mgvrg.
+    " ---- blok q: satu entri per tab yang punya order wakil ----
+    CLEAR lv_kqs.
+    LOOP AT lt_ktab INTO lv_ktab.
+      READ TABLE lt_kq INTO ls_kq2
+        WITH KEY matnr = <kr>-matnr tab = lv_ktab BINARY SEARCH.
+      IF sy-subrc <> 0.
+        CONTINUE.                    " tahap ini tidak punya order wakil
+      ENDIF.
+      lv_kt = round( val = ls_kq2-psmng dec = 0 ).
+      lv_kd = round( val = ls_kq2-wemng dec = 0 ).
+      IF ls_kq2-gstrp IS INITIAL.
+        lv_kgs = ''.
+        IF lv_kqs IS NOT INITIAL.
+          lv_kqs = lv_kqs && ','.
         ENDIF.
-
-        CLEAR ls_kagg.
-        READ TABLE lt_kagg INTO ls_kagg
-          WITH KEY aufnr = <ko>-aufnr vornr = ls_kop-vornr BINARY SEARCH.
-
-
-        " RUMUS BAKU — diag_routing.htm:355-365
-        IF ls_kagg-aueru = 'X' OR ( lv_kmg > 0 AND ls_kagg-lmnga >= lv_kmg ).
-          lv_kconf = lv_kconf + 1.
-        ELSE.
-          IF ls_kagg-lmnga > 0.
-            lv_kact = lv_kact + 1.
-          ENDIF.
+        lv_kqs = lv_kqs && '"' && lv_ktab && '":{"t":' && |{ lv_kt }|
+              && ',"d":' && |{ lv_kd }| && ',"g":"","dd":null}'.
+      ELSE.
+        lv_kgs = ls_kq2-gstrp+6(2) && '.' && ls_kq2-gstrp+4(2)
+              && '.' && ls_kq2-gstrp(4).
+        lv_kdd = sy-datum - ls_kq2-gstrp.
+        IF lv_kqs IS NOT INITIAL.
+          lv_kqs = lv_kqs && ','.
         ENDIF.
-      ENDLOOP.
+        lv_kqs = lv_kqs && '"' && lv_ktab && '":{"t":' && |{ lv_kt }|
+              && ',"d":' && |{ lv_kd }| && ',"g":"' && lv_kgs
+              && '","dd":' && |{ lv_kdd }| && '}'.
+      ENDIF.
     ENDLOOP.
 
-    " Komponen tanpa order di tahap ini tidak ditampilkan, tapi DICACAH dan
-    " dilaporkan — supaya selisihnya tidak terlihat seperti data hilang.
-    IF lv_ktot = 0.
-      lv_knook = lv_knook + 1.
-      CONTINUE.
-    ENDIF.
-
-    IF lv_kconf >= lv_ktot.
-      lv_kst = 'selesai'.
-    ELSEIF lv_kconf > 0 OR lv_kact > 0.
-      lv_kst = 'dikerjakan'.
-    ELSE.
-      lv_kst = 'antri'.
-    ENDIF.
-    lv_kpct = lv_kconf * 100 / lv_ktot.
-
-    CLEAR lv_ktxt.
-    READ TABLE lt_kmk INTO ls_kmk WITH KEY matnr = <ks>-matnr BINARY SEARCH.
-    IF sy-subrc = 0.
-      lv_ktxt = ls_kmk-maktx.
-    ELSE.
-      lv_ktxt = <ks>-matnr.        " tanpa master data: tampilkan kodenya
-    ENDIF.
-
-    CLEAR lv_kbuy.
-    READ TABLE lt_kkn INTO ls_kkn WITH KEY kunnr = <ks>-kunnr BINARY SEARCH.
-    IF sy-subrc = 0.
-      lv_kbuy = ls_kkn-name1.
-    ELSE.
-      lv_kbuy = <ks>-kunnr.
-    ENDIF.
-
-    " Escape JSON. Urutan penting: backslash dulu, baru tanda kutip.
+    " ---- teks material: escape sebelum masuk JSON ----
+    lv_ktxt = <kr>-txt.
     REPLACE ALL OCCURRENCES OF '\' IN lv_ktxt WITH '\\'.
     REPLACE ALL OCCURRENCES OF '"' IN lv_ktxt WITH '\"'.
-    REPLACE ALL OCCURRENCES OF '\' IN lv_kbuy WITH '\\'.
-    REPLACE ALL OCCURRENCES OF '"' IN lv_kbuy WITH '\"'.
 
-    IF lv_kfirst = abap_false.
+    " Bendera posisi -> '0'/'1'. Ditulis panjang lebar dengan IF biasa;
+    " berkas lain di endpoint ini juga tidak memakai konstruksi ringkas.
+    CLEAR: lv_bin, lv_bmc, lv_bbd, lv_bsd, lv_bdn.
+    lv_bin = '0'. lv_bmc = '0'. lv_bbd = '0'. lv_bsd = '0'. lv_bdn = '0'.
+    IF <kr>-p_in = abap_true. lv_bin = '1'. ENDIF.
+    IF <kr>-p_mc = abap_true. lv_bmc = '1'. ENDIF.
+    IF <kr>-p_bd = abap_true. lv_bbd = '1'. ENDIF.
+    IF <kr>-p_sd = abap_true. lv_bsd = '1'. ENDIF.
+    IF <kr>-p_dn = abap_true. lv_bdn = '1'. ENDIF.
+
+    IF lv_jfirst = abap_false.
       lv_json2 = lv_json2 && ','.
     ENDIF.
-    lv_kfirst = abap_false.
+    lv_jfirst = abap_false.
     lv_json2 = lv_json2
-            && '{"so":"'     && <ks>-vbeln && '"'
-            && ',"item":"'   && <ks>-posnr && '"'
-            && ',"mat":"'    && <ks>-matnr && '"'
-            && ',"txt":"'    && lv_ktxt    && '"'
-            && ',"bid":"'    && <ks>-kunnr && '"'
-            && ',"buyer":"'  && lv_kbuy    && '"'
-            && ',"st":"'     && lv_kst     && '"'
-            && ',"done":'    && |{ lv_kconf }|
-            && ',"tot":'     && |{ lv_ktot }|
-            && ',"pct":'     && |{ lv_kpct }| && '}'.
+            && '{"mat":"'  && <kr>-matnr && '"'
+            && ',"txt":"'  && lv_ktxt    && '"'
+            && ',"in":'    && lv_bin
+            && ',"mc":'    && lv_bmc
+            && ',"bd":'    && lv_bbd
+            && ',"sd":'    && lv_bsd
+            && ',"dn":'    && lv_bdn
+            && ',"q":{'    && lv_kqs && '}}'.
   ENDLOOP.
 
   GET RUN TIME FIELD lv_t1.
   lv_ms = ( lv_t1 - lv_t0 ) / 1000.
 
-  lv_json = '{"ok":1,"ctr":"' && lv_k_ctr && '"'
-         && ',"more":'  && |{ lv_kmore }|
-         && ',"nook":'  && |{ lv_knook }|
-         && ',"rows":[' && lv_json2 && ']'
-         && ',"ms":'    && |{ lv_ms }| && '}'.
+  lv_json = '{"ok":1,"so":"' && lv_k_so && '"'
+         && ',"item":"'      && lv_k_item && '"'
+         && ',"rows":['      && lv_json2 && ']'
+         && ',"ms":'         && |{ lv_ms }| && '}'.
 
-  IF lv_k_nocache = abap_false.
-    EXPORT ts = lv_now js = lv_json TO SHARED BUFFER indx(zc) ID lv_cid.
-  ENDIF.
+  " Selalu dihitung segar: permintaan ini SELALU discope ke satu SO+Item,
+  " dan cache hanya menyimpan jawaban tanpa scope.
   response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
   %><%= lv_json %><%
   RETURN.

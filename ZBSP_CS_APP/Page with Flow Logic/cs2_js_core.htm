@@ -33,9 +33,9 @@ var KOMP = [];
 /* STATE */
 var selectedBuyer = null;
 var selectedCenter = 'MC';
-/* Tab dibuka di DIKERJAKAN, bukan "Semua" — permintaan user 2026-08-03.
-   Kelas .active di HTML harus ikut ada di tombol ini. */
-var selectedTab = 'dikerjakan';
+/* Tab dibuka di IN, tahap paling awal. Kelas .active di HTML harus ikut
+   ada di tombol ini. */
+var selectedTab = 'in';
 var soQuery = '';
 var soMore = 0;
 /* SO+Item yang seluruh komponennya sudah selesai — disaring di server
@@ -44,20 +44,11 @@ var soMore = 0;
 var soDone = 0;
 var searchQuery = '';
 
-/* Sales Order yang sedang dipilih; null = semua SO.
-   Bukan sekadar penyaring di browser: memilih SO memicu pengambilan ulang
-   part=komp yang discope, sehingga komponennya lepas dari batas 400. */
+/* Sales Order yang sedang dipilih; null = belum ada, dan Detail Komponen
+   sengaja KOSONG selama itu (ketetapan user 2026-08-04). Memilih SO
+   memicu pengambilan part=komp yang discope ke SO+Item itu.
+   Keadaan tabelnya sendiri (KOMP, kompState, dll) ada di cs2_js_detail.htm. */
 var selectedSO = null;
-
-/* Keadaan tabel komponen */
-var kompMore    = 0;      /* komponen di luar batas, dilaporkan apa adanya */
-var kompNook    = 0;      /* komponen tanpa order di tahap center ini      */
-var kompState   = 'load'; /* load | ok | err | wait                        */
-var kompReqSeq  = 0;      /* penanda urutan permintaan — lihat loadKomp()  */
-var kompRetried = false;
-
-/* Baris yang dibentangkan: kunci -> { open, rows, state } */
-var EXPANDED = {};
 
 /* DOM */
 var buyerFilterContainer, btnAllBuyer, mcBox, ebsBox,
@@ -133,7 +124,7 @@ function selectBuyer(buyerId) {
     renderBuyerFilters();
     updateLabels();
     renderSOList();
-    loadKomp();
+    loadKomp();          /* selectedSO baru saja dilepas -> tabel kosong */
 }
 
 function switchCenter(center) {
@@ -271,14 +262,10 @@ function setupEventListeners() {
     btnAllBuyer.onclick = function () { selectBuyer(null); };
     /* Ganti center = ganti TAHAP yang dinilai, jadi tabelnya harus diambil
        ulang dari server, bukan sekadar dirender ulang. */
-    mcBox.onclick  = function () {
-        if (selectedCenter === 'MC') { return; }
-        switchCenter('MC'); loadKomp();
-    };
-    ebsBox.onclick = function () {
-        if (selectedCenter === 'EBS') { return; }
-        switchCenter('EBS'); loadKomp();
-    };
+    /* Ganti center TIDAK lagi memuat ulang Detail Komponen: tabel itu kini
+       discope per Sales Order dan per TAB tahap, bukan per center. */
+    mcBox.onclick  = function () { switchCenter('MC'); };
+    ebsBox.onclick = function () { switchCenter('EBS'); };
 
     var tabs = document.getElementsByClassName('tab-btn');
     for (var i = 0; i < tabs.length; i++) {
