@@ -82,15 +82,32 @@ sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti t
 - **Pusat produksi:** 2 center — Machining Center + Edge Banding & Sanding.
   Dulu 3 section
 - **Alur:** Storage → Machining → Edge Banding → Storage
-- **⚠️ ATURAN CAKUPAN DIPERLUAS (ketentuan wajib user, 2026-08-01):** SO yang
-  dihitung adalah yang punya stok di **enam** SLoc: `2KCS`, `2261`, `2262`,
-  `22E2`, `22E3`, `229K` — bukan lagi 2KCS saja. Berlaku untuk buyer,
-  komponen, dan SO. Sample customer `2000000004` tetap
-  dibuang. Satu "komponen" = COUNT DISTINCT (VBELN+POSNR+MATNR)
+- **⚠️ ATURAN CAKUPAN (ketentuan wajib user):** SO yang dihitung adalah yang
+  punya stok di **delapan** SLoc — `2KCS`, `2261`, `2262`, `22EK`, `22E2`,
+  `22E3`, `229K`, `2292`. Diperluas dari enam ke delapan 2026-08-03 (`22EK`
+  EBD Karantina, `2292` Sanding D-OUT); angka BUYER/SO/komponen ikut naik —
+  itu benar, bukan regresi. Sample customer `2000000004` tetap dibuang.
+  Satu "komponen" = COUNT DISTINCT (VBELN+POSNR+MATNR)
 - **PLO tidak dipakai** (ketentuan wajib user); `PLAF` tidak disentuh
+- **Lintasan Produksi — EMPAT tahap** (2026-08-03). Tiap tahap punya SLoc
+  masuk (antri) dan keluar (selesai):
+
+  | Tahap | Antri | Selesai |
+  |---|---|---|
+  | IN | — | `2KCS` |
+  | Machining Center | `2261` | `2262` |
+  | Banding | `22EK`, `22E2` | `22E3` |
+  | Sanding | `229K` | `2292` |
+  | OUT | — | tidak punya SLoc; dari MSEG |
+
+  🔴 **`229K` kini = ANTRI SANDING, bukan selesai.** Sebelumnya seluruh
+  aplikasi memperlakukannya sebagai CP4 100% (`ZCL_CS_UTIL` `gc_st_done`,
+  `cp_qty( )`). Model lama itu SALAH — ditetapkan user 2026-08-03. `cp_qty( )`
+  kode mati sehingga tidak ada yang rusak, tapi jangan dipakai lagi sebagai
+  penanda selesai.
+
 - **Pemetaan center — DUA sumbu berbeda, jangan dicampur:**
-  - **stok** → SLoc: Machining = `2KCS`/`2261`/`2262`;
-    Edge Banding & Sanding = `22E2`/`22E3`/`229K`
+  - **stok** → SLoc: lihat tabel empat tahap di atas
   - **order** → `AFPO-PWERK` + `AFKO-DISPO`: Pembahanan = 1000 +
     WM1/WM2/PN1/PN2; Machining = 2000 + GA1/GA2; Edge Banding = 2000 + EB2.
     ⚠️ Sanding TIDAK punya DISPO, jadi pada sumbu order "EBS" = EB2 saja
@@ -138,8 +155,8 @@ halaman menjadi >1 menit/timeout).
 
 | part | Isi | Cache |
 |---|---|---|
-| `stock` | MSKA enam SLoc → kartu, buyer, daftar SO, dua kotak center | `DPRODST` |
-| `hist` | `MSEG` → segmen hijau "sudah lewat" | `DPRODHI` |
+| `stock` | MSKA delapan SLoc → kartu, buyer, daftar SO, Lintasan Produksi | `DPRODST` |
+| `hist` | `MSEG` → "sudah lewat" per tahap + kartu OUT | `DPRODHI` |
 | `ops` | AFKO→AFVC→AFVV→AFRU → kartu OPERASI SELESAI | `DPRODOP` |
 | `komp` | ringkasan komponen untuk tabel Detail Komponen | `DPRODKPM`/`DPRODKPE` |
 | `ops1` | seluruh tahap SATU komponen (saat baris dibentangkan) | tanpa cache |
@@ -174,7 +191,7 @@ TTL 300 dtk, `?fresh=1` memaksa hitung ulang.
   ter-konfirmasi; yang berubah labelnya, supaya tidak lagi mengklaim
   "komponen diterima" seperti maksud prototype. K6 ditutup begini
 - **SELESAI PROD. didefinisi ulang** (2026-08-03, Opsi B/Tafsir X):
-  `AFPO-WEMNG ≥ PSMNG` **dan** stok kosong di keenam SLoc → field `done_real`.
+  `AFPO-WEMNG ≥ PSMNG` **dan** stok kosong di kedelapan SLoc → `done_real`.
   Field lama `done` (proxy "stok ada di 229K") sengaja masih dikirim untuk
   pembanding; hapus hanya setelah PPIC memverifikasi angka baru
 - **Kolom QTY ROUTING** diganti kolom **OPERASI** berisi `done/tot op` +

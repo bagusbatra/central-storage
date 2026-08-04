@@ -12,7 +12,7 @@ dokumen ini dari atas — isinya cukup untuk melanjutkan tanpa konteks lain.
 
 | Tahap | Isi | Status |
 |---|---|---|
-| 0 | Perluas cakupan ke enam SLoc | ✅ Selesai |
+| 0 | Perluas cakupan SLoc | ✅ Selesai — 1 → 6 (2026-08-01) → **8** (2026-08-03) |
 | 1 | Filter Buyer + kartu BUYER | ✅ Selesai |
 | 2 | Panel SO | ✅ Selesai — klik SO ditambahkan 2026-08-03 |
 | 3 | Dua kotak center + tiga warna | ✅ Selesai — hijau dari `MSEG` |
@@ -32,12 +32,13 @@ Ditetapkan user 2026-08-01. Berlaku untuk **seluruh** panel di halaman ini.
 Kalau sebuah panel melanggar salah satunya, panel itu salah — bukan
 ketentuannya yang dinegosiasi.
 
-### W1 — Cakupan data: enam storage location
+### W1 — Cakupan data: **delapan** storage location
 
-Data yang diambil terfokus pada **SO yang memiliki stok** di:
+Diperluas dari enam ke delapan 2026-08-03 (`22EK`, `2292`). Data yang diambil
+terfokus pada **SO yang memiliki stok** di:
 
 ```
-2KCS · 2261 · 2262 · 22E2 · 22E3 · 229K
+2KCS · 2261 · 2262 · 22EK · 22E2 · 22E3 · 229K · 2292
 ```
 
 Berlaku untuk apa pun yang diturunkan darinya — nama buyer, komponen, dan SO. Satu SO masuk cakupan kalau punya stok di **salah satu**
@@ -58,10 +59,29 @@ Panel SO memakai **SO + SO Item**, bukan planned order.
 
 ### W3 — Pemetaan SLoc ke center
 
-| Center | SLoc |
-|---|---|
-| **Machining Center** | `2KCS`, `2261`, `2262` |
-| **Edge Banding & Sanding** | `22E2`, `22E3`, `229K` |
+**Lintasan Produksi — empat tahap** (ketetapan user 2026-08-03). Tiap tahap
+punya SLoc MASUK (antri) dan SLoc KELUAR (selesai):
+
+| Tahap | Antri | Selesai |
+|---|---|---|
+| IN dari Storage | — | `2KCS` |
+| **Machining Center** | `2261` | `2262` |
+| **Banding** | `22EK`, `22E2` | `22E3` |
+| **Sanding** | `229K` | `2292` |
+| OUT ke Storage | — | tidak punya SLoc — dihitung dari MSEG |
+
+> 🔴 **`229K` KINI BERARTI "ANTRI SANDING", BUKAN "SELESAI".** Sebelum
+> 2026-08-03 seluruh aplikasi memperlakukannya sebagai CP4 = 100% selesai
+> (`ZCL_CS_UTIL` `gc_st_done`, `cp_qty( )` CP4). Model itu **salah** —
+> ditetapkan user. `cp_qty( )` sudah kode mati sehingga tidak ada yang rusak,
+> tapi jangan memakai 229K sebagai penanda selesai lagi di mana pun.
+
+> ⚠️ `2292` = "Sanding D-OUT" menurut T001L (`ZCL_CS_UTIL.abap:289`). User
+> sempat menulis `2297`; SLoc itu tidak ada di sistem maupun repo, dan
+> dikonfirmasi sebagai salah ketik.
+
+> ⚠️ **OUT adalah tafsiran**, bukan ketetapan: komponen yang pernah masuk
+> salah satu dari delapan SLoc tapi kini tidak bersaldo di satu pun.
 
 ---
 

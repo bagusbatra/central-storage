@@ -263,9 +263,25 @@
     }
     .wip-flow-container {
         display: flex;
-        align-items: center;
+        align-items: stretch;      /* kartu rata tinggi, bukan rata tengah */
         gap: 12px;
         margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+    .wip-flow-container > .storage-box {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .wip-flow-container > .flow-arrow { align-self: center; }
+    /* Kartu Banding & Sanding memuat DUA area berdampingan, jadi ia butuh
+       ruang lebih dari kartu Machining yang hanya satu area. */
+    #ebs-box { flex: 2 1 340px; }
+    #mc-box  { flex: 1 1 190px; }
+    @media (max-width: 900px) {
+        .wip-flow-container > .flow-arrow { display: none; }
+        .storage-box { flex: 1 1 100%; }
+        #mc-box, #ebs-box { flex: 1 1 100%; }
     }
     .storage-box {
         border: 1px dashed var(--border-color);
