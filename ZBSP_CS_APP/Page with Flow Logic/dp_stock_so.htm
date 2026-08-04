@@ -84,6 +84,24 @@
     ENDIF.
   ENDLOOP.
 
+  " ===== Buang SO+Item yang SUDAH SELESAI (ketetapan user 2026-08-04) =====
+  " Selesai = tidak ada satu pun komponennya yang masih bersaldo di kedelapan
+  " SLoc. Sisanya cuma segmen hijau; tidak ada yang perlu dipantau lagi.
+  "
+  " Disaring DI SINI, bukan di browser, karena dua alasan:
+  "   1. batas lc_maxso tidak habis terpakai untuk baris yang toh disembunyikan
+  "   2. angka "N lainnya tidak dimuat" jadi menghitung SO yang benar-benar
+  "      masih berjalan
+  "
+  " Jumlah yang dibuang TETAP dilaporkan lewat solist_done — daftar yang
+  " diam-diam menyusut lebih berbahaya daripada daftar yang mengaku menyaring.
+  DATA lv_so_done TYPE i.
+  LOOP AT lt_solist ASSIGNING <sl>
+    WHERE s_in = 0 AND s_mc = 0 AND s_bd = 0 AND s_sd = 0.
+    lv_so_done = lv_so_done + 1.
+  ENDLOOP.
+  DELETE lt_solist WHERE s_in = 0 AND s_mc = 0 AND s_bd = 0 AND s_sd = 0.
+
   SORT lt_solist BY vbeln ASCENDING posnr ASCENDING.
 
   " (b) Nama buyer: VBAK-KUNNR -> KNA1-NAME1 (pola dash_cs.htm)
@@ -262,6 +280,7 @@
          " komponen yang sudah keluar tidak ada di lt_kmp sama sekali.
          && ',"out":'         && |{ lv_done_real }|
          && ',"solist_more":' && |{ lv_so_more }|
+         && ',"solist_done":' && |{ lv_so_done }|
          && ',"buyer":'       && lv_buyers
          && ',"solist":'      && lv_solist
          && ',"ms":'          && |{ lv_ms }| && '}'.

@@ -38,6 +38,10 @@ var selectedCenter = 'MC';
 var selectedTab = 'dikerjakan';
 var soQuery = '';
 var soMore = 0;
+/* SO+Item yang seluruh komponennya sudah selesai — disaring di server
+   (ketetapan user 2026-08-04). Dicacah supaya bisa dikatakan, bukan
+   dihilangkan diam-diam. */
+var soDone = 0;
 var searchQuery = '';
 
 /* Sales Order yang sedang dipilih; null = semua SO.
@@ -231,7 +235,11 @@ function renderSOList() {
     if (shown === 0) {
         soListContainer.innerHTML =
             '<div style="padding:16px; text-align:center; color:var(--text-muted); font-size:11px;">' +
-            'Tidak ada Sales Order yang cocok</div>';
+            (soDone > 0
+                ? 'Tidak ada Sales Order yang masih berjalan.<br>' + kpiNum(soDone) +
+                  ' SO+Item sudah selesai dan tidak ditampilkan.'
+                : 'Tidak ada Sales Order yang cocok') +
+            '</div>';
         return;
     }
 
@@ -245,6 +253,17 @@ function renderSOList() {
         note.innerHTML = 'Menampilkan ' + SO_DATA.length + ' SO+Item pertama; ' +
                          soMore + ' lainnya tidak dimuat.';
         soListContainer.appendChild(note);
+    }
+
+    /* Yang disaring karena sudah selesai dikatakan terpisah dari yang
+       terpotong batas — dua sebab berbeda, jangan digabung jadi satu angka. */
+    if (soDone > 0) {
+        var doneNote = document.createElement('div');
+        doneNote.style.cssText = 'font-size:10px; color:var(--text-muted); margin-top:6px;' +
+            'padding-top:6px; border-top:1px dashed var(--border-color);';
+        doneNote.innerHTML = kpiNum(soDone) +
+            ' SO+Item sudah selesai seluruhnya dan tidak ditampilkan.';
+        soListContainer.appendChild(doneNote);
     }
 }
 
