@@ -122,15 +122,25 @@ IF lv_part = 'stock'.
   " satuannya campur dan tidak bisa dijumlahkan secara bermakna.
 
   " (a) Rekap per komponen: pernah muncul di SLoc selain 2KCS?
+  " Satu bendera PER SLoc, bukan per center. Lintasan Produksi butuh
+  " membedakan antri vs selesai di dalam tiap tahap, dan itu tidak bisa
+  " diturunkan dari bendera per-center yang lama (at_mc/at_eb).
+  " ⚠️ Struktur ini diekspor ke SHARED BUFFER 'DPRODKM'. dp_hist.htm dan
+  "    dp_komp.htm mendeklarasikan struktur KEMBAR — kalau diubah di sini,
+  "    ubah di KETIGA tempat atau IMPORT-nya gagal diam-diam.
   TYPES: BEGIN OF ty_kmp,
            vbeln TYPE mska-vbeln,
            posnr TYPE mska-posnr,
            matnr TYPE mska-matnr,
-           moved TYPE abap_bool,
-           at_cs TYPE abap_bool,
-           at_mc TYPE abap_bool,
-           at_eb TYPE abap_bool,
-           at_sd TYPE abap_bool,
+           moved TYPE abap_bool,      " punya stok di luar 2KCS (dipakai % buyer)
+           s_cs  TYPE abap_bool,      " 2KCS  IN
+           s_261 TYPE abap_bool,      " 2261  Machining antri
+           s_262 TYPE abap_bool,      " 2262  Machining selesai
+           s_ek  TYPE abap_bool,      " 22EK  Banding antri (EBD Karantina)
+           s_e2  TYPE abap_bool,      " 22E2  Banding antri (Banding D-IN)
+           s_e3  TYPE abap_bool,      " 22E3  Banding selesai
+           s_29k TYPE abap_bool,      " 229K  Sanding antri
+           s_292 TYPE abap_bool,      " 2292  Sanding selesai (Sanding D-OUT)
          END OF ty_kmp.
   DATA: lt_kmp TYPE STANDARD TABLE OF ty_kmp WITH DEFAULT KEY.
   FIELD-SYMBOLS <km> TYPE ty_kmp.
@@ -147,54 +157,70 @@ IF lv_part = 'stock'.
     IF <st>-lgort <> '2KCS'.
       <km>-moved = abap_true.
     ENDIF.
-    IF <st>-lgort = '2KCS'.
-      <km>-at_cs = abap_true.
-    ELSEIF <st>-lgort = '2261' OR <st>-lgort = '2262'.
-      <km>-at_mc = abap_true.
-    ELSE.
-      <km>-at_eb = abap_true.
-      IF <st>-lgort = '229K'.
-        <km>-at_sd = abap_true.
-      ENDIF.
-    ENDIF.
+    CASE <st>-lgort.
+      WHEN '2KCS'. <km>-s_cs  = abap_true.
+      WHEN '2261'. <km>-s_261 = abap_true.
+      WHEN '2262'. <km>-s_262 = abap_true.
+      WHEN '22EK'. <km>-s_ek  = abap_true.
+      WHEN '22E2'. <km>-s_e2  = abap_true.
+      WHEN '22E3'. <km>-s_e3  = abap_true.
+      WHEN '229K'. <km>-s_29k = abap_true.
+      WHEN '2292'. <km>-s_292 = abap_true.
+    ENDCASE.
   ENDLOOP.
 
-  " ===== Rekap posisi: kartu DI PRODUKSI / SELESAI PROD. + dua kotak center
+  " ===== Rekap Lintasan Produksi — EMPAT tahap =====
   "
-  " Arti warna (ketetapan user 2026-08-01):
-  "   Machining Center   kuning = masih di 2KCS
-  "                      biru   = ada di 2261/2262
-  "   Edge Banding&Sand  kuning = belum masuk EB/sanding (masih di 2261/2262)
-  "                      biru   = ada di 22E2/22E3/229K
+  " Pemetaan SLoc (ketetapan user 2026-08-03). Ini MENGGANTIKAN model lama
+  " yang hanya mengenal dua center dan tiga warna:
   "
-  " HIJAU ("sudah lewat") TIDAK dihitung di sini. Barang yang selesai
-  " diproses otomatis tidak punya stok lagi, jadi saldo stok tidak bisa
-  " menjawabnya — jawabannya ada di riwayat pergerakan (MSEG). Itu K3 yang
-  " belum diputuskan. UI menampilkannya sebagai "belum tersedia", BUKAN nol;
-  " nol berarti "tidak ada yang lewat", padahal yang benar "belum dihitung".
+  "   IN dari Storage        2KCS
+  "   Machining Center       antri 2261        -> selesai 2262
+  "   Banding                antri 22EK/22E2   -> selesai 22E3
+  "   Sanding                antri 229K        -> selesai 2292
+  "   OUT ke Storage         tidak punya SLoc  -> dihitung part=hist dari MSEG
+  "
+  " ⚠️ 229K SEKARANG BERARTI "ANTRI SANDING", bukan "selesai". Seluruh
+  "    aplikasi sebelumnya memperlakukannya sebagai CP4 = 100% selesai
+  "    (ZCL_CS_UTIL gc_st_done). Model lama itu SALAH — ditetapkan user
+  "    2026-08-03. cp_qty( ) sudah kode mati sehingga tidak ada yang rusak,
+  "    tapi jangan memakai 229K sebagai penanda selesai lagi di mana pun.
+  "
+  " Yang dihitung di sini SEMUANYA dari SALDO STOK (MSKA) — menjawab "di mana
+  " barang SEKARANG". Pertanyaan "sudah pernah lewat mana" tidak bisa dijawab
+  " saldo dan ditangani part=hist lewat MSEG.
+  "
+  " Basis: CACAH KOMPONEN (ketetapan user), sama dengan seluruh panel lain
+  " di halaman ini supaya angkanya bisa saling dicocokkan.
   DATA: lv_prod TYPE i,
         lv_done TYPE i,
-        lv_mc_q TYPE i,
-        lv_mc_p TYPE i,
-        lv_eb_q TYPE i,
-        lv_eb_p TYPE i.
+        lv_in   TYPE i,      " IN        2KCS
+        lv_mc_q TYPE i,      " Machining antri    2261
+        lv_mc_d TYPE i,      " Machining selesai  2262
+        lv_bd_q TYPE i,      " Banding   antri    22EK / 22E2
+        lv_bd_d TYPE i,      " Banding   selesai  22E3
+        lv_sd_q TYPE i,      " Sanding   antri    229K
+        lv_sd_d TYPE i.      " Sanding   selesai  2292
   LOOP AT lt_kmp ASSIGNING <km>.
-    IF <km>-at_mc = abap_true OR <km>-at_eb = abap_true.
+    " DI PRODUKSI = punya stok di SLoc proses mana pun (di luar 2KCS)
+    IF <km>-moved = abap_true.
       lv_prod = lv_prod + 1.
     ENDIF.
-    IF <km>-at_sd = abap_true.
+    " Dipertahankan HANYA sebagai pembanding kartu SELESAI PROD. lama.
+    " ⚠️ Artinya kini "ada stok di 229K" = ANTRI SANDING, bukan selesai.
+    IF <km>-s_29k = abap_true.
       lv_done = lv_done + 1.
     ENDIF.
-    IF <km>-at_cs = abap_true.
-      lv_mc_q = lv_mc_q + 1.
+
+    IF <km>-s_cs  = abap_true. lv_in   = lv_in   + 1. ENDIF.
+    IF <km>-s_261 = abap_true. lv_mc_q = lv_mc_q + 1. ENDIF.
+    IF <km>-s_262 = abap_true. lv_mc_d = lv_mc_d + 1. ENDIF.
+    IF <km>-s_ek = abap_true OR <km>-s_e2 = abap_true.
+      lv_bd_q = lv_bd_q + 1.
     ENDIF.
-    IF <km>-at_mc = abap_true.
-      lv_mc_p = lv_mc_p + 1.
-      lv_eb_q = lv_eb_q + 1.
-    ENDIF.
-    IF <km>-at_eb = abap_true.
-      lv_eb_p = lv_eb_p + 1.
-    ENDIF.
+    IF <km>-s_e3  = abap_true. lv_bd_d = lv_bd_d + 1. ENDIF.
+    IF <km>-s_29k = abap_true. lv_sd_q = lv_sd_q + 1. ENDIF.
+    IF <km>-s_292 = abap_true. lv_sd_d = lv_sd_d + 1. ENDIF.
   ENDLOOP.
 
   " Simpan daftar komponen + posisinya supaya part=hist tidak perlu menembak
@@ -207,9 +233,9 @@ IF lv_part = 'stock'.
   " ===================================================================
   "  Definisi (ketetapan user 2026-08-03, Opsi B / Tafsir X):
   "    komponen selesai = AFPO-WEMNG >= AFPO-PSMNG
-  "                       DAN tidak ada saldo di 6 SLoc cakupan.
+  "                       DAN tidak ada saldo di 8 SLoc cakupan.
   "
-  "  Kenapa 6 SLoc TERMASUK 2KCS: kalau order sudah dipenuhi tapi masih ada
+  "  Kenapa 8 SLoc TERMASUK 2KCS: kalau order sudah dipenuhi tapi masih ada
   "  sisa di 2KCS, itu sisa bahan yang tidak jadi dipakai — bukan produksi
   "  berjalan, tapi juga bukan "selesai bersih". Dipilih yang ketat.
   "
@@ -271,7 +297,7 @@ IF lv_part = 'stock'.
     SORT lt_afpo_done BY kdauf kdpos matnr.
     DELETE ADJACENT DUPLICATES FROM lt_afpo_done COMPARING kdauf kdpos matnr.
 
-    " Buang yang MASIH punya stok di 6 SLoc — berarti belum keluar bersih.
+    " Buang yang MASIH punya stok di 8 SLoc — berarti belum keluar bersih.
     " lt_stok sudah SORT BY vbeln posnr matnr lgort, jadi BINARY SEARCH atas
     " tiga field pertama sah.
     LOOP AT lt_afpo_done INTO ls_afpo_done.

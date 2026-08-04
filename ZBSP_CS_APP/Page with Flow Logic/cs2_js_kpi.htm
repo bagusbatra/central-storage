@@ -46,47 +46,76 @@ function kpiNum(n) {
 /* Angka dua kotak center datang dari DUA endpoint: kuning & biru dari
    part=stock, hijau dari part=hist. Disimpan di sini lalu digambar ulang
    tiap kali salah satunya tiba, supaya yang datang duluan tidak tertimpa. */
-var CENTER = { mcq: 0, mcp: 0, mcg: null, ebq: 0, ebp: 0, ebg: null };
+/* ====================================================================
+   LINTASAN PRODUKSI — empat tahap
+
+   Angka datang dari DUA endpoint dan tiba pada waktu berbeda:
+     part=stock  saldo MSKA  -> IN, dan "antri"/"selesai" tiap tahap
+     part=hist   riwayat MSEG -> tambahan "sudah lewat", dan OUT
+
+   Disimpan di LINTASAN lalu digambar ulang tiap kali salah satunya tiba,
+   supaya yang datang duluan tidak tertimpa yang datang belakangan.
+
+   KENAPA MSEG DIPERLUKAN. Saldo stok hanya menjawab "di mana barang
+   SEKARANG". Komponen yang sudah melewati Machining tidak punya stok lagi
+   di 2262, jadi kalau hanya membaca saldo, angka "selesai" akan menyusut
+   sendiri begitu barang jalan — persis kebalikan dari yang seharusnya.
+   MSEG menambahkan yang PERNAH lewat tapi stoknya sudah nol, sehingga
+   angkanya mengikuti pergerakan barang, bukan sekadar memotret posisi.
+   ==================================================================== */
+var LINTASAN = {
+    in: 0,
+    mcq: 0, mcd: 0, bdq: 0, bdd: 0, sdq: 0, sdd: 0,
+    /* null = belum tiba dari part=hist. Sengaja BUKAN 0: nol berarti
+       "tidak ada yang lewat", padahal yang benar "belum dihitung". */
+    mcg: null, bdg: null, sdg: null, out: null
+};
 
 function drawCenters() {
-    var pairs = [
-        ['mc',  CENTER.mcq, CENTER.mcp, CENTER.mcg, 'antre di 2KCS'],
-        ['ebs', CENTER.ebq, CENTER.ebp, CENTER.ebg, 'antre di 2261/2262']
-    ];
-    for (var i = 0; i < pairs.length; i++) {
-        var p = pairs[i], id = p[0], q = p[1], a = p[2], g = p[3];
-        var tot = q + a + (g || 0);
-        kpiText(id + '-wip-text', kpiNum(a));
-        kpiText(id + '-foot', kpiNum(q) + ' ' + p[4]);
-        /* Selama hist belum tiba, hijau ditulis "menghitung", BUKAN nol.
-           Nol berarti "tidak ada yang lewat"; yang benar "belum dihitung". */
-        kpiText(id + '-done', (g === null)
-            ? 'sudah lewat: menghitung&hellip;'
-            : '&#10003; ' + kpiNum(g) + ' sudah lewat');
-        setBar(id + '-bar-done',  tot ? Math.round((g || 0) * 100 / tot) : 0);
-        setBar(id + '-bar-wip',   tot ? Math.round(a * 100 / tot) : 0);
-        setBar(id + '-bar-queue', tot ? Math.round(q * 100 / tot) : 0);
+    kpiText('in-num', kpiNum(LINTASAN.in));
 
-        var slocQ = (id === 'mc') ? '2KCS' : '2261 / 2262';
-        var slocA = (id === 'mc') ? '2261 / 2262' : '22E2 / 22E3 / 229K';
-        var box = document.getElementById(id + '-wip-tip');
+    var tahap = [
+        { id: 'mc', nama: 'Machining Center', q: LINTASAN.mcq, d: LINTASAN.mcd,
+          g: LINTASAN.mcg, sq: '2261', sd: '2262' },
+        { id: 'bd', nama: 'Banding',          q: LINTASAN.bdq, d: LINTASAN.bdd,
+          g: LINTASAN.bdg, sq: '22EK / 22E2', sd: '22E3' },
+        { id: 'sd', nama: 'Sanding',          q: LINTASAN.sdq, d: LINTASAN.sdd,
+          g: LINTASAN.sdg, sq: '229K', sd: '2292' }
+    ];
+
+    for (var i = 0; i < tahap.length; i++) {
+        var t = tahap[i];
+        /* "selesai" = masih bersaldo di SLoc keluar, DITAMBAH yang sudah
+           lewat dari situ menurut MSEG. Keduanya sama-sama berarti tahap
+           ini tuntas bagi komponen tersebut. */
+        var selesai = t.d + (t.g || 0);
+        var tot = t.q + selesai;
+
+        kpiText(t.id + '-q', kpiNum(t.q));
+        kpiText(t.id + '-d', (t.g === null)
+            ? kpiNum(t.d) + '<span class="stage-pending">+?</span>'
+            : kpiNum(selesai));
+        setBar(t.id + '-bar-q', tot ? Math.round(t.q * 100 / tot) : 0);
+        setBar(t.id + '-bar-d', tot ? Math.round(selesai * 100 / tot) : 0);
+
+        var box = document.getElementById(t.id + '-tip');
         if (box) {
-            /* ⚠️ Atribut class di bawah WAJIB memakai kutip GANDA.
-               Sampai 2026-08-03 baris-baris ini memakai kutip tunggal di
-               dalam string berkutip tunggal ('<span class='ct-h'>...'), yang
-               bukan sekadar salah tampil melainkan SYNTAX ERROR — dan satu
-               syntax error menggugurkan SELURUH blok <script> halaman ini,
-               sehingga tidak ada satu pun panel yang terisi. */
+            /* ⚠️ Atribut class WAJIB kutip GANDA di dalam string berkutip
+               tunggal. Kutip tunggal di sini bukan sekadar salah tampil
+               melainkan SYNTAX ERROR, dan satu syntax error menggugurkan
+               SELURUH blok script halaman ini. Pernah terjadi 2026-08-03. */
             box.setAttribute('data-tip',
-                '<span class="ct-h">WIP &mdash; komponen sedang di center ini</span>' +
-                '<span class="ct-r">Angka besar = komponen yang stoknya ada di <b>' + slocA + '</b>.</span>' +
-                '<span class="ct-r">Antre <b>' + kpiNum(q) + '</b> (masih di ' + slocQ + ')<br>' +
-                'Dikerjakan <b>' + kpiNum(a) + '</b> (di ' + slocA + ')<br>' +
-                'Sudah lewat <b>' + (g === null ? 'menghitung&hellip;' : kpiNum(g)) + '</b></span>' +
-                '<span class="ct-r">Sudah lewat = pernah diterima di SLoc center ini, tapi stoknya sekarang nol.</span>' +
-                '<span class="ct-src">kuning &amp; biru: MSKA saldo &middot; hijau: MSEG riwayat<br>cacah komponen, bukan qty</span>');
+                '<span class="ct-h">' + t.nama + '</span>' +
+                '<span class="ct-r"><b>Antri ' + kpiNum(t.q) + '</b> &mdash; stoknya masih di ' + t.sq + '</span>' +
+                '<span class="ct-r"><b>Selesai ' + (t.g === null ? kpiNum(t.d) + ' (+ riwayat menghitung&hellip;)' : kpiNum(selesai)) + '</b> &mdash; stoknya sudah di ' + t.sd +
+                (t.g === null ? '' : ', atau pernah di situ tapi kini sudah lanjut (<b>' + kpiNum(t.g) + '</b>)') + '</span>' +
+                '<span class="ct-src">antri &amp; selesai: MSKA saldo &middot; sudah lanjut: MSEG riwayat<br>cacah komponen (SO + Item + Material), bukan qty</span>' +
+                '<span class="ct-warn">Satu komponen bisa muncul di lebih dari satu tahap kalau stoknya terpecah antar SLoc. Jumlah seluruh tahap karena itu TIDAK harus sama dengan kartu SALES ORDER.</span>');
         }
     }
+
+    kpiText('out-num', LINTASAN.out === null ? '&hellip;' : kpiNum(LINTASAN.out));
+    kpiText('out-sub', LINTASAN.out === null ? 'menghitung&hellip;' : 'sudah keluar cakupan');
 }
 
 /* ====================================================================
@@ -219,8 +248,10 @@ function loadKpi() {
            keterangan "belum tersedia": barang yang sudah selesai tidak punya
            stok lagi, jadi saldo stok tidak bisa menjawabnya. Mengisinya nol
            akan terbaca "tidak ada yang lewat", padahal "belum dihitung". */
-        CENTER.mcq = d.mcq || 0; CENTER.mcp = d.mcp || 0;
-        CENTER.ebq = d.ebq || 0; CENTER.ebp = d.ebp || 0;
+        LINTASAN.in  = d.in  || 0;
+        LINTASAN.mcq = d.mcq || 0; LINTASAN.mcd = d.mcd || 0;
+        LINTASAN.bdq = d.bdq || 0; LINTASAN.bdd = d.bdd || 0;
+        LINTASAN.sdq = d.sdq || 0; LINTASAN.sdd = d.sdd || 0;
         drawCenters();
 
         if (d.buyer && d.buyer.length) {
@@ -242,14 +273,16 @@ function loadKpi() {
 
         kpiGet('dash_prod.htm?part=hist', function (h) {
             if (!h || !h.ok) {
-                CENTER.mcg = 0; CENTER.ebg = 0;
+                LINTASAN.mcg = 0; LINTASAN.bdg = 0;
+                LINTASAN.sdg = 0; LINTASAN.out = 0;
                 drawCenters();
-                kpiText('mc-done', 'sudah lewat: gagal dimuat');
-                kpiText('ebs-done', 'sudah lewat: gagal dimuat');
+                kpiText('out-sub', 'riwayat gagal dimuat');
                 return;
             }
-            CENTER.mcg = h.mcgone || 0;
-            CENTER.ebg = h.ebgone || 0;
+            LINTASAN.mcg = h.mcgone || 0;
+            LINTASAN.bdg = h.bdgone || 0;
+            LINTASAN.sdg = h.sdgone || 0;
+            LINTASAN.out = h.out    || 0;
             drawCenters();
         });
     });

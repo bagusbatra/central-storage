@@ -45,15 +45,21 @@
 *&---------------------------------------------------------------------*
 IF lv_part = 'komp' OR lv_part = 'ops1'.
 
+  " KEMBARAN ty_kmp di dp_stock.htm — harus sama persis, kalau tidak
+  " IMPORT dari SHARED BUFFER 'DPRODKM' gagal diam-diam.
   TYPES: BEGIN OF ty_kcomp,
            vbeln TYPE mska-vbeln,
            posnr TYPE mska-posnr,
            matnr TYPE mska-matnr,
            moved TYPE abap_bool,
-           at_cs TYPE abap_bool,
-           at_mc TYPE abap_bool,
-           at_eb TYPE abap_bool,
-           at_sd TYPE abap_bool,
+           s_cs  TYPE abap_bool,
+           s_261 TYPE abap_bool,
+           s_262 TYPE abap_bool,
+           s_ek  TYPE abap_bool,
+           s_e2  TYPE abap_bool,
+           s_e3  TYPE abap_bool,
+           s_29k TYPE abap_bool,
+           s_292 TYPE abap_bool,
          END OF ty_kcomp.
   DATA: lt_kcomp TYPE STANDARD TABLE OF ty_kcomp WITH DEFAULT KEY,
         lv_kc_ts TYPE timestamp.

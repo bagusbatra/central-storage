@@ -55,10 +55,12 @@
 *& ===== BENTUK JAWABAN =====
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
 *&                  "prod":n,"done":n,"done_real":n,
-*&                  "mcq":n,"mcp":n,"ebq":n,"ebp":n,"solist_more":n,
+*&                  "in":n,"mcq":n,"mcd":n,"bdq":n,"bdd":n,"sdq":n,"sdd":n,
+*&                  "solist_more":n,
 *&                  "solist":[{so,item,bid,buyer,komp,pcs,cs,mc,eb}],
 *&                  "buyer":[{id,name,pct,komp,so}],"ms":n}
-*&   part=hist  -> {"ok":1,"mcgone":n,"ebgone":n,"rows":n,"ms":n}
+*&   part=hist  -> {"ok":1,"mcgone":n,"bdgone":n,"sdgone":n,"out":n,
+*&                  "rows":n,"ms":n}
 *&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,
 *&                  "queue":n,"ord":n,"trunc":0|1,"ms":n}
 *&   part=komp  -> {"ok":1,"more":n,"nook":n,"ctr":"MC|EB","rows":[
@@ -180,8 +182,14 @@ DATA: lr_lgort  TYPE RANGE OF lgort_d,
       ls_rlgort LIKE LINE OF lr_lgort,
       lt_slocs  TYPE STANDARD TABLE OF lgort_d WITH DEFAULT KEY,
       lv_sloc   TYPE lgort_d.
-lt_slocs = VALUE #( ( '2KCS' ) ( '2261' ) ( '2262' )
-                    ( '22E2' ) ( '22E3' ) ( '229K' ) ).
+" Urut sesuai perjalanan barang. Diperluas 6 -> 8 SLoc 2026-08-03 atas
+" ketetapan user: 22EK (EBD Karantina) & 2292 (Sanding D-OUT) ikut masuk.
+" Akibatnya angka kartu BUYER / SALES ORDER / komponen NAIK — itu benar,
+" bukan regresi, persis seperti waktu cakupan naik dari 1 ke 6 SLoc.
+lt_slocs = VALUE #( ( '2KCS' )                        " IN  dari Storage
+                    ( '2261' ) ( '2262' )             " Machining  antri -> selesai
+                    ( '22EK' ) ( '22E2' ) ( '22E3' )  " Banding    antri -> selesai
+                    ( '229K' ) ( '2292' ) ).          " Sanding    antri -> selesai
 ls_rlgort-sign = 'I'.
 ls_rlgort-option = 'EQ'.
 LOOP AT lt_slocs INTO lv_sloc.

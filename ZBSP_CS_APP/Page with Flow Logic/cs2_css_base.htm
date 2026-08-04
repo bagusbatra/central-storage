@@ -270,11 +270,25 @@
     .storage-box {
         border: 1px dashed var(--border-color);
         border-radius: 6px;
-        padding: 12px;
+        padding: 12px 10px;
         text-align: center;
-        min-width: 100px;
+        min-width: 118px;
         color: var(--text-muted);
         font-size: 11px;
+        cursor: help;
+    }
+    .storage-num {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--text-main);
+        line-height: 1.1;
+        margin-bottom: 2px;
+    }
+    .storage-sub {
+        font-size: 9px;
+        opacity: 0.75;
+        margin-top: 3px;
+        font-family: monospace;
     }
     .storage-box .ic { font-size: 16px; margin-bottom: 4px; color: #94a3b8; }
     .flow-arrow { color: #cbd5e1; font-size: 14px; }
@@ -299,16 +313,47 @@
         font-size: 12px;
     }
     .center-header .sub { font-size: 10px; color: var(--text-muted); font-weight: 400; }
+    /* ---- satu tahap: antri + selesai + bar + keterangan SLoc ----
+       Menggantikan .center-body/.wip-number yang hanya sanggup menampilkan
+       SATU angka WIP per center. Sejak 2026-08-03 tiap tahap punya dua
+       angka (antri & selesai) dengan SLoc-nya masing-masing. */
     .center-body { margin: 8px 0; }
-    .wip-number { font-size: 20px; font-weight: 700; }
-    .wip-lbl { font-size: 11px; color: var(--text-muted); }
-    .center-footer {
+    .stage-area { margin-top: 8px; cursor: help; }
+    .stage-name {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--text-main);
+        margin-bottom: 5px;
+        padding-bottom: 3px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .stage-line {
         display: flex;
         justify-content: space-between;
+        align-items: center;
         font-size: 11px;
-        color: var(--text-muted);
-        margin-bottom: 6px;
+        margin-bottom: 3px;
     }
+    .stage-lbl { color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
+    .stage-val { font-weight: 700; font-size: 15px; }
+    /* "+?" = riwayat MSEG belum tiba. Sengaja BUKAN angka final: menampilkan
+       saldo saja sebagai kalau itu total akan mengecilkan "selesai". */
+    .stage-pending { font-size: 10px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
+    .stage-sloc {
+        font-size: 9px;
+        color: var(--text-muted);
+        font-family: monospace;
+        margin-top: 5px;
+        opacity: 0.8;
+    }
+    /* Banding & Sanding: DUA area terpisah, tetap dalam SATU kartu */
+    .stage-split { display: flex; gap: 14px; }
+    .stage-split > .stage-area { flex: 1 1 0; min-width: 0; }
+    .stage-split > .stage-area + .stage-area {
+        border-left: 1px solid var(--border-color);
+        padding-left: 14px;
+    }
+
     .progress-bar-container {
         height: 6px;
         background: #e2e8f0;

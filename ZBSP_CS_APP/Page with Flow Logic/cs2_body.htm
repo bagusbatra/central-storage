@@ -74,9 +74,12 @@
         </div>
 
         <div class="wip-flow-container">
-            <div class="storage-box">
+            <div class="storage-box tip-anchor" id="in-box"
+                 data-tip="<span class='ct-h'>IN &mdash; masuk dari Storage</span><span class='ct-r'>Komponen yang stoknya masih berada di <b>2KCS</b>, storage awal. Belum bergerak ke lini produksi mana pun.</span><span class='ct-src'>MSKA saldo &middot; cacah komponen</span>">
                 <svg class="ic"><use xlink:href="#fa-warehouse"></use></svg>
+                <div class="storage-num" id="in-num">-</div>
                 <div>IN &bull; dari Storage</div>
+                <div class="storage-sub">2KCS</div>
             </div>
 
             <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
@@ -85,52 +88,80 @@
                 <div class="center-header">
                     <span><svg class="ic"><use xlink:href="#fa-table-cells"></use></svg> Machining Center</span>
                 </div>
-                <div class="center-body tip-anchor" id="mc-wip-tip">
-                    <span class="wip-number" id="mc-wip-text">-</span> <span class="wip-lbl">WIP</span>
-                </div>
-                <div class="center-footer">
-                    <span id="mc-foot">&mdash;</span>
-                    <span class="color-green" id="mc-done">&mdash;</span>
-                </div>
-                <div class="progress-bar-container">
-                    <div class="pb-done" id="mc-bar-done" style="width: 0%;"></div>
-                    <div class="pb-wip" id="mc-bar-wip" style="width: 0%;"></div>
-                    <div class="pb-queue" id="mc-bar-queue" style="width: 0%;"></div>
+                <div class="stage-area tip-anchor" id="mc-tip">
+                    <div class="stage-line">
+                        <span class="stage-lbl"><span class="dot orange"></span> Antri</span>
+                        <span class="stage-val" id="mc-q">-</span>
+                    </div>
+                    <div class="stage-line">
+                        <span class="stage-lbl"><span class="dot green"></span> Selesai</span>
+                        <span class="stage-val" id="mc-d">-</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="pb-queue" id="mc-bar-q" style="width: 0%;"></div>
+                        <div class="pb-done" id="mc-bar-d" style="width: 0%;"></div>
+                    </div>
+                    <div class="stage-sloc">antri 2261 &rarr; selesai 2262</div>
                 </div>
             </div>
 
             <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
 
+            <%-- SATU kartu, DUA area terpisah (permintaan user 2026-08-03) --%>
             <div class="center-box" id="ebs-box">
                 <div class="center-header">
-                    <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Edge Banding &amp; Sanding</span>
+                    <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Banding &amp; Sanding</span>
                 </div>
-                <div class="center-body tip-anchor" id="ebs-wip-tip">
-                    <span class="wip-number" id="ebs-wip-text">-</span> <span class="wip-lbl">WIP</span>
-                </div>
-                <div class="center-footer">
-                    <span id="ebs-foot">&mdash;</span>
-                    <span class="color-green" id="ebs-done">&mdash;</span>
-                </div>
-                <div class="progress-bar-container">
-                    <div class="pb-done" id="ebs-bar-done" style="width: 0%;"></div>
-                    <div class="pb-wip" id="ebs-bar-wip" style="width: 0%;"></div>
-                    <div class="pb-queue" id="ebs-bar-queue" style="width: 0%;"></div>
+                <div class="stage-split">
+                    <div class="stage-area tip-anchor" id="bd-tip">
+                        <div class="stage-name">Banding</div>
+                        <div class="stage-line">
+                            <span class="stage-lbl"><span class="dot orange"></span> Antri</span>
+                            <span class="stage-val" id="bd-q">-</span>
+                        </div>
+                        <div class="stage-line">
+                            <span class="stage-lbl"><span class="dot green"></span> Selesai</span>
+                            <span class="stage-val" id="bd-d">-</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="pb-queue" id="bd-bar-q" style="width: 0%;"></div>
+                            <div class="pb-done" id="bd-bar-d" style="width: 0%;"></div>
+                        </div>
+                        <div class="stage-sloc">antri 22EK/22E2 &rarr; selesai 22E3</div>
+                    </div>
+                    <div class="stage-area tip-anchor" id="sd-tip">
+                        <div class="stage-name">Sanding</div>
+                        <div class="stage-line">
+                            <span class="stage-lbl"><span class="dot orange"></span> Antri</span>
+                            <span class="stage-val" id="sd-q">-</span>
+                        </div>
+                        <div class="stage-line">
+                            <span class="stage-lbl"><span class="dot green"></span> Selesai</span>
+                            <span class="stage-val" id="sd-d">-</span>
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="pb-queue" id="sd-bar-q" style="width: 0%;"></div>
+                            <div class="pb-done" id="sd-bar-d" style="width: 0%;"></div>
+                        </div>
+                        <div class="stage-sloc">antri 229K &rarr; selesai 2292</div>
+                    </div>
                 </div>
             </div>
 
             <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
 
-            <div class="storage-box">
+            <div class="storage-box tip-anchor" id="out-box"
+                 data-tip="<span class='ct-h'>OUT &mdash; keluar dari cakupan</span><span class='ct-r'>Komponen yang <b>pernah</b> masuk salah satu dari delapan SLoc yang dipantau, tapi <b>sekarang tidak punya saldo di satu pun</b> &mdash; barangnya sudah lanjut ke luar sistem ini.</span><span class='ct-src'>MSEG riwayat penerimaan &times; MSKA saldo</span><span class='ct-warn'>OUT adalah TAFSIRAN. User menyebut empat tahap tanpa memberi SLoc untuk OUT &mdash; memang tidak ada, karena \"keluar\" berarti tidak berada di mana pun dalam cakupan.</span>">
                 <svg class="ic"><use xlink:href="#fa-box-open"></use></svg>
+                <div class="storage-num" id="out-num">-</div>
                 <div>OUT &bull; ke Storage</div>
+                <div class="storage-sub" id="out-sub">menghitung&hellip;</div>
             </div>
         </div>
 
         <div class="legend-container">
-            <span class="legend-item"><span class="dot blue"></span> Dikerjakan</span>
-            <span class="legend-item"><span class="dot orange"></span> Antri</span>
-            <span class="legend-item"><span class="dot green"></span> Sudah Lewat</span>
+            <span class="legend-item"><span class="dot orange"></span> Antri &mdash; masih di SLoc masuk tahap itu</span>
+            <span class="legend-item"><span class="dot green"></span> Selesai &mdash; sudah di SLoc keluar tahap itu, atau sudah lewat (MSEG)</span>
         </div>
     </section>
 

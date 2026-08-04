@@ -28,13 +28,16 @@
       <sl>-posnr = <km>-posnr.
     ENDIF.
     <sl>-komp = <sl>-komp + 1.
-    IF <km>-at_cs = abap_true.
+    " Bar kartu SO tetap TIGA segmen — ia meringkas posisi, bukan tahap.
+    " Machining = 2261/2262 · Banding & Sanding = 22EK/22E2/22E3/229K/2292
+    IF <km>-s_cs = abap_true.
       <sl>-at_cs = <sl>-at_cs + 1.
     ENDIF.
-    IF <km>-at_mc = abap_true.
+    IF <km>-s_261 = abap_true OR <km>-s_262 = abap_true.
       <sl>-at_mc = <sl>-at_mc + 1.
     ENDIF.
-    IF <km>-at_eb = abap_true.
+    IF <km>-s_ek  = abap_true OR <km>-s_e2  = abap_true OR <km>-s_e3 = abap_true
+       OR <km>-s_29k = abap_true OR <km>-s_292 = abap_true.
       <sl>-at_eb = <sl>-at_eb + 1.
     ENDIF.
   ENDLOOP.
@@ -207,14 +210,19 @@
          && ',"buyers":'       && lv_buy_cnt_c
          && ',"prod":'        && |{ lv_prod }|
          && ',"done":'        && |{ lv_done }|
-         " done      = proxy lama (stok ada di 229K) — DIPERTAHANKAN untuk
-         " done_real = definisi baru (delivered penuh + lepas dari 6 SLoc).
-         "             UI memakai done_real; done hanya untuk pembanding.
+         " done      = ada stok di 229K. ⚠️ Sejak 2026-08-03 itu berarti
+         "             ANTRI SANDING, bukan selesai. Disimpan hanya sebagai
+         "             pembanding historis; UI TIDAK memakainya.
+         " done_real = delivered penuh (AFPO) + lepas dari 8 SLoc cakupan.
          && ',"done_real":'   && |{ lv_done_real }|
+         " ---- Lintasan Produksi, empat tahap, basis cacah komponen ----
+         && ',"in":'          && |{ lv_in }|
          && ',"mcq":'         && |{ lv_mc_q }|
-         && ',"mcp":'         && |{ lv_mc_p }|
-         && ',"ebq":'         && |{ lv_eb_q }|
-         && ',"ebp":'         && |{ lv_eb_p }|
+         && ',"mcd":'         && |{ lv_mc_d }|
+         && ',"bdq":'         && |{ lv_bd_q }|
+         && ',"bdd":'         && |{ lv_bd_d }|
+         && ',"sdq":'         && |{ lv_sd_q }|
+         && ',"sdd":'         && |{ lv_sd_d }|
          && ',"solist_more":' && |{ lv_so_more }|
          && ',"buyer":'       && lv_buyers
          && ',"solist":'      && lv_solist

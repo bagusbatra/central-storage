@@ -1,27 +1,35 @@
 <%@ page language="abap" %><%-- ==========================================================
-     PAGE FRAGMENT — part=hist — segmen hijau "sudah lewat"
+     PAGE FRAGMENT — part=hist — "sudah lewat" per tahap + OUT
      Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
      WAJIB dibuat di SE80 bertipe "Page Fragment".
-     MSEG: pernah diterima di SLoc center itu, tapi stoknya kini nol.
+     MSEG: pernah diterima di SLoc tahap itu, tapi stoknya kini nol.
      ========================================================== --%><%
 *&---------------------------------------------------------------------*
-*& BAGIAN HIST — "sudah lewat" (segmen hijau dua kotak center)
+*& BAGIAN HIST — "sudah lewat" per tahap, dan kartu OUT
 *&---------------------------------------------------------------------*
 *& MASALAHNYA: barang yang selesai diproses otomatis tidak punya stok lagi
-*& di center itu, jadi saldo stok TIDAK BISA menjawab "pernah lewat".
-*& Jawabannya ada di RIWAYAT PERGERAKAN.
+*& di SLoc itu, jadi saldo stok TIDAK BISA menjawab "pernah lewat".
+*& Jawabannya ada di RIWAYAT PERGERAKAN — inilah yang membuat Lintasan
+*& Produksi mengikuti pergerakan barang, bukan sekadar memotret posisi.
 *&
-*& DEFINISI (ketetapan user 2026-08-01, K3):
-*&   sudah lewat = PERNAH ada penerimaan ke SLoc center itu (MSEG shkzg='S')
-*&                 DAN saldo stoknya di situ SEKARANG nol.
-*& Dengan begitu ketiga warna saling lepas per komponen:
-*&   kuning ada stok di 2KCS · biru ada stok di SLoc center ·
-*&   hijau  pernah masuk tapi stoknya sudah habis
-*& Komponen yang TIDAK PERNAH masuk sebuah center tidak dihitung sama
-*& sekali di bar center itu — persis yang diminta user.
+*& DEFINISI:
+*&   sudah lewat tahap X = PERNAH ada penerimaan (MSEG shkzg='S') ke SLoc
+*&                         SELESAI tahap X, DAN saldo di situ SEKARANG nol.
+*&   sudah OUT           = pernah masuk salah satu dari 8 SLoc cakupan,
+*&                         tapi SEKARANG tidak punya saldo di satu pun.
+*&                         Artinya barang sudah keluar dari yang dipantau.
 *&
-*& Basis hitungan: CACAH KOMPONEN, sama dengan seluruh panel lain di
-*& halaman ini, supaya angkanya bisa saling dicocokkan.
+*& Pemetaan SLoc selesai per tahap (ketetapan user 2026-08-03):
+*&   Machining selesai  2262
+*&   Banding   selesai  22E3
+*&   Sanding   selesai  2292
+*&
+*& ⚠️ OUT adalah TAFSIRAN, bukan ketetapan. User menyebut empat tahap
+*&    (IN, Machining, Banding & Sanding, OUT) tanpa memberi SLoc untuk OUT —
+*&    memang tidak ada SLoc-nya, karena "keluar" berarti sudah tidak di
+*&    mana pun dalam cakupan. Kalau maksudnya lain, ubah di sini saja.
+*&
+*& Basis hitungan: CACAH KOMPONEN, sama dengan seluruh panel lain.
 *&
 *& ⚠️ MSEG discope lewat MATNR, bukan KDAUF. MSEG punya indeks di MATNR;
 *&    KDAUF tidak, sehingga menyaring lewat SO akan memicu pemindaian penuh.
@@ -32,15 +40,21 @@
 *&    umlgo), bukan perpindahan fisik. Aturan global aplikasi ini.
 IF lv_part = 'hist'.
 
+  " KEMBARAN ty_kmp di dp_stock.htm — harus sama persis, kalau tidak
+  " IMPORT dari SHARED BUFFER 'DPRODKM' gagal diam-diam.
   TYPES: BEGIN OF ty_kmp2,
            vbeln TYPE mska-vbeln,
            posnr TYPE mska-posnr,
            matnr TYPE mska-matnr,
            moved TYPE abap_bool,
-           at_cs TYPE abap_bool,
-           at_mc TYPE abap_bool,
-           at_eb TYPE abap_bool,
-           at_sd TYPE abap_bool,
+           s_cs  TYPE abap_bool,
+           s_261 TYPE abap_bool,
+           s_262 TYPE abap_bool,
+           s_ek  TYPE abap_bool,
+           s_e2  TYPE abap_bool,
+           s_e3  TYPE abap_bool,
+           s_29k TYPE abap_bool,
+           s_292 TYPE abap_bool,
          END OF ty_kmp2.
   DATA: lt_kmp2 TYPE STANDARD TABLE OF ty_kmp2 WITH DEFAULT KEY.
   FIELD-SYMBOLS <k2> TYPE ty_kmp2.
@@ -84,8 +98,29 @@ IF lv_part = 'hist'.
         AND bwart <> '321'.
   ENDIF.
 
-  " Tandai: komponen ini pernah diterima di MC / di EBS?
-  DATA: lv_hist_mc TYPE i, lv_hist_eb TYPE i.
+  " Tandai per komponen: pernah diterima di SLoc SELESAI tahap mana saja,
+  " dan pernah masuk cakupan sama sekali atau tidak.
+  "
+  " Bendera dipakai ULANG dari struktur yang di-IMPORT — bukan menambah
+  " field. Yang datang dari DPRODKM adalah SALDO SEKARANG; di bawah ini
+  " field lain diisi ulang sebagai penanda RIWAYAT. Dipisah namanya lewat
+  " tabel bantu supaya tidak tertukar.
+  TYPES: BEGIN OF ty_pernah,
+           idx   TYPE i,
+           h_262 TYPE abap_bool,     " pernah diterima di 2262  (Machining selesai)
+           h_e3  TYPE abap_bool,     " pernah diterima di 22E3  (Banding selesai)
+           h_292 TYPE abap_bool,     " pernah diterima di 2292  (Sanding selesai)
+           h_any TYPE abap_bool,     " pernah diterima di SLoc cakupan mana pun
+         END OF ty_pernah.
+  DATA: lt_pernah TYPE STANDARD TABLE OF ty_pernah WITH DEFAULT KEY.
+  FIELD-SYMBOLS <ph> TYPE ty_pernah.
+  DATA lv_idx TYPE i.
+
+  LOOP AT lt_kmp2 ASSIGNING <k2>.
+    APPEND INITIAL LINE TO lt_pernah ASSIGNING <ph>.
+    <ph>-idx = sy-tabix.
+  ENDLOOP.
+
   LOOP AT lt_mv INTO ls_mv.
     IF ls_mv-kdauf IS INITIAL.
       CONTINUE.               " gerakan tanpa SO -> di luar cakupan halaman
@@ -95,28 +130,52 @@ IF lv_part = 'hist'.
     IF sy-subrc <> 0.
       CONTINUE.
     ENDIF.
-    IF ls_mv-lgort = '2261' OR ls_mv-lgort = '2262'.
-      <k2>-moved = abap_true.          " dipakai ulang sbg penanda "pernah di MC"
-    ELSEIF ls_mv-lgort = '22E2' OR ls_mv-lgort = '22E3' OR ls_mv-lgort = '229K'.
-      <k2>-at_sd = abap_true.          " dipakai ulang sbg penanda "pernah di EBS"
+    lv_idx = sy-tabix.
+    READ TABLE lt_pernah ASSIGNING <ph> INDEX lv_idx.
+    IF sy-subrc <> 0.
+      CONTINUE.
     ENDIF.
+    <ph>-h_any = abap_true.
+    CASE ls_mv-lgort.
+      WHEN '2262'. <ph>-h_262 = abap_true.
+      WHEN '22E3'. <ph>-h_e3  = abap_true.
+      WHEN '2292'. <ph>-h_292 = abap_true.
+    ENDCASE.
   ENDLOOP.
 
-  " sudah lewat = pernah masuk DAN stok di situ sekarang nol
-  LOOP AT lt_kmp2 ASSIGNING <k2>.
-    IF <k2>-moved = abap_true AND <k2>-at_mc = abap_false.
-      lv_hist_mc = lv_hist_mc + 1.
+  " sudah lewat tahap X = pernah masuk SLoc SELESAI-nya DAN saldo di situ nol
+  " sudah OUT          = pernah masuk cakupan DAN tidak punya saldo di satu pun
+  DATA: lv_g_mc TYPE i, lv_g_bd TYPE i, lv_g_sd TYPE i, lv_g_out TYPE i.
+  LOOP AT lt_pernah ASSIGNING <ph>.
+    READ TABLE lt_kmp2 ASSIGNING <k2> INDEX <ph>-idx.
+    IF sy-subrc <> 0.
+      CONTINUE.
     ENDIF.
-    IF <k2>-at_sd = abap_true AND <k2>-at_eb = abap_false.
-      lv_hist_eb = lv_hist_eb + 1.
+    IF <ph>-h_262 = abap_true AND <k2>-s_262 = abap_false.
+      lv_g_mc = lv_g_mc + 1.
+    ENDIF.
+    IF <ph>-h_e3 = abap_true AND <k2>-s_e3 = abap_false.
+      lv_g_bd = lv_g_bd + 1.
+    ENDIF.
+    IF <ph>-h_292 = abap_true AND <k2>-s_292 = abap_false.
+      lv_g_sd = lv_g_sd + 1.
+    ENDIF.
+    IF <ph>-h_any = abap_true
+       AND <k2>-s_cs  = abap_false AND <k2>-s_261 = abap_false
+       AND <k2>-s_262 = abap_false AND <k2>-s_ek  = abap_false
+       AND <k2>-s_e2  = abap_false AND <k2>-s_e3  = abap_false
+       AND <k2>-s_29k = abap_false AND <k2>-s_292 = abap_false.
+      lv_g_out = lv_g_out + 1.
     ENDIF.
   ENDLOOP.
 
   GET RUN TIME FIELD lv_t1.
   lv_ms = ( lv_t1 - lv_t0 ) / 1000.
 
-  lv_json = '{"ok":1,"mcgone":' && |{ lv_hist_mc }|
-         && ',"ebgone":'        && |{ lv_hist_eb }|
+  lv_json = '{"ok":1,"mcgone":' && |{ lv_g_mc }|
+         && ',"bdgone":'        && |{ lv_g_bd }|
+         && ',"sdgone":'        && |{ lv_g_sd }|
+         && ',"out":'           && |{ lv_g_out }|
          && ',"rows":'          && |{ lines( lt_mv ) }|
          && ',"ms":'            && |{ lv_ms }| && '}'.
 
