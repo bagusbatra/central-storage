@@ -15,19 +15,23 @@
 *& DEFINISI:
 *&   sudah lewat tahap X = PERNAH ada penerimaan (MSEG shkzg='S') ke SLoc
 *&                         SELESAI tahap X, DAN saldo di situ SEKARANG nol.
-*&   sudah OUT           = pernah masuk salah satu dari 8 SLoc cakupan,
-*&                         tapi SEKARANG tidak punya saldo di satu pun.
-*&                         Artinya barang sudah keluar dari yang dipantau.
+*&
+*& ⚠️ OUT TIDAK dihitung di sini — lihat catatan di bawah.
 *&
 *& Pemetaan SLoc selesai per tahap (ketetapan user 2026-08-03):
 *&   Machining selesai  2262
 *&   Banding   selesai  22E3
 *&   Sanding   selesai  2292
 *&
-*& ⚠️ OUT adalah TAFSIRAN, bukan ketetapan. User menyebut empat tahap
-*&    (IN, Machining, Banding & Sanding, OUT) tanpa memberi SLoc untuk OUT —
-*&    memang tidak ada SLoc-nya, karena "keluar" berarti sudah tidak di
-*&    mana pun dalam cakupan. Kalau maksudnya lain, ubah di sini saja.
+*& ⚠️ KENAPA OUT TIDAK BISA DIHITUNG DARI SINI (bug, ditemukan 2026-08-04):
+*&    daftar komponen 'DPRODKM' dibangun dari MSKA dengan KALAB > 0 di
+*&    delapan SLoc. Artinya SETIAP komponen di dalamnya PASTI bersaldo di
+*&    salah satunya. Syarat "tidak bersaldo di satu pun" karena itu MUSTAHIL
+*&    terpenuhi — versi pertama OUT selalu menghasilkan 0.
+*&    Komponen yang benar-benar sudah keluar tidak ada di daftar ini sama
+*&    sekali, jadi ia harus dicari dari sumber lain. Itu dikerjakan
+*&    part=stock lewat AFPO (lihat lv_done_real di dp_stock.htm), yang tidak
+*&    terikat saldo MSKA.
 *&
 *& Basis hitungan: CACAH KOMPONEN, sama dengan seluruh panel lain.
 *&
@@ -110,7 +114,6 @@ IF lv_part = 'hist'.
            h_262 TYPE abap_bool,     " pernah diterima di 2262  (Machining selesai)
            h_e3  TYPE abap_bool,     " pernah diterima di 22E3  (Banding selesai)
            h_292 TYPE abap_bool,     " pernah diterima di 2292  (Sanding selesai)
-           h_any TYPE abap_bool,     " pernah diterima di SLoc cakupan mana pun
          END OF ty_pernah.
   DATA: lt_pernah TYPE STANDARD TABLE OF ty_pernah WITH DEFAULT KEY.
   FIELD-SYMBOLS <ph> TYPE ty_pernah.
@@ -135,7 +138,6 @@ IF lv_part = 'hist'.
     IF sy-subrc <> 0.
       CONTINUE.
     ENDIF.
-    <ph>-h_any = abap_true.
     CASE ls_mv-lgort.
       WHEN '2262'. <ph>-h_262 = abap_true.
       WHEN '22E3'. <ph>-h_e3  = abap_true.
@@ -144,8 +146,7 @@ IF lv_part = 'hist'.
   ENDLOOP.
 
   " sudah lewat tahap X = pernah masuk SLoc SELESAI-nya DAN saldo di situ nol
-  " sudah OUT          = pernah masuk cakupan DAN tidak punya saldo di satu pun
-  DATA: lv_g_mc TYPE i, lv_g_bd TYPE i, lv_g_sd TYPE i, lv_g_out TYPE i.
+  DATA: lv_g_mc TYPE i, lv_g_bd TYPE i, lv_g_sd TYPE i.
   LOOP AT lt_pernah ASSIGNING <ph>.
     READ TABLE lt_kmp2 ASSIGNING <k2> INDEX <ph>-idx.
     IF sy-subrc <> 0.
@@ -160,13 +161,6 @@ IF lv_part = 'hist'.
     IF <ph>-h_292 = abap_true AND <k2>-s_292 = abap_false.
       lv_g_sd = lv_g_sd + 1.
     ENDIF.
-    IF <ph>-h_any = abap_true
-       AND <k2>-s_cs  = abap_false AND <k2>-s_261 = abap_false
-       AND <k2>-s_262 = abap_false AND <k2>-s_ek  = abap_false
-       AND <k2>-s_e2  = abap_false AND <k2>-s_e3  = abap_false
-       AND <k2>-s_29k = abap_false AND <k2>-s_292 = abap_false.
-      lv_g_out = lv_g_out + 1.
-    ENDIF.
   ENDLOOP.
 
   GET RUN TIME FIELD lv_t1.
@@ -175,7 +169,6 @@ IF lv_part = 'hist'.
   lv_json = '{"ok":1,"mcgone":' && |{ lv_g_mc }|
          && ',"bdgone":'        && |{ lv_g_bd }|
          && ',"sdgone":'        && |{ lv_g_sd }|
-         && ',"out":'           && |{ lv_g_out }|
          && ',"rows":'          && |{ lines( lt_mv ) }|
          && ',"ms":'            && |{ lv_ms }| && '}'.
 

@@ -174,10 +174,27 @@ function renderSOList() {
         if (selectedBuyer && so.bid !== selectedBuyer) { continue; }
         if (q && (so.so + ' ' + so.item + ' ' + so.buyer).toLowerCase().indexOf(q) < 0) { continue; }
 
-        var tot = so.komp || 1;
-        var wCs = Math.round((so.cs || 0) * 100 / tot);
-        var wMc = Math.round((so.mc || 0) * 100 / tot);
-        var wEb = Math.round((so.eb || 0) * 100 / tot);
+        /* Lima segmen, satu per tahap Lintasan Produksi + selesai.
+           Lebarnya dihitung dari JUMLAH KELIMA SEGMEN, bukan dari so.komp:
+           komponen yang stoknya terpecah antar SLoc terhitung di lebih dari
+           satu segmen, sehingga totalnya bisa melebihi komp dan bar akan
+           meluber kalau dibagi komp. */
+        var seg = [
+            { v: so.in || 0, c: '#f59e0b', n: 'IN 2KCS' },
+            { v: so.mc || 0, c: '#2563eb', n: 'Machining' },
+            { v: so.bd || 0, c: '#8b5cf6', n: 'Banding' },
+            { v: so.sd || 0, c: '#06b6d4', n: 'Sanding' },
+            { v: so.dn || 0, c: '#10b981', n: 'Selesai' }
+        ];
+        var segTot = 0, si;
+        for (si = 0; si < seg.length; si++) { segTot += seg[si].v; }
+        var barHtml = '';
+        for (si = 0; si < seg.length; si++) {
+            if (!seg[si].v) { continue; }
+            barHtml += '<div class="so-bar-part" title="' + seg[si].n + ': ' + seg[si].v +
+                       '" style="width:' + (seg[si].v * 100 / segTot) +
+                       '%; background:' + seg[si].c + ';"></div>';
+        }
 
         var isSel = selectedSO && selectedSO.so === so.so && selectedSO.item === so.item;
 
@@ -196,15 +213,16 @@ function renderSOList() {
                 '<div class="so-pct-val" style="font-size:11px; color:#64748b;">' +
                     so.komp + ' komp</div>' +
             '</div>' +
-            '<div class="so-progress-bar">' +
-                '<div class="so-bar-part" style="width:' + wCs + '%; background:#f59e0b;"></div>' +
-                '<div class="so-bar-part" style="width:' + wMc + '%; background:#2563eb;"></div>' +
-                '<div class="so-bar-part" style="width:' + wEb + '%; background:#10b981;"></div>' +
-            '</div>' +
+            '<div class="so-progress-bar">' + barHtml + '</div>' +
             '<div class="so-item-footer">' +
                 '<span>' + so.pcs + ' pcs</span>' +
-                '<span>2KCS ' + (so.cs || 0) + ' &middot; MC ' + (so.mc || 0) +
-                    ' &middot; EBS ' + (so.eb || 0) + '</span>' +
+                '<span class="so-seg-num">' +
+                    '<b style="color:#f59e0b;">' + (so.in || 0) + '</b> &middot; ' +
+                    '<b style="color:#2563eb;">' + (so.mc || 0) + '</b> &middot; ' +
+                    '<b style="color:#8b5cf6;">' + (so.bd || 0) + '</b> &middot; ' +
+                    '<b style="color:#06b6d4;">' + (so.sd || 0) + '</b> &middot; ' +
+                    '<b style="color:#10b981;">' + (so.dn || 0) + '</b>' +
+                '</span>' +
             '</div>';
         soListContainer.appendChild(item);
         shown++;

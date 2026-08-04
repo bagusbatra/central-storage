@@ -51,7 +51,7 @@ function kpiNum(n) {
 
    Angka datang dari DUA endpoint dan tiba pada waktu berbeda:
      part=stock  saldo MSKA  -> IN, dan "antri"/"selesai" tiap tahap
-     part=hist   riwayat MSEG -> tambahan "sudah lewat", dan OUT
+     part=hist   riwayat MSEG -> tambahan "sudah lewat" tiap tahap
 
    Disimpan di LINTASAN lalu digambar ulang tiap kali salah satunya tiba,
    supaya yang datang duluan tidak tertimpa yang datang belakangan.
@@ -252,6 +252,10 @@ function loadKpi() {
         LINTASAN.mcq = d.mcq || 0; LINTASAN.mcd = d.mcd || 0;
         LINTASAN.bdq = d.bdq || 0; LINTASAN.bdd = d.bdd || 0;
         LINTASAN.sdq = d.sdq || 0; LINTASAN.sdd = d.sdd || 0;
+        /* OUT datang dari part=stock (AFPO), BUKAN part=hist. Versi pertama
+           menghitungnya dari saldo dan selalu menghasilkan 0 — komponen yang
+           sudah keluar tidak ada di daftar saldo sama sekali. */
+        LINTASAN.out = (d.out === undefined) ? null : d.out;
         drawCenters();
 
         if (d.buyer && d.buyer.length) {
@@ -273,8 +277,7 @@ function loadKpi() {
 
         kpiGet('dash_prod.htm?part=hist', function (h) {
             if (!h || !h.ok) {
-                LINTASAN.mcg = 0; LINTASAN.bdg = 0;
-                LINTASAN.sdg = 0; LINTASAN.out = 0;
+                LINTASAN.mcg = 0; LINTASAN.bdg = 0; LINTASAN.sdg = 0;
                 drawCenters();
                 kpiText('out-sub', 'riwayat gagal dimuat');
                 return;
@@ -282,7 +285,6 @@ function loadKpi() {
             LINTASAN.mcg = h.mcgone || 0;
             LINTASAN.bdg = h.bdgone || 0;
             LINTASAN.sdg = h.sdgone || 0;
-            LINTASAN.out = h.out    || 0;
             drawCenters();
         });
     });

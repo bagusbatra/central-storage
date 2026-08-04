@@ -7,13 +7,17 @@
   " ===== Daftar SO + Item =====
   "   Ketentuan user: tampilkan SEMUA SO dan Item-nya, urutan jangan
   "   berantakan -> diurut SO lalu Item menaik, tegas.
+  " Bar kartu SO: LIMA segmen, satu per tahap Lintasan Produksi + selesai
+  " (ketetapan user 2026-08-04). Sebelumnya tiga (2KCS / MC / EBS).
   TYPES: BEGIN OF ty_solist,
            vbeln TYPE mska-vbeln,
            posnr TYPE mska-posnr,
            komp  TYPE i,
-           at_cs TYPE i,
-           at_mc TYPE i,
-           at_eb TYPE i,
+           s_in  TYPE i,      " 2KCS
+           s_mc  TYPE i,      " 2261 / 2262
+           s_bd  TYPE i,      " 22EK / 22E2 / 22E3
+           s_sd  TYPE i,      " 229K / 2292
+           s_dn  TYPE i,      " sudah lewat SEMUA SLoc (dari AFPO, bukan saldo)
            pcs   TYPE p LENGTH 15 DECIMALS 3,
          END OF ty_solist.
   DATA: lt_solist TYPE STANDARD TABLE OF ty_solist WITH DEFAULT KEY.
@@ -28,18 +32,47 @@
       <sl>-posnr = <km>-posnr.
     ENDIF.
     <sl>-komp = <sl>-komp + 1.
-    " Bar kartu SO tetap TIGA segmen — ia meringkas posisi, bukan tahap.
-    " Machining = 2261/2262 · Banding & Sanding = 22EK/22E2/22E3/229K/2292
+    " ⚠️ Komponen yang stoknya TERPECAH antar SLoc dihitung di LEBIH DARI
+    "    SATU segmen. Jumlah kelima segmen karena itu bisa melebihi komp —
+    "    UI menghitung lebar bar dari total segmen, bukan dari komp.
     IF <km>-s_cs = abap_true.
-      <sl>-at_cs = <sl>-at_cs + 1.
+      <sl>-s_in = <sl>-s_in + 1.
     ENDIF.
     IF <km>-s_261 = abap_true OR <km>-s_262 = abap_true.
-      <sl>-at_mc = <sl>-at_mc + 1.
+      <sl>-s_mc = <sl>-s_mc + 1.
     ENDIF.
-    IF <km>-s_ek  = abap_true OR <km>-s_e2  = abap_true OR <km>-s_e3 = abap_true
-       OR <km>-s_29k = abap_true OR <km>-s_292 = abap_true.
-      <sl>-at_eb = <sl>-at_eb + 1.
+    IF <km>-s_ek = abap_true OR <km>-s_e2 = abap_true OR <km>-s_e3 = abap_true.
+      <sl>-s_bd = <sl>-s_bd + 1.
     ENDIF.
+    IF <km>-s_29k = abap_true OR <km>-s_292 = abap_true.
+      <sl>-s_sd = <sl>-s_sd + 1.
+    ENDIF.
+  ENDLOOP.
+
+  " Segmen SELESAI: komponen yang order-nya delivered penuh DAN sudah tidak
+  " bersaldo di kedelapan SLoc — yaitu isi lt_afpo_done yang lolos saringan
+  " stok di dp_stock.htm. TIDAK bisa diambil dari lt_kmp: komponen yang sudah
+  " keluar tidak ada di sana sama sekali (MSKA disaring KALAB > 0).
+  " Karena itu SO+Item yang seluruh komponennya sudah selesai bisa saja belum
+  " punya baris di lt_solist — jadi barisnya dibuat kalau belum ada.
+  LOOP AT lt_afpo_done INTO ls_afpo_done.
+    READ TABLE lt_stok TRANSPORTING NO FIELDS
+      WITH KEY vbeln = ls_afpo_done-kdauf
+               posnr = ls_afpo_done-kdpos
+               matnr = ls_afpo_done-matnr
+      BINARY SEARCH.
+    IF sy-subrc = 0.
+      CONTINUE.                    " masih bersaldo -> belum selesai
+    ENDIF.
+    READ TABLE lt_solist ASSIGNING <sl>
+      WITH KEY vbeln = ls_afpo_done-kdauf posnr = ls_afpo_done-kdpos.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_solist ASSIGNING <sl>.
+      <sl>-vbeln = ls_afpo_done-kdauf.
+      <sl>-posnr = ls_afpo_done-kdpos.
+    ENDIF.
+    <sl>-s_dn  = <sl>-s_dn + 1.
+    <sl>-komp  = <sl>-komp + 1.    " komponen ini nyata, hanya sudah keluar
   ENDLOOP.
 
   " qty diambil dari lt_stok (lt_kmp tidak menyimpan qty)
@@ -187,9 +220,11 @@
              && ',"buyer":"' && lv_sbname  && '"'
              && ',"komp":'   && |{ <sl>-komp }|
              && ',"pcs":'    && |{ lv_pcs_so }|
-             && ',"cs":'     && |{ <sl>-at_cs }|
-             && ',"mc":'     && |{ <sl>-at_mc }|
-             && ',"eb":'     && |{ <sl>-at_eb }| && '}'.
+             && ',"in":'     && |{ <sl>-s_in }|
+             && ',"mc":'     && |{ <sl>-s_mc }|
+             && ',"bd":'     && |{ <sl>-s_bd }|
+             && ',"sd":'     && |{ <sl>-s_sd }|
+             && ',"dn":'     && |{ <sl>-s_dn }| && '}'.
   ENDLOOP.
   lv_solist = '[' && lv_solist && ']'.
   IF lines( lt_solist ) > lc_maxso.
@@ -223,6 +258,9 @@
          && ',"bdd":'         && |{ lv_bd_d }|
          && ',"sdq":'         && |{ lv_sd_q }|
          && ',"sdd":'         && |{ lv_sd_d }|
+         " OUT = done_real. Dihitung dari AFPO, BUKAN dari saldo MSKA —
+         " komponen yang sudah keluar tidak ada di lt_kmp sama sekali.
+         && ',"out":'         && |{ lv_done_real }|
          && ',"solist_more":' && |{ lv_so_more }|
          && ',"buyer":'       && lv_buyers
          && ',"solist":'      && lv_solist
