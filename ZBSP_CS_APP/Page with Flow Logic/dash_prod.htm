@@ -10,6 +10,7 @@
 *&   dash_prod.htm ......... Page with Flow Logic  (berkas ini)
 *&   dp_komp.htm ........... Page Fragment
 *&   dp_komp_out.htm ....... Page Fragment
+*&   dp_bom.htm ............ Page Fragment
 *&   dp_hist.htm ........... Page Fragment
 *&   dp_stock.htm .......... Page Fragment
 *&   dp_stock_so.htm ....... Page Fragment
@@ -26,7 +27,7 @@
 *&    semua fragment, dan nama di fragment mana pun TIDAK BOLEH bertabrakan.
 *&
 *& ===== ALUR =====
-*& Bagian yang menjawab sendiri lalu RETURN : komp, hist
+*& Bagian yang menjawab sendiri lalu RETURN : komp, bom, hist
 *& Bagian yang mengisi lv_json lalu jatuh ke ekor berkas ini : stock
 *&
 *& ===== KENAPA DIPECAH PER BAGIAN =====
@@ -73,6 +74,9 @@
 *&                  "solist":[{so,item,bid,buyer,komp,pcs,in,mc,bd,sd,dn}],
 *&                  "buyer":[{id,name,pct,komp,so}],"ms":n}
 *&   part=hist  -> {"ok":1,"mcgone":n,"bdgone":n,"sdgone":n,"rows":n,"ms":n}
+*&   part=bom   -> {"ok":1,"aufnr":"..","rows":[{mat,txt,b,a,u,lok}],"ms":n}
+*&                 param: aufnr=   komponen BOM satu order (RESB)
+*&                 b butuh (BDMNG) · a diambil (ENMNG) · lok ditandai hapus
 *&   part=komp  -> {"ok":1,"so":"..","item":"..","rows":[
 *&                  {mat,txt,in,mc,bd,sd,uom,
 *&                   st:[{l,q}], q:{in|mc|bd|sd:{t,d,g,dd}}}],"ms":n}
@@ -125,7 +129,7 @@ DATA: lv_part  TYPE string,
 
 lv_part  = request->get_form_field( 'part' ).
 lv_fresh = request->get_form_field( 'fresh' ).
-IF lv_part <> 'hist' AND lv_part <> 'komp'.
+IF lv_part <> 'hist' AND lv_part <> 'komp' AND lv_part <> 'bom'.
   lv_part = 'stock'.
 ENDIF.
 
@@ -134,25 +138,30 @@ ENDIF.
 "   TIDAK BOLEH dilayani dari cache: cache hanya menyimpan jawaban tanpa
 "   scope. Melayaninya dari cache akan menampilkan komponen SO lain.
 DATA: lv_k_so   TYPE mska-vbeln,
-      lv_k_item TYPE mska-posnr.
+      lv_k_item TYPE mska-posnr,
+      lv_k_auf  TYPE afko-aufnr.
 IF lv_part = 'komp'.
   lv_k_so   = request->get_form_field( 'so' ).
   lv_k_item = request->get_form_field( 'item' ).
+ELSEIF lv_part = 'bom'.
+  lv_k_auf  = request->get_form_field( 'aufnr' ).
 ENDIF.
 
 IF lv_part = 'hist'.
   lv_cid = 'DPRODHI'.
 ELSEIF lv_part = 'komp'.
   lv_cid = 'DPRODKP'.
+ELSEIF lv_part = 'bom'.
+  lv_cid = 'DPRODBM'.
 ELSE.
   lv_cid = 'DPRODST'.
 ENDIF.
 
-" part=komp SELALU discope ke satu SO+Item, jadi TIDAK PERNAH di-cache:
+" part=komp & part=bom SELALU discope, jadi TIDAK PERNAH di-cache:
 " cache hanya menyimpan jawaban tanpa scope, dan melayaninya dari cache
 " akan menampilkan komponen SO lain.
 DATA lv_k_nocache TYPE abap_bool.
-IF lv_part = 'komp'.
+IF lv_part = 'komp' OR lv_part = 'bom'.
   lv_k_nocache = abap_true.
   lv_fresh     = 'X'.
 ENDIF.
@@ -240,7 +249,7 @@ lv_dfrom = lv_yy && lv_mm && '01'.
 " menyetel header setelah ada keluaran adalah cara yang rapuh.
 response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
 
-%><%@include file="dp_komp.htm" %><%@include file="dp_hist.htm" %><%@include file="dp_stock.htm" %><%
+%><%@include file="dp_komp.htm" %><%@include file="dp_bom.htm" %><%@include file="dp_hist.htm" %><%@include file="dp_stock.htm" %><%
 EXPORT ts = lv_now js = lv_json TO SHARED BUFFER indx(zc) ID lv_cid.
 response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
 %><%= lv_json %>

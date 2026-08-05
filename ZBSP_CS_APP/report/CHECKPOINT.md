@@ -77,7 +77,7 @@ UI disalin dari `reference/prototype-ui/index.html` (permintaan user 2026-08-01)
 lalu berubah banyak sekali 2026-08-03 s/d 08-05. Yang tertulis di bawah adalah
 keadaan **sekarang**, bukan sejarahnya — sejarahnya di `report/daily/`.
 
-- **Berkas: 14 objek SE80** — 2 halaman + 12 Page Fragment. Semuanya wajib aktif
+- **Berkas: 15 objek SE80** — 2 halaman + 13 Page Fragment. Semuanya wajib aktif
 - **Sumbu utama:** Buyer
 - **Aktivasi:** dikonfirmasi user **2026-08-05** — seluruh objek aktif & aman.
   ⚠️ Perubahan 2026-08-05 (umur data, urutan keterlambatan, penghapusan
@@ -127,7 +127,15 @@ mengisinya dengan angka yang artinya dipinjam dari perhitungan lain.
 | Detail Komponen | **kosong sampai satu SO diklik**. 4 tab real-stock: Central Storage / Machining / Banding / Sanding |
 
 Kolom Detail Komponen: `KOMPONEN | REAL STOCK & SLOC | QTY TARGET | QTY DEL |
-PROGRES | JADWAL`. Baris **terurut keterlambatan**, paling telat di atas.
+PROGRES | JADWAL`. Baris **terurut keterlambatan**, paling telat di atas, dan
+**bisa dibentangkan** untuk melihat BOM order tahap itu (mirip daftar Components
+di COOIS): material, deskripsi, qty butuh vs sudah diambil.
+
+🔴 **BOM dari RESB — JANGAN memfilter `XLOEK = space` di WHERE.** Order yang
+sudah TECO umumnya ber-`XLOEK = 'X'` sebagai penutupan administratif reservasi,
+BUKAN tanda barangnya belum dipakai. Filter itu pernah membuat order yang sudah
+tuntas tampil "Tidak Ada Data" (lihat bagian 2). Baris ber-`X` tetap dibaca dan
+ditandai "ditandai hapus", tidak dibuang.
 
 - Tab ditentukan **posisi stok**; Qty Target/Del diambil dari **order tahap yang
   sesuai tab** (`AFPO-PSMNG`/`WEMNG`)
@@ -145,6 +153,7 @@ PROGRES | JADWAL`. Baris **terurut keterlambatan**, paling telat di atas.
 | `stock` | MSKA enam SLoc → kartu, buyer, daftar SO, Lintasan | `DPRODST` |
 | `hist` | `MSEG ⨝ MKPF` → "sudah lewat" tiap tahap | `DPRODHI` |
 | `komp` | komponen SATU SO+Item | tidak di-cache (selalu discope) |
+| `bom` | komponen BOM (RESB) SATU order — saat baris dibentangkan | tidak di-cache |
 
 - **Jendela waktu `lc_bulan` = 3 bulan** membatasi MSEG (`budat`) dan AFPO
   (`gstrp`). ⚠️ **MSKA tidak bisa dibatasi** — saldo stok tidak punya tanggal,
@@ -189,8 +198,10 @@ endpoint JSON itu merusak jawabannya.
 | `dp_hist.htm` | Page Fragment | part=hist |
 | `dp_stock.htm` | Page Fragment | part=stock |
 | `dp_stock_so.htm` | Page Fragment | part=stock daftar SO + JSON |
+| `dp_bom.htm` | Page Fragment | part=bom — BOM satu order dari RESB |
 
 ⚠️ `dp_ops.htm` **DIHAPUS 2026-08-05** — objek SE80-nya perlu ikut dihapus.
+⚠️ `dp_bom.htm` **BARU 2026-08-05** — perlu dibuat di SE80 sebagai Page Fragment.
 
 ### 🔴 Yang belum pernah dibuktikan
 

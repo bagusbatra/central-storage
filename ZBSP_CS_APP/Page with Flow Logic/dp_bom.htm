@@ -1,0 +1,141 @@
+<%@ page language="abap" %><%-- ==========================================================
+     PAGE FRAGMENT — part=bom — komponen BOM satu order produksi
+     Disisipkan dash_prod.htm lewat direktif include. Bukan halaman:
+     WAJIB dibuat di SE80 bertipe "Page Fragment".
+     Dipanggil saat satu baris Detail Komponen dibentangkan.
+     ========================================================== --%><%
+*&---------------------------------------------------------------------*
+*& BAGIAN BOM — isi baris yang dibentangkan di Detail Komponen
+*&---------------------------------------------------------------------*
+*& Menjawab "order ini butuh apa saja, dan sudah diambil berapa" — sama
+*& dengan daftar Components di COOIS.
+*&
+*& Sumbernya RESB (reservasi komponen order). Discope ke SATU AUFNR, jadi
+*& murah; dipanggil hanya ketika sebuah baris benar-benar dibentangkan.
+*&
+*& ===== JEBAKAN YANG SUDAH PERNAH MEMAKAN KORBAN =====
+*& 🔴 JANGAN memfilter XLOEK = space di WHERE. Order yang sudah TECO
+*&    umumnya ber-XLOEK = 'X' sebagai PENUTUPAN ADMINISTRATIF reservasi,
+*&    BUKAN tanda barangnya belum dipakai. Filter itu pernah membuat order
+*&    yang sudah tuntas tampil "Tidak Ada Data" — tercatat di CHECKPOINT
+*&    bagian 2 sebagai pelajaran yang mengikat seluruh aplikasi.
+*&    Baris ber-XLOEK 'X' tetap dibaca; UI menandainya, tidak membuangnya.
+*&
+*& ⚠️ Satu material bisa punya LEBIH DARI SATU baris RESB dalam satu order
+*&    (beda item reservasi). Dijumlahkan per material — kalau tidak,
+*&    komponen yang sama muncul berkali-kali dengan qty terpotong-potong.
+*&
+*& Tidak di-cache: selalu discope ke satu order, dan cache hanya menyimpan
+*& jawaban tanpa scope.
+*&---------------------------------------------------------------------*
+IF lv_part = 'bom'.
+
+  IF lv_k_auf IS INITIAL.
+    response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+    %>{"ok":0,"msg":"nomor order tidak diberikan"}<%
+    RETURN.
+  ENDIF.
+
+  TYPES: BEGIN OF ty_rsb,
+           matnr TYPE resb-matnr,
+           bdmng TYPE resb-bdmng,
+           enmng TYPE resb-enmng,
+           meins TYPE resb-meins,
+           xloek TYPE resb-xloek,
+         END OF ty_rsb.
+  DATA: lt_rsb TYPE STANDARD TABLE OF ty_rsb WITH DEFAULT KEY,
+        ls_rsb TYPE ty_rsb.
+
+  SELECT matnr bdmng enmng meins xloek FROM resb
+    INTO CORRESPONDING FIELDS OF TABLE lt_rsb
+    WHERE aufnr = lv_k_auf.
+
+  " Agregasi per material. xloek diperlakukan sebagai "ADA yang ditandai
+  " hapus" — cukup satu baris ber-'X' untuk menandai seluruh materialnya,
+  " karena itu sinyal administratif, bukan kuantitas.
+  TYPES: BEGIN OF ty_bom,
+           matnr TYPE resb-matnr,
+           txt   TYPE makt-maktx,
+           butuh TYPE p LENGTH 15 DECIMALS 3,
+           ambil TYPE p LENGTH 15 DECIMALS 3,
+           meins TYPE resb-meins,
+           lok   TYPE abap_bool,
+         END OF ty_bom.
+  DATA: lt_bom TYPE STANDARD TABLE OF ty_bom WITH DEFAULT KEY.
+  FIELD-SYMBOLS <bm> TYPE ty_bom.
+
+  LOOP AT lt_rsb INTO ls_rsb.
+    READ TABLE lt_bom ASSIGNING <bm> WITH KEY matnr = ls_rsb-matnr.
+    IF sy-subrc <> 0.
+      APPEND INITIAL LINE TO lt_bom ASSIGNING <bm>.
+      <bm>-matnr = ls_rsb-matnr.
+      <bm>-meins = ls_rsb-meins.
+    ENDIF.
+    <bm>-butuh = <bm>-butuh + ls_rsb-bdmng.
+    <bm>-ambil = <bm>-ambil + ls_rsb-enmng.
+    IF ls_rsb-xloek = 'X'.
+      <bm>-lok = abap_true.
+    ENDIF.
+  ENDLOOP.
+  SORT lt_bom BY matnr.
+
+  " Deskripsi material
+  IF lt_bom IS NOT INITIAL.
+    TYPES: BEGIN OF ty_bmk, matnr TYPE makt-matnr, maktx TYPE makt-maktx, END OF ty_bmk.
+    DATA: lt_bmk TYPE STANDARD TABLE OF ty_bmk WITH DEFAULT KEY, ls_bmk TYPE ty_bmk.
+    SELECT matnr maktx FROM makt INTO TABLE lt_bmk
+      FOR ALL ENTRIES IN lt_bom
+      WHERE matnr = lt_bom-matnr AND spras = sy-langu.
+    SORT lt_bmk BY matnr. DELETE ADJACENT DUPLICATES FROM lt_bmk COMPARING matnr.
+    LOOP AT lt_bom ASSIGNING <bm>.
+      READ TABLE lt_bmk INTO ls_bmk WITH KEY matnr = <bm>-matnr BINARY SEARCH.
+      IF sy-subrc = 0.
+        <bm>-txt = ls_bmk-maktx.
+      ELSE.
+        <bm>-txt = <bm>-matnr.        " tanpa master data: tampilkan kodenya
+      ENDIF.
+    ENDLOOP.
+  ENDIF.
+
+  DATA: lv_bjson TYPE string,
+        lv_bfrst TYPE abap_bool VALUE abap_true,
+        lv_btxt  TYPE string,
+        lv_bb    TYPE i,
+        lv_ba    TYPE i,
+        lv_blok  TYPE c LENGTH 1.
+
+  LOOP AT lt_bom ASSIGNING <bm>.
+    lv_bb = round( val = <bm>-butuh dec = 0 ).
+    lv_ba = round( val = <bm>-ambil dec = 0 ).
+    lv_btxt = <bm>-txt.
+    REPLACE ALL OCCURRENCES OF '\' IN lv_btxt WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN lv_btxt WITH '\"'.
+    lv_blok = '0'.
+    IF <bm>-lok = abap_true.
+      lv_blok = '1'.
+    ENDIF.
+    IF lv_bfrst = abap_false.
+      lv_bjson = lv_bjson && ','.
+    ENDIF.
+    lv_bfrst = abap_false.
+    lv_bjson = lv_bjson
+            && '{"mat":"' && <bm>-matnr && '"'
+            && ',"txt":"' && lv_btxt    && '"'
+            && ',"b":'    && |{ lv_bb }|
+            && ',"a":'    && |{ lv_ba }|
+            && ',"u":"'   && <bm>-meins && '"'
+            && ',"lok":'  && lv_blok    && '}'.
+  ENDLOOP.
+
+  GET RUN TIME FIELD lv_t1.
+  lv_ms = ( lv_t1 - lv_t0 ) / 1000.
+
+  lv_json = '{"ok":1,"aufnr":"' && lv_k_auf && '"'
+         && ',"rows":['         && lv_bjson && ']'
+         && ',"ms":'            && |{ lv_ms }| && '}'.
+
+  response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
+  %><%= lv_json %><%
+  RETURN.
+ENDIF.
+%>

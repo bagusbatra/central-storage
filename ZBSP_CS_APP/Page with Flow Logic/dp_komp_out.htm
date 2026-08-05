@@ -65,7 +65,8 @@
           lv_kqs = lv_kqs && ','.
         ENDIF.
         lv_kqs = lv_kqs && '"' && lv_ktab && '":{"t":' && |{ lv_kt }|
-              && ',"d":' && |{ lv_kd }| && ',"g":"","dd":null}'.
+              && ',"d":' && |{ lv_kd }| && ',"a":"' && ls_kq2-aufnr
+              && '","g":"","dd":null}'.
       ELSE.
         lv_kgs = ls_kq2-gstrp+6(2) && '.' && ls_kq2-gstrp+4(2)
               && '.' && ls_kq2-gstrp(4).
@@ -74,7 +75,8 @@
           lv_kqs = lv_kqs && ','.
         ENDIF.
         lv_kqs = lv_kqs && '"' && lv_ktab && '":{"t":' && |{ lv_kt }|
-              && ',"d":' && |{ lv_kd }| && ',"g":"' && lv_kgs
+              && ',"d":' && |{ lv_kd }| && ',"a":"' && ls_kq2-aufnr
+              && '","g":"' && lv_kgs
               && '","dd":' && |{ lv_kdd }| && '}'.
       ENDIF.
     ENDLOOP.

@@ -220,6 +220,48 @@
     .jw-soon  { color: #b45309; font-weight: 700; }
     .jw-ok    { color: var(--text-muted); }
     .jw-date  { font-size: 9px; color: var(--text-muted); font-family: monospace; display: block; }
+    /* ---- baris BOM yang dibentangkan (mirip daftar Components COOIS) ---- */
+    .comp-row { cursor: pointer; }
+    .comp-row:hover { background: #f8fafc; }
+    .comp-row.open { background: #fffbeb; }
+    .caret {
+        display: inline-block;
+        width: 10px;
+        color: var(--text-muted);
+        font-size: 9px;
+        margin-right: 2px;
+    }
+    .stage-cell { background: #f8fafc; padding: 0 !important; }
+    .stage-msg { padding: 8px 12px 8px 30px; font-size: 10px; color: var(--text-muted); }
+    .bom-table { width: 100%; border-collapse: collapse; }
+    .bom-table th {
+        text-align: left;
+        font-size: 9px;
+        font-weight: 600;
+        color: var(--text-muted);
+        padding: 5px 12px 4px 30px;
+        border-bottom: 1px solid var(--border-color);
+        background: transparent;
+    }
+    .bom-table td {
+        padding: 5px 12px 5px 30px;
+        border-bottom: 1px solid #eef2f7;
+        font-size: 10px;
+        color: var(--text-main);
+    }
+    .bom-ok { color: #059669; font-weight: 700; }
+    .bom-kurang { color: #b91c1c; font-weight: 700; }
+    /* XLOEK 'X' = penutupan administratif reservasi, BUKAN kekurangan.
+       Ditandai abu-abu, tidak merah, dan TIDAK dibuang dari daftar. */
+    .bom-lok td { opacity: 0.55; }
+    .bom-tag {
+        font-size: 9px;
+        color: var(--text-muted);
+        border: 1px solid var(--border-color);
+        border-radius: 3px;
+        padding: 1px 4px;
+    }
+
     .komp-empty {
         text-align: center;
         color: var(--text-muted);

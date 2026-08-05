@@ -34,6 +34,10 @@
 var KOMP = [];
 
 var kompState   = 'idle';   /* idle | load | ok | err | wait */
+/* Baris yang dibentangkan: kunci "matnr|tab" -> { open, rows, state }.
+   BOM diambil SEKALI lalu disimpan, jadi buka-tutup berikutnya tidak
+   meminta ulang ke server. */
+var BOM = {};
 var kompReqSeq  = 0;        /* penanda urutan permintaan — lihat loadKomp() */
 var kompRetried = false;
 
@@ -52,6 +56,7 @@ function selectSO(so, item) {
     } else {
         selectedSO = { so: so, item: item };
     }
+    BOM = {};            /* bentang milik SO lama tidak berlaku lagi */
     updateLabels();
     renderSOList();
     loadKomp();
@@ -105,6 +110,82 @@ function loadKomp() {
             kompState = 'ok';
             renderComponentTable();
         });
+}
+
+function bomKey(r) { return r.mat + '|' + selectedTab; }
+
+/* BOM order — RESB, diambil hanya saat baris dibentangkan. */
+function loadBom(r, aufnr) {
+    var k = bomKey(r);
+    BOM[k].state = 'load';
+    renderComponentTable();
+    kpiGet('dash_prod.htm?part=bom&aufnr=' + encodeURIComponent(aufnr),
+        function (d) {
+            var cur = BOM[k];
+            if (!cur) { return; }
+            if (!d || !d.ok) {
+                cur.state = 'err';
+            } else {
+                cur.rows = d.rows || [];
+                cur.state = 'ok';
+            }
+            renderComponentTable();
+        });
+}
+
+function toggleBom(r) {
+    var qq = (r.q || {})[selectedTab];
+    if (!qq || !qq.a) { return; }        /* tanpa order -> tidak ada BOM */
+    var k = bomKey(r);
+    if (BOM[k] && BOM[k].open) {
+        BOM[k].open = false;
+        renderComponentTable();
+        return;
+    }
+    if (!BOM[k]) {
+        BOM[k] = { open: true, rows: null, state: 'load' };
+        loadBom(r, qq.a);
+        return;
+    }
+    BOM[k].open = true;
+    if (BOM[k].state === 'err') { loadBom(r, qq.a); return; }
+    renderComponentTable();
+}
+
+/* Isi baris bentang: komponen BOM order itu, kebutuhan vs sudah diambil. */
+function bomRowsHtml(st) {
+    if (st.state === 'load') {
+        return '<div class="stage-msg">memuat BOM&hellip;</div>';
+    }
+    if (st.state === 'err') {
+        return '<div class="stage-msg" style="color:#b91c1c;">Gagal memuat BOM. ' +
+               'Klik baris ini untuk mencoba lagi.</div>';
+    }
+    if (!st.rows || st.rows.length === 0) {
+        return '<div class="stage-msg">Order ini tidak punya komponen di RESB.</div>';
+    }
+    var h = '<table class="bom-table"><tr>' +
+            '<th>MATERIAL</th><th>DESKRIPSI</th>' +
+            '<th style="text-align:right;">BUTUH</th>' +
+            '<th style="text-align:right;">DIAMBIL</th><th></th></tr>';
+    for (var i = 0; i < st.rows.length; i++) {
+        var b = st.rows[i];
+        /* Cukup = sudah diambil >= yang dibutuhkan. Baris ber-lok ditandai
+           terpisah: XLOEK 'X' itu penutupan administratif, bukan kekurangan. */
+        var cukup = b.a >= b.b;
+        h += '<tr' + (b.lok ? ' class="bom-lok"' : '') + '>' +
+             '<td><span class="mat-code">' + esc(b.mat) + '</span></td>' +
+             '<td>' + esc(b.txt) + '</td>' +
+             '<td style="text-align:right;">' + kpiNum(b.b) + ' ' + esc(b.u) + '</td>' +
+             '<td style="text-align:right;">' + kpiNum(b.a) + ' ' + esc(b.u) + '</td>' +
+             '<td style="text-align:right;">' +
+                (b.lok ? '<span class="bom-tag">ditandai hapus</span>'
+                       : (cukup ? '<span class="bom-ok">&#10003;</span>'
+                                : '<span class="bom-kurang">kurang ' +
+                                  kpiNum(b.b - b.a) + '</span>')) +
+             '</td></tr>';
+    }
+    return h + '</table>';
 }
 
 function centerName() {
@@ -258,11 +339,26 @@ function renderComponentTable() {
     for (var k = 0; k < rows.length; k++) {
         r = rows[k];
         var qq = (r.q || {})[selectedTab];
+        var kb = BOM[bomKey(r)];
+        var buka = !!(kb && kb.open);
+        var adaOrder = !!(qq && qq.a);
+
         var tr = document.createElement('tr');
+        tr.className = 'comp-row' + (buka ? ' open' : '');
+        if (adaOrder) {
+            tr.onclick = (function (row) {
+                return function () { toggleBom(row); };
+            })(r);
+        }
         tr.innerHTML =
             '<td>' +
-                '<span class="comp-name">' + esc(r.txt) + '</span>' +
-                '<span class="comp-sub"><span class="mat-code">' + esc(r.mat) + '</span></span>' +
+                '<span class="comp-name">' +
+                    (adaOrder ? '<span class="caret">' + (buka ? '&#9660;' : '&#9654;') +
+                                '</span>' : '<span class="caret"></span>') +
+                    esc(r.txt) + '</span>' +
+                '<span class="comp-sub"><span class="mat-code">' + esc(r.mat) + '</span>' +
+                    (adaOrder ? ' &middot; order <span class="mat-code">' + esc(qq.a) +
+                                '</span>' : ' &middot; tanpa order') + '</span>' +
             '</td>' +
             '<td>' + stokSel(r) + '</td>' +
             '<td style="text-align:right; font-weight:700;">' +
@@ -272,6 +368,13 @@ function renderComponentTable() {
             '<td>' + qtyBar(qq, warna) + '</td>' +
             '<td>' + jadwalSel(qq) + '</td>';
         componentTableBody.appendChild(tr);
+
+        if (buka) {
+            var dtr = document.createElement('tr');
+            dtr.innerHTML = '<td class="stage-cell" colspan="6">' +
+                            bomRowsHtml(kb) + '</td>';
+            componentTableBody.appendChild(dtr);
+        }
     }
 
     renderDetailFooter(rows.length);
