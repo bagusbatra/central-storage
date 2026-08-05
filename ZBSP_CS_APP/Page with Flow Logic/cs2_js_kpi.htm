@@ -13,19 +13,24 @@
 
    Dua bagian dipanggil TERPISAH supaya yang lambat tidak memblokir yang
    cepat.
-   ⚠️ part=ops sudah tidak dipanggil sejak kartu OPERASI SELESAI dihapus
-      (2026-08-04) — lihat catatan di dekat akhir loadKpi().
+   part=ops sudah DIHAPUS seluruhnya 2026-08-05 bersama fragment
+      dp_ops.htm; kartu yang memakainya sudah lama tidak ada.
    ==================================================================== */
+/* onOk(data, umurDetik). umurDetik = 0 kalau jawaban baru dihitung; > 0
+   kalau dilayani dari cache. Dibaca dari header X-Data-Age, bukan dari isi
+   JSON — lihat alasannya di dash_prod.htm. */
 function kpiGet(url, onOk) {
     var x = window.XMLHttpRequest ? new XMLHttpRequest()
                                   : new ActiveXObject('Microsoft.XMLHTTP');
     x.open('GET', url, true);
     x.onreadystatechange = function () {
         if (x.readyState !== 4) { return; }
+        var umur = 0;
+        try { umur = parseInt(x.getResponseHeader('X-Data-Age'), 10) || 0; } catch (e) { }
         if (x.status === 200) {
-            try { onOk(eval('(' + x.responseText + ')')); return; } catch (e) { }
+            try { onOk(eval('(' + x.responseText + ')'), umur); return; } catch (e) { }
         }
-        onOk(null);
+        onOk(null, 0);
     };
     x.send();
 }
@@ -71,6 +76,12 @@ function kpiNum(n) {
    MSEG menambahkan yang PERNAH lewat tapi stoknya sudah nol, sehingga
    angkanya mengikuti pergerakan barang, bukan sekadar memotret posisi.
    ==================================================================== */
+/* Umur data part=stock dalam detik; 0 = baru dihitung. */
+var DATA_AGE = 0;
+
+/* Penjaga satu-kali untuk pemulihan 'DPRODKM' — lihat catatan di part=hist. */
+var histRetried = false;
+
 var LINTASAN = {
     in: 0,
     mcq: 0, mcd: 0, bdq: 0, bdd: 0, sdq: 0, sdd: 0,
@@ -220,7 +231,7 @@ function setBar(id, pct) {
 }
 
 function loadKpi() {
-    kpiGet('dash_prod.htm?part=stock', function (d) {
+    kpiGet('dash_prod.htm?part=stock', function (d, umur) {
         if (!d || !d.ok) {
             kpiText('kpi-so', '-');     kpiText('kpi-so-sub', 'gagal memuat');
             kpiText('kpi-buyer', '-');  kpiText('kpi-buyer-sub', 'gagal memuat');
@@ -238,6 +249,13 @@ function loadKpi() {
         kpiText('kpi-buyer', kpiNum(d.buyers));
         kpiText('kpi-buyer-sub', 'punya stok di delapan SLoc');
         kpiText('hdr-stat', kpiNum(d.buyers) + ' Buyer | ' + kpiNum(d.so) + ' SO');
+
+        /* Umur data dinyatakan di kaki tabel. Sebelumnya di situ hanya ada
+           jam render halaman — padahal jawaban bisa berasal dari cache yang
+           sudah beberapa menit lalu, sehingga jam yang ditampilkan seolah
+           menjanjikan data baru. */
+        DATA_AGE = umur;
+        renderDetailFooter(-1);
 
         /* Jendela waktu dinyatakan di legenda Lintasan Produksi — di situ
            segmen hijau (dari MSEG) paling terpengaruh pembatasan. */
@@ -277,6 +295,25 @@ function loadKpi() {
         loadKomp();
 
         kpiGet('dash_prod.htm?part=hist', function (h) {
+            /* Sama seperti part=komp: kalau 'DPRODKM' hilang, memaksa
+               part=stock hitung ulang adalah satu-satunya jalan menulisnya
+               kembali. Sekali percobaan; sesudah itu dikatakan gagal. */
+            if (h && !h.ok && !histRetried) {
+                histRetried = true;
+                kpiGet('dash_prod.htm?part=stock&fresh=1', function () {
+                    kpiGet('dash_prod.htm?part=hist', function (h2) {
+                        if (h2 && h2.ok) {
+                            LINTASAN.mcg = h2.mcgone || 0;
+                            LINTASAN.bdg = h2.bdgone || 0;
+                            LINTASAN.sdg = h2.sdgone || 0;
+                        } else {
+                            LINTASAN.mcg = 0; LINTASAN.bdg = 0; LINTASAN.sdg = 0;
+                        }
+                        drawCenters();
+                    });
+                });
+                return;
+            }
             if (!h || !h.ok) {
                 LINTASAN.mcg = 0; LINTASAN.bdg = 0; LINTASAN.sdg = 0;
                 drawCenters();
@@ -289,14 +326,6 @@ function loadKpi() {
         });
     });
 
-    /* ⚠️ part=ops TIDAK lagi dipanggil. Satu-satunya konsumennya adalah
-       kartu OPERASI SELESAI, yang dihapus 2026-08-04. Fragment dp_ops.htm
-       sengaja DIBIARKAN ada di SE80 — rantai AFKO->AFVC->AFVV->AFRU di
-       dalamnya mahal dibangun ulang, dan mungkin dipakai lagi kalau salah
-       satu kartu baru ternyata butuh status konfirmasi operasi.
-       Kedua kartu yang sempat menggantikannya (MULAI MINGGU INI, SIAP
-       LANJUT) juga sudah dihapus 2026-08-04, jadi sekarang TIDAK ADA
-       kartu ringkasan selain BUYER & SALES ORDER. */
 }
 
 function boot() {

@@ -13,7 +13,6 @@
 *&   dp_hist.htm ........... Page Fragment
 *&   dp_stock.htm .......... Page Fragment
 *&   dp_stock_so.htm ....... Page Fragment
-*&   dp_ops.htm ............ Page Fragment
 *&
 *& ⚠️ Fragment WAJIB dibuat bertipe "Page Fragment". Kalau dibuat sebagai
 *&    "Page with Flow Logic", SE80 mengompilasinya sendirian dan variabel dari
@@ -28,14 +27,18 @@
 *&
 *& ===== ALUR =====
 *& Bagian yang menjawab sendiri lalu RETURN : komp, hist
-*& Bagian yang mengisi lv_json lalu jatuh ke ekor berkas ini : stock, ops
+*& Bagian yang mengisi lv_json lalu jatuh ke ekor berkas ini : stock
 *&
 *& ===== KENAPA DIPECAH PER BAGIAN =====
-*& part=stock : MSKA delapan SLoc. BERAT (~15 dtk) tapi TERBATAS.
-*& part=ops   : rantai AFKO -> AFVC -> AFVV -> AFRU. Besarnya sebanding
-*&              JUMLAH ORDER — itulah yang dulu meledak. Dibatasi lc_maxord.
-*& Dipisah supaya yang satu tidak memblokir yang lain: kartu SALES ORDER &
-*& BUYER muncul tanpa menunggu OPERASI SELESAI.
+*& part=stock : MSKA enam SLoc. BERAT (~15 dtk) tapi TERBATAS.
+*& part=hist  : MSEG riwayat, dibatasi jendela lc_bulan.
+*& part=komp  : selalu discope ke satu SO+Item, jadi murah.
+*& Dipisah supaya yang satu tidak memblokir yang lain: kartu muncul tanpa
+*& menunggu riwayat pergerakan selesai dihitung.
+*&
+*& ⚠️ part=ops DIHAPUS 2026-08-05. Satu-satunya konsumennya kartu OPERASI
+*&    SELESAI, yang sudah lama dihapus. Rantai AFKO->AFVC->AFVV->AFRU-nya
+*&    masih ada di git kalau suatu saat dibutuhkan lagi.
 *&
 *& ===== JENDELA WAKTU =====
 *& lc_bulan (3) membatasi DUA query terberat:
@@ -58,22 +61,18 @@
 *&
 *& ===== KETERGANTUNGAN ANTAR-BAGIAN =====
 *& part=stock menulis dua SHARED BUFFER yang dibaca bagian lain:
-*&   'DPRODSI' daftar SO+Item  -> dibaca part=ops   (ada fallback)
 *&   'DPRODKM' daftar komponen -> dibaca part=hist & part=komp
 *& Karena itu part=stock HARUS dipanggil lebih dulu; yang lain menjawab
 *& jujur "jalankan part=stock lebih dulu" bila datanya belum ada.
 *&
 *& ===== BENTUK JAWABAN =====
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
-*&                  "prod":n,"done":n,
 *&                  "in":n,"mcq":n,"mcd":n,"bdq":n,"bdd":n,"sdq":n,"sdd":n,
 *&                  "dfrom":"YYYYMMDD",
 *&                  "solist_more":n,"solist_done":n,
 *&                  "solist":[{so,item,bid,buyer,komp,pcs,in,mc,bd,sd,dn}],
 *&                  "buyer":[{id,name,pct,komp,so}],"ms":n}
 *&   part=hist  -> {"ok":1,"mcgone":n,"bdgone":n,"sdgone":n,"rows":n,"ms":n}
-*&   part=ops   -> {"ok":1,"pct":n,"conf":n,"total":n,"act":n,
-*&                  "queue":n,"ord":n,"trunc":0|1,"ms":n}
 *&   part=komp  -> {"ok":1,"so":"..","item":"..","rows":[
 *&                  {mat,txt,in,mc,bd,sd,uom,
 *&                   st:[{l,q}], q:{in|mc|bd|sd:{t,d,g,dd}}}],"ms":n}
@@ -119,13 +118,14 @@ DATA: lv_part  TYPE string,
       lv_now   TYPE timestamp,
       lv_saved TYPE timestamp,
       lv_age   TYPE i,
+      lv_age_c TYPE string,
       lv_t0    TYPE i,
       lv_t1    TYPE i,
       lv_ms    TYPE i.
 
 lv_part  = request->get_form_field( 'part' ).
 lv_fresh = request->get_form_field( 'fresh' ).
-IF lv_part <> 'ops' AND lv_part <> 'hist' AND lv_part <> 'komp'.
+IF lv_part <> 'hist' AND lv_part <> 'komp'.
   lv_part = 'stock'.
 ENDIF.
 
@@ -140,9 +140,7 @@ IF lv_part = 'komp'.
   lv_k_item = request->get_form_field( 'item' ).
 ENDIF.
 
-IF lv_part = 'ops'.
-  lv_cid = 'DPRODOP'.
-ELSEIF lv_part = 'hist'.
+IF lv_part = 'hist'.
   lv_cid = 'DPRODHI'.
 ELSEIF lv_part = 'komp'.
   lv_cid = 'DPRODKP'.
@@ -167,6 +165,14 @@ IF lv_fresh IS INITIAL.
   IF sy-subrc = 0 AND lv_json IS NOT INITIAL.
     lv_age = cl_abap_tstmp=>subtract( tstmp1 = lv_now tstmp2 = lv_saved ).
     IF lv_age <= lc_ttl.
+      " ⚠️ UMUR DATA dikirim sebagai HEADER, bukan disisipkan ke JSON.
+      "    Jawaban dari cache diteruskan APA ADANYA — menyunting stringnya
+      "    berarti mengutak-atik JSON yang sudah jadi, dan satu kesalahan
+      "    ketik di situ merusak seluruh balasan. Header tidak menyentuhnya.
+      "    Jawaban yang baru dihitung tidak mengirim header ini sama sekali;
+      "    UI memperlakukan ketiadaannya sebagai umur 0.
+      lv_age_c = |{ lv_age }|.
+      response->set_header_field( name = 'X-Data-Age' value = lv_age_c ).
       response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
       %><%= lv_json %><%
       RETURN.
@@ -234,7 +240,7 @@ lv_dfrom = lv_yy && lv_mm && '01'.
 " menyetel header setelah ada keluaran adalah cara yang rapuh.
 response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
 
-%><%@include file="dp_komp.htm" %><%@include file="dp_hist.htm" %><%@include file="dp_stock.htm" %><%@include file="dp_ops.htm" %><%
+%><%@include file="dp_komp.htm" %><%@include file="dp_hist.htm" %><%@include file="dp_stock.htm" %><%
 EXPORT ts = lv_now js = lv_json TO SHARED BUFFER indx(zc) ID lv_cid.
 response->set_header_field( name = 'Content-Type' value = 'application/json; charset=utf-8' ).
 %><%= lv_json %>

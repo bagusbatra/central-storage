@@ -1,14 +1,34 @@
-# Roadmap — Menyambungkan Data `index2.htm`
+# Roadmap — Menyambungkan Data `index2.htm` · ✅ SELESAI & DILAMPAUI
 
-Dibuat: 2026-08-01 · Direvisi: 2026-08-03 (tahap 5 & 6 selesai, K4 & K6 ditutup)
-Halaman: `ZBSP_CS_APP/Page with Flow Logic/index2.htm` (Dashboard Production)
-Endpoint: `ZBSP_CS_APP/Page with Flow Logic/dash_prod.htm` — **wajib ikut aktif**
-Status UI: **selesai & sudah diaktifkan di SAP**, tampilan sesuai prototype
+Dibuat: 2026-08-01 · Ditutup: 2026-08-05
 
-Dokumen ini pegangan penyambungan data. Kalau Anda membuka sesi baru, baca
-dokumen ini dari atas — isinya cukup untuk melanjutkan tanpa konteks lain.
+> ## ⛔ JANGAN PAKAI DOKUMEN INI SEBAGAI ACUAN KEADAAN SEKARANG
+>
+> Roadmap ini sudah **selesai seluruhnya** dan halaman berkembang jauh melewati
+> rencananya. Isinya dipertahankan sebagai **catatan sejarah**: kenapa sebuah
+> keputusan diambil, dan apa yang sudah dibuktikan diagnostik.
+>
+> **Keadaan sekarang ada di `CHECKPOINT.md` bagian 4.**
+>
+> Bagian yang di bawah ini SUDAH TIDAK BERLAKU:
+>
+> | Tertulis di sini | Kenyataan sejak |
+> |---|---|
+> | W1 cakupan **delapan** SLoc (`22EK`, `2292`) | **enam** SLoc, 2026-08-04 |
+> | Banding antri `22EK`/`22E2` · Sanding selesai `2292` | Banding antri `22E2`; Sanding **tanpa SLoc keluar**, 2026-08-04 |
+> | Kartu OPERASI SELESAI, DI PRODUKSI, SELESAI PROD., BOTTLENECK | semua dihapus; tinggal BUYER & SALES ORDER, 2026-08-04/05 |
+> | Detail Komponen berbasis AFRU, tab Dikerjakan/Antri/Selesai | berbasis **real stock**, tab Central Storage/Machining/Banding/Sanding, 2026-08-04 |
+> | `part=ops1` untuk baris bentang tahap | dihapus 2026-08-04 |
+> | `part=ops` untuk kartu OPERASI SELESAI | dihapus 2026-08-05 |
+> | Kotak OUT dari `done_real` | **sengaja kosong**, 2026-08-04 |
+>
+> Yang **masih berlaku** dari dokumen ini: temuan diagnostik `diag_routing.htm`
+> (maksimum 2 operasi per order, 86,1% hanya 1 — dasar keputusan memakai TAHAP
+> bukan VORNR), rumus status operasi, dan riwayat keputusan K1–K6.
 
-## Kemajuan per 2026-08-03
+---
+
+## Kemajuan per 2026-08-03 (arsip)
 
 | Tahap | Isi | Status |
 |---|---|---|

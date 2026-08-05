@@ -99,7 +99,9 @@ IF lv_part = 'stock'.
   SORT lt_soit BY vbeln posnr.
   DELETE ADJACENT DUPLICATES FROM lt_soit COMPARING vbeln posnr.
 
-  " Simpan daftar SO+Item supaya part=ops tidak perlu menembak MSKA lagi.
+  " ⚠️ Ditulis tapi TIDAK ADA PEMBACANYA sejak part=ops dihapus 2026-08-05.
+  "    Dipertahankan karena murah dan mungkin berguna lagi; hapus kalau
+  "    setelah beberapa waktu tetap tidak terpakai.
   EXPORT ts = lv_now si = lt_soit TO SHARED BUFFER indx(zc) ID 'DPRODSI'.
 
 
@@ -188,9 +190,7 @@ IF lv_part = 'stock'.
   "
   " Basis: CACAH KOMPONEN (ketetapan user), sama dengan seluruh panel lain
   " di halaman ini supaya angkanya bisa saling dicocokkan.
-  DATA: lv_prod TYPE i,
-        lv_done TYPE i,
-        lv_in   TYPE i,      " IN        2KCS
+  DATA: lv_in   TYPE i,      " IN        2KCS
         lv_mc_q TYPE i,      " Machining antri    2261
         lv_mc_d TYPE i,      " Machining selesai  2262
         lv_bd_q TYPE i,      " Banding   antri    22E2
@@ -198,19 +198,6 @@ IF lv_part = 'stock'.
         lv_sd_q TYPE i,      " Sanding   antri    229K
         lv_sd_d TYPE i.      " Sanding   selesai  — tidak ada SLoc keluar
   LOOP AT lt_kmp ASSIGNING <km>.
-    " prod = punya stok di SLoc proses mana pun (di luar 2KCS).
-    " ⚠️ Sejak kartu DI PRODUKSI dihapus 2026-08-04, field ini TIDAK punya
-    "    konsumen di UI. Dipertahankan karena murah dan sudah lama dipakai
-    "    sebagai angka pembanding; hapus kalau tetap tidak terpakai.
-    IF <km>-moved = abap_true.
-      lv_prod = lv_prod + 1.
-    ENDIF.
-    " ⚠️ Artinya "ada stok di 229K" = ANTRI SANDING, bukan selesai. Kartu
-    "    SELESAI PROD. yang dulu memakainya sudah dihapus 2026-08-04, jadi
-    "    field ini pun kini tanpa konsumen.
-    IF <km>-s_29k = abap_true.
-      lv_done = lv_done + 1.
-    ENDIF.
 
     IF <km>-s_cs  = abap_true. lv_in   = lv_in   + 1. ENDIF.
     IF <km>-s_261 = abap_true. lv_mc_q = lv_mc_q + 1. ENDIF.
@@ -240,8 +227,8 @@ IF lv_part = 'stock'.
   "  sisa di 2KCS, itu sisa bahan yang tidak jadi dipakai — bukan produksi
   "  berjalan, tapi juga bukan "selesai bersih". Dipilih yang ketat.
   "
-  "  Filter DISPO GA1/GA2/EB2 sama dengan part=ops: hanya order yang lewat
-  "  jalur produksi yang dipantau halaman ini.
+  "  Filter DISPO GA1/GA2/EB2: hanya order yang lewat jalur produksi yang
+  "  dipantau halaman ini.
   "
   "  Dipakai kotak OUT di Lintasan Produksi, dan segmen hijau "Selesai"
   "  pada bar kartu Sales Order. Kartu SELESAI PROD. yang dulu memakainya

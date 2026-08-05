@@ -20,7 +20,7 @@ Satu aturan yang menentukan segalanya:
 
 | Folder | Isi | Diaktifkan di SAP? |
 |---|---|---|
-| `ZBSP_CS_APP/Page with Flow Logic/` | Halaman BSP — **Dashboard Production saja** (`index2.htm` + `dash_prod.htm` + 13 Page Fragment) | **Ya** |
+| `ZBSP_CS_APP/Page with Flow Logic/` | Halaman BSP — **Dashboard Production saja** (`index2.htm` + `dash_prod.htm` + 12 Page Fragment) | **Ya** |
 | `ZBSP_CS_APP/Page with Flow_Logic/` | Halaman BSP lainnya (`index.htm`, `monitoring.htm`, `dash_*.htm`, `diag_routing.htm`, `routing_map.htm`, `main.htm`) | **Ya** |
 | `ZBSP_CS_APP/classes/` | Global class (SE24) | **Ya** |
 | `ZBSP_CS_APP/MIMEs/` | Gambar yang dipakai halaman | **Ya** |
@@ -90,7 +90,7 @@ berkas.
 | Berkas | Isi |
 |---|---|
 | `index.htm` | Dashboard Central Storage — stok per bagian, ranking buyer, sales order, feed pergerakan barang realtime |
-| `index2.htm` | Dashboard Production — filter buyer, lintasan produksi 2 center, peta work center, SO/PLO, detail komponen |
+| `index2.htm` | Dashboard Production — filter buyer, Lintasan Produksi 4 tahap, daftar Sales Order, Detail Komponen per SO. Peta work center & SO/PLO sudah dihapus |
 | `monitoring.htm` | Pelacakan material per SO+Item, status komponen BOM berbasis RESB |
 | `routing_map.htm` | Peta perjalanan SO — rantai stasiun, dot map operasi, stok real per stasiun |
 | `diag_routing.htm` | Diagnostik routing Fase 0 (read-only, sekali pakai) |

@@ -84,14 +84,20 @@ function loadKomp() {
                 return;
             }
             if (!d.ok) {
-                /* part=stock belum sempat menulis daftar komponennya.
-                   Dicoba ulang SEKALI; kalau masih belum ada, dikatakan
-                   apa adanya, bukan ditampilkan sebagai "tidak ada data". */
+                /* Daftar komponen 'DPRODKM' tidak ada. Mengulang permintaan
+                   yang sama TIDAK akan menolong: yang menulis daftar itu
+                   adalah part=stock, dan ia hanya menulisnya saat benar-benar
+                   MENGHITUNG — kalau dilayani dari cache, daftarnya tidak
+                   ditulis ulang. Jadi cache stock dipaksa segar dulu, baru
+                   diulang. Sekali saja; kalau masih gagal, dikatakan apa
+                   adanya, bukan ditampilkan sebagai "tidak ada data". */
                 KOMP = []; kompState = 'wait';
                 renderComponentTable();
                 if (!kompRetried) {
                     kompRetried = true;
-                    setTimeout(loadKomp, 2500);
+                    kpiGet('dash_prod.htm?part=stock&fresh=1', function () {
+                        loadKomp();
+                    });
                 }
                 return;
             }
@@ -103,6 +109,15 @@ function loadKomp() {
 
 function centerName() {
     return TAB_NAMA[selectedTab] || selectedTab;
+}
+
+/* Umur data, bukan jam render halaman. Keduanya bisa berbeda beberapa menit
+   karena jawaban dilayani dari cache 5 menit — dan selisih itulah yang dulu
+   disembunyikan: halaman menampilkan jam sekarang untuk data yang lama. */
+function usiaData() {
+    if (typeof DATA_AGE !== 'number' || DATA_AGE <= 0) { return 'data baru dihitung'; }
+    if (DATA_AGE < 60) { return 'data ' + DATA_AGE + ' detik lalu'; }
+    return 'data ' + Math.floor(DATA_AGE / 60) + ' menit lalu';
 }
 
 /* Kolom REAL STOCK & SLOC — SLoc dan kuantitasnya digabung satu kolom.
@@ -192,6 +207,22 @@ function renderComponentTable() {
         if (r[selectedTab]) { rows.push(r); }
     }
 
+    /* ---- URUTAN: yang paling terlambat di atas ----
+       Tabel yang terurut kode material memaksa orang membaca semuanya untuk
+       menemukan yang perlu ditangani. Diurut keterlambatan, baris teratas
+       LANGSUNG menjawab "kerjakan yang mana dulu".
+       Hanya tabel ini yang diurut ulang — daftar Sales Order tetap urut SO
+       lalu Item, sesuai ketentuan wajib W1 di ROADMAP.
+       Tanpa Bas. start date diperlakukan paling akhir: tidak bisa dinilai,
+       jadi tidak boleh menyerobot ke atas maupun terlihat paling aman. */
+    rows.sort(function (a, b) {
+        var qa = (a.q || {})[selectedTab], qb = (b.q || {})[selectedTab];
+        var da = (qa && typeof qa.dd === 'number') ? qa.dd : -99999;
+        var db = (qb && typeof qb.dd === 'number') ? qb.dd : -99999;
+        if (da !== db) { return db - da; }
+        return (a.txt || '').localeCompare(b.txt || '');
+    });
+
     for (i = 0; i < TAB_URUT.length; i++) {
         var el = document.getElementById('cnt-' + TAB_URUT[i]);
         if (el) { el.innerHTML = kompState === 'ok' ? '(' + cnt[TAB_URUT[i]] + ')' : ''; }
@@ -247,16 +278,36 @@ function renderComponentTable() {
 }
 
 /* Kaki tabel: mengaku dari mana angkanya, dan apa yang tidak ditampilkan. */
+/* 'shown' = -1 berarti "gambar ulang tanpa mengubah cacah baris" — dipakai
+   saat umur data tiba dari part=stock, setelah tabel mungkin sudah terlukis. */
+var footerShown = 0;
+
 function renderDetailFooter(shown) {
     if (!detailFooter) { return; }
+    if (shown < 0) { shown = footerShown; } else { footerShown = shown; }
 
     var ts = detailFooter.getAttribute('data-ts') || '';
-    var h = ts ? '<span style="float:right;">per ' + esc(ts) + '</span>' : '';
+    var h = ts ? '<span style="float:right;">' + usiaData() + ' &middot; halaman dibuka ' +
+                 esc(ts) + '</span>' : '';
 
     if (kompState === 'idle') {
         h += 'Tabel ini terisi setelah satu Sales Order dipilih.';
         detailFooter.innerHTML = h;
         return;
+    }
+
+    /* Cacah yang terlambat pada tab ini — angka yang menunjuk pekerjaan,
+       bukan sekadar menggambarkan keadaan. */
+    var telat = 0, i, qq;
+    for (i = 0; i < KOMP.length; i++) {
+        if (!KOMP[i][selectedTab]) { continue; }
+        qq = (KOMP[i].q || {})[selectedTab];
+        if (qq && typeof qq.dd === 'number' && qq.dd > 0) { telat++; }
+    }
+    if (telat > 0) {
+        h += '<div class="warn-strip"><strong>' + kpiNum(telat) + ' komponen</strong> ' +
+             'sudah lewat Bas. start date di tahap ' + esc(centerName()) +
+             ' &mdash; terurut paling atas.</div>';
     }
 
     h += 'Baris masuk tab ini karena <strong>stoknya</strong> ada di SLoc tahap ' +

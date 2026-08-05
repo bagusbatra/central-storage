@@ -1,7 +1,7 @@
 # Checkpoint Rencana Pengembangan — ZBSP_CS_APP
 
 Ringkasan status setiap jalur pengembangan aplikasi Central Storage.
-Diperbarui: 2026-08-03 (index2.htm fase data — Detail Komponen aktif, Perbaikan #1)
+Diperbarui: 2026-08-05 (index2.htm aktif di SAP; Detail Komponen berbasis real stock)
 
 **Aturan folder:** `ZBSP_CS_APP/` adalah cermin objek SAP — apa pun di dalamnya
 ada atau akan ada di sistem. Bahan rujukan yang tidak diaktifkan ada di
@@ -29,7 +29,7 @@ status tanpa bukti.
 | 1 | Dashboard Central Storage | ✅ Jalan | `index.htm`, `dash_*.htm` | Restrukturisasi 2026-07-24 |
 | 2 | Monitoring / Pelacakan SO | ✅ Jalan | `monitoring.htm` | Perbaikan status SO 2026-07-23 |
 | 3 | Diagnostik Routing (Fase 0) | ✅ Selesai | `diag_routing.htm` | Dijalankan 2026-07-30, hasil terkunci |
-| 4 | Dashboard Production | ⏸️ Belum teruji | `index2.htm`, `dash_prod.htm` | Fase data SELESAI 2026-08-03; work center dihapus. Menunggu aktivasi 15 objek di SE80 |
+| 4 | Dashboard Production | 🟡 Sebagian | `index2.htm`, `dash_prod.htm` + 12 fragment | Aktif di SAP 2026-08-05. Angka belum diverifikasi silang; Sanding & OUT belum bersumber |
 | 5 | Peta Perjalanan SO | 🟡 Sebagian | `routing_map.htm` | Dot map + stok real, 2026-07-31 |
 | 6 | Pohon Konvergensi Material | 🔧 Dikerjakan | `ZCL_CS_PEG.abap` | Task 3 dari 11, 2026-08-01 |
 | 7 | Pemetaan Cost Center (`map_sec`) | 🚧 Terhalang | — | 64 cost center menunggu diberi nama |
@@ -73,151 +73,145 @@ Movement punya sumber data di SAP.
 
 ## 4. Dashboard Production — 🟡 Sebagian
 
-UI disalin dari `reference/prototype-ui/index.html` (permintaan user 2026-08-01). Versi
-sebelumnya ("Lintasan Routing & Confirmation", porting prototype lama) diganti total; isinya masih ada di git.
+UI disalin dari `reference/prototype-ui/index.html` (permintaan user 2026-08-01),
+lalu berubah banyak sekali 2026-08-03 s/d 08-05. Yang tertulis di bawah adalah
+keadaan **sekarang**, bukan sejarahnya — sejarahnya di `report/daily/`.
 
-- **Berkas: 15 objek SE80** (dipecah 2026-08-03 dari 2 berkas 1.863 + 1.439
-  baris). Rinciannya di bawah — **semuanya wajib aktif**
-- **Sumbu utama:** **Buyer** (dulu SO)
-- **Pusat produksi:** 2 center — Machining Center + Edge Banding & Sanding.
-  Dulu 3 section
-- **Alur:** Storage → Machining → Edge Banding → Storage
-- **⚠️ ATURAN CAKUPAN (ketentuan wajib user):** SO yang dihitung adalah yang
-  punya stok di **delapan** SLoc — `2KCS`, `2261`, `2262`, `22EK`, `22E2`,
-  `22E3`, `229K`, `2292`. Diperluas dari enam ke delapan 2026-08-03 (`22EK`
-  EBD Karantina, `2292` Sanding D-OUT); angka BUYER/SO/komponen ikut naik —
-  itu benar, bukan regresi. Sample customer `2000000004` tetap dibuang.
-  Satu "komponen" = COUNT DISTINCT (VBELN+POSNR+MATNR)
-- **PLO tidak dipakai** (ketentuan wajib user); `PLAF` tidak disentuh
-- **Lintasan Produksi — EMPAT tahap** (2026-08-03). Tiap tahap punya SLoc
-  masuk (antri) dan keluar (selesai):
+- **Berkas: 14 objek SE80** — 2 halaman + 12 Page Fragment. Semuanya wajib aktif
+- **Sumbu utama:** Buyer
+- **Aktivasi:** dikonfirmasi user **2026-08-05** — seluruh objek aktif & aman.
+  ⚠️ Perubahan 2026-08-05 (umur data, urutan keterlambatan, penghapusan
+  `part=ops`, pemulihan cache) **BELUM** ikut diaktifkan
 
-  | Tahap | Antri | Selesai |
-  |---|---|---|
-  | IN | — | `2KCS` |
-  | Machining Center | `2261` | `2262` |
-  | Banding | `22EK`, `22E2` | `22E3` |
-  | Sanding | `229K` | `2292` |
-  | OUT | — | tidak punya SLoc; dari MSEG |
+### ⚠️ Cakupan enam SLoc — ketentuan wajib
 
-  🔴 **`229K` kini = ANTRI SANDING, bukan selesai.** Sebelumnya seluruh
-  aplikasi memperlakukannya sebagai CP4 100% (`ZCL_CS_UTIL` `gc_st_done`,
-  `cp_qty( )`). Model lama itu SALAH — ditetapkan user 2026-08-03. `cp_qty( )`
-  kode mati sehingga tidak ada yang rusak, tapi jangan dipakai lagi sebagai
-  penanda selesai.
+`2KCS` · `2261` · `2262` · `22E2` · `22E3` · `229K`
 
-- **Pemetaan center — DUA sumbu berbeda, jangan dicampur:**
-  - **stok** → SLoc: lihat tabel empat tahap di atas
-  - **order** → `AFPO-PWERK` + `AFKO-DISPO`: Pembahanan = 1000 +
-    WM1/WM2/PN1/PN2; Machining = 2000 + GA1/GA2; Edge Banding = 2000 + EB2.
-    ⚠️ Sanding TIDAK punya DISPO, jadi pada sumbu order "EBS" = EB2 saja
+Sempat diperluas ke delapan (`22EK`, `2292`) 2026-08-03 lalu **dikembalikan ke
+enam** 2026-08-04. Sample customer `2000000004` selalu dibuang.
+Satu "komponen" = COUNT DISTINCT (VBELN + POSNR + MATNR).
 
-### Daftar objek SE80 — 15, dua di antaranya halaman
+### Lintasan Produksi — empat tahap
 
-⚠️ **Fragment WAJIB dibuat bertipe "Page Fragment".** Kalau salah dibuat
-sebagai "Page with Flow Logic", SE80 mengompilasinya sendirian dan setiap
-variabel dari halaman induk dilaporkan tidak dikenal.
-
-⚠️ **Fragment TETAP membawa `<%@ page language="abap" %>` di baris 1.** Tanpa
-itu aktivasi menolak: *"No language was specified in the page fragment"*.
-Direktifnya ditempel RAPAT ke tag berikutnya — teks apa pun di antaranya ikut
-tercetak ke keluaran, dan untuk endpoint JSON itu merusak jawabannya.
-
-| Objek | Tipe | Isi |
+| Tahap | Antri | Selesai |
 |---|---|---|
-| `index2.htm` | Page with Flow Logic | rangka halaman, 85 baris |
-| `cs2_css_base.htm` | Page Fragment | CSS: reset, header, kartu, filter, tooltip, Lintasan |
-| `cs2_css_panel.htm` | Page Fragment | CSS: Sales Order, Detail Komponen |
-| `cs2_icons.htm` | Page Fragment | 19 symbol SVG pengganti Font Awesome |
-| `cs2_body.htm` | Page Fragment | seluruh markup |
-| `cs2_js_core.htm` | Page Fragment | state, init, buyer, center, daftar SO, event |
-| `cs2_js_detail.htm` | Page Fragment | tabel Detail Komponen |
-| `cs2_js_kpi.htm` | Page Fragment | kpiGet, dua kotak center, tooltip, loadKpi, boot |
-| `dash_prod.htm` | Page with Flow Logic | rangka endpoint: konstanta, parameter, cache |
-| `dp_komp.htm` | Page Fragment | part=komp & ops1 — pengumpulan data |
-| `dp_komp_out.htm` | Page Fragment | part=komp & ops1 — perakitan jawaban |
-| `dp_hist.htm` | Page Fragment | part=hist |
-| `dp_stock.htm` | Page Fragment | part=stock — stok, posisi, `done_real` |
-| `dp_stock_so.htm` | Page Fragment | part=stock — daftar SO, buyer, rakit JSON |
-| `dp_ops.htm` | Page Fragment | part=ops |
+| IN dari Storage | — | `2KCS` |
+| Machining Center | `2261` | `2262` |
+| Banding | `22E2` | `22E3` |
+| Sanding | `229K` | 🔴 **tidak ada SLoc keluar** |
+| OUT ke Storage | — | 🔴 **sengaja kosong, tanpa sumber data** |
 
-`<%@include%>` ditempel saat halaman digenerate, jadi bagi browser hasilnya
-tetap **satu** berkas HTML: CSS & JS seluruhnya inline, nol permintaan
-jaringan tambahan, tidak ada MIME object, tidak ada CDN.
+🔴 **`229K` berarti ANTRI SANDING, bukan selesai.** Sebelum 2026-08-03 seluruh
+aplikasi memperlakukannya sebagai CP4 = 100% (`ZCL_CS_UTIL` `gc_st_done`,
+`cp_qty`). Model lama itu **salah** — ditetapkan user. `cp_qty` kode mati
+sehingga tidak ada yang rusak, tapi jangan dipakai lagi sebagai penanda selesai.
 
-⚠️ Karena semua fragment menjadi **satu method** ABAP, nama TYPES/DATA/
-field-symbol tidak boleh bertabrakan antar-fragment.
+🔴 **Sanding setengah buta.** `2292` (Sanding D-OUT) adalah satu-satunya penanda
+"selesai Sanding"; sejak ia keluar dari cakupan, `lv_sd_d` dan `lv_g_sd` **nol
+permanen**. UI menampilkan "tanpa SLoc", bukan "0" — dua hal yang sangat berbeda.
+Belum diputuskan; tiga jalan keluar ada di `daily/2026-08-04.md`.
 
-### Halaman ini TIDAK lagi menjalankan query sendiri
+🔴 **Kotak OUT sengaja kosong** (2026-08-04). Tidak ada sumber data yang
+menghitung barang keluar dari enam SLoc. Versi pertamanya menghitung dari
+`DPRODKM` — daftar yang menurut definisinya hanya berisi komponen **ber-saldo**,
+sehingga syaratnya mustahil dan hasilnya **selalu 0** tanpa ketahuan. Jangan
+mengisinya dengan angka yang artinya dipinjam dari perhitungan lain.
 
-Seluruh data lewat `dash_prod.htm` secara asinkron (dibuat 2026-08-01 setelah
-halaman menjadi >1 menit/timeout).
+### Isi halaman
+
+| Panel | Keadaan |
+|---|---|
+| Kartu ringkasan | **BUYER** & **SALES ORDER** saja. Semua kartu lain dihapus user 2026-08-04/05 |
+| Lintasan Produksi | 4 tahap di atas; Banding & Sanding dua area dalam satu kartu |
+| Sales Order | bar **5 segmen** (IN·Machining·Banding·Sanding·Selesai); SO yang tuntas seluruhnya **disaring keluar**, jumlahnya dilaporkan |
+| Detail Komponen | **kosong sampai satu SO diklik**. 4 tab real-stock: Central Storage / Machining / Banding / Sanding |
+
+Kolom Detail Komponen: `KOMPONEN | REAL STOCK & SLOC | QTY TARGET | QTY DEL |
+PROGRES | JADWAL`. Baris **terurut keterlambatan**, paling telat di atas.
+
+- Tab ditentukan **posisi stok**; Qty Target/Del diambil dari **order tahap yang
+  sesuai tab** (`AFPO-PSMNG`/`WEMNG`)
+- Jadwal = selisih hari terhadap `AFKO-GSTRP` (Bas. start date). **"Terlambat"
+  berarti seharusnya sudah MULAI**, bukan seharusnya selesai
+- ⚠️ Komponen yang stoknya habis **tidak muncul sama sekali** — konsekuensi
+  "berdasarkan real stock". Satu-satunya jejaknya di segmen hijau bar kartu SO
+- ⚠️ Sanding tidak punya DISPO, jadi qty-nya memakai **order paling akhir**
+  sebagai wakil. Diperingatkan di kaki tabel saat tab itu dibuka
+
+### Endpoint `dash_prod.htm`
 
 | part | Isi | Cache |
 |---|---|---|
-| `stock` | MSKA delapan SLoc → kartu, buyer, daftar SO, Lintasan Produksi | `DPRODST` |
-| `hist` | `MSEG` → "sudah lewat" per tahap + kartu OUT | `DPRODHI` |
-| `ops` | AFKO→AFVC→AFVV→AFRU → kartu OPERASI SELESAI | `DPRODOP` |
-| `komp` | ringkasan komponen untuk tabel Detail Komponen | `DPRODKPM`/`DPRODKPE` |
-| `ops1` | seluruh tahap SATU komponen (saat baris dibentangkan) | tanpa cache |
+| `stock` | MSKA enam SLoc → kartu, buyer, daftar SO, Lintasan | `DPRODST` |
+| `hist` | `MSEG ⨝ MKPF` → "sudah lewat" tiap tahap | `DPRODHI` |
+| `komp` | komponen SATU SO+Item | tidak di-cache (selalu discope) |
 
-`part=hist`, `komp`, `ops1` membaca daftar komponen dari SHARED BUFFER
-`DPRODKM` yang ditulis `part=stock` — **harus dipanggil setelahnya**.
-TTL 300 dtk, `?fresh=1` memaksa hitung ulang.
+- **Jendela waktu `lc_bulan` = 3 bulan** membatasi MSEG (`budat`) dan AFPO
+  (`gstrp`). ⚠️ **MSKA tidak bisa dibatasi** — saldo stok tidak punya tanggal,
+  dan justru itu query terberat (~15 dtk). Jendelanya dinyatakan di legenda UI
+- **Umur data** dikirim lewat header `X-Data-Age` (2026-08-05), bukan disisipkan
+  ke JSON: jawaban dari cache diteruskan apa adanya
+- `part=hist` & `part=komp` membaca `DPRODKM` dari `part=stock`. Kalau hilang,
+  keduanya memaksa `part=stock&fresh=1` — mengulang permintaan yang sama tidak
+  menolong, karena `part=stock` hanya menulis daftar itu saat benar-benar
+  menghitung
+- ⚠️ `DPRODSI` masih ditulis tapi **tanpa pembaca** sejak `part=ops` dihapus
 
-- **Sudah live:** BUYER, SALES ORDER, OPERASI SELESAI, DI PRODUKSI,
-  SELESAI PROD., filter buyer, dua kotak center (tiga warna), daftar SO,
-  tabel Detail Komponen
-- **Tidak ada lagi elemen dummy.** Kartu BOTTLENECK dan peta Work Center
-  DIHAPUS 2026-08-03 atas permintaan user — keduanya masih `Math.random()`
-  dan bergantung pada K5 yang tak kunjung diputuskan. Seluruh halaman kini
-  memakai data nyata
-- ⏸️ **Belum di-commit & belum pernah dijalankan di SE80** (per 2026-08-03):
-  paket Perbaikan #1 — header bar biru, rename OPERASI SELESAI, sub-teks dua
-  baris DI PRODUKSI, dan `done_real` untuk SELESAI PROD. Yang terakhir membawa
-  SELECT baru yang **waktu jalannya belum pernah diukur**. Jangan menaikkan
-  statusnya tanpa bukti dari sistem
-- **Ikon:** Font Awesome CDN diganti 19 `symbol` SVG inline — CDN tidak
-  terjangkau dari jaringan SAP
-- **Tabel yang dibaca:** MSKA, MSEG, VBAK, KNA1, MAKT, AFKO⨝AFPO, AFVC, AFVV,
-  AFRU. (`CRHD` tidak lagi disentuh sejak work center dihapus)
+### Batas yang tidak boleh dinaikkan diam-diam
 
-### Definisi yang mudah disalahpahami
+`lc_maxso = 500` · `lc_maxkmp = 400` · `lc_maxkm2 = 2000` · `lc_bulan = 3` ·
+TTL cache 300 dtk. Kalau terlampaui, UI **wajib** mengatakannya
+(`solist_more`, `solist_done`).
 
-- ⚠️ **Detail Komponen sengaja TIDAK sebanding dengan dua kotak center.**
-  Kotak center berbasis saldo stok (MSKA); tabel berbasis konfirmasi operasi
-  (AFRU). Dua pertanyaan berbeda — jangan "diperbaiki" agar sama
-- **CONFIRMED → OPERASI SELESAI** (2026-08-03). Definisi tetap operasi
-  ter-konfirmasi; yang berubah labelnya, supaya tidak lagi mengklaim
-  "komponen diterima" seperti maksud prototype. K6 ditutup begini
-- **SELESAI PROD. didefinisi ulang** (2026-08-03, Opsi B/Tafsir X):
-  `AFPO-WEMNG ≥ PSMNG` **dan** stok kosong di kedelapan SLoc → `done_real`.
-  Field lama `done` (proxy "stok ada di 229K") sengaja masih dikirim untuk
-  pembanding; hapus hanya setelah PPIC memverifikasi angka baru
-- **Kolom QTY ROUTING** diganti kolom **OPERASI** berisi `done/tot op` +
-  work center aktif. K4 ditutup begini — rantai 3+ tahap memang tidak akan
-  pernah muncul, konsekuensi temuan diagnostik bagian B
+### Daftar objek SE80
 
-- **Menunggu Task 11:** rumus status operasi dialihkan memanggil
-  `ZCL_CS_PEG=>op_status( )`. Rumus itu kini tersalin di **empat** tempat
-  (`diag_routing.htm`, `routing_map.htm`, `dash_prod.htm` part=ops & part=komp)
-- 📍 **Fase data punya roadmap sendiri:** `report/ROADMAP-index2-data.md`.
-  **Baca itu dulu kalau melanjutkan di sesi baru**
-- ✅ **Tidak ada keputusan terbuka yang tersisa.** K1–K4 & K6 ditutup lewat
-  keputusan; K5 ("dasar perhitungan beban WC") gugur karena work center
-  dihapus seluruhnya dari halaman ini
+⚠️ Fragment **wajib** bertipe "Page Fragment" — dibuat sebagai "Page with Flow
+Logic", SE80 mengompilasinya sendirian dan variabel halaman induk dilaporkan
+tidak dikenal.
 
-### 🔴 Pelajaran 2026-08-03 — jangan diulang
+⚠️ Fragment **tetap** membawa direktif page (language abap) di baris 1, ditempel
+RAPAT ke tag berikutnya. Teks di antaranya ikut tercetak ke keluaran, dan untuk
+endpoint JSON itu merusak jawabannya.
 
-Satu *syntax error* JavaScript (kutip tunggal di dalam string berkutip tunggal,
-di `drawCenters()`) menggugurkan **seluruh blok `<script>`**, sehingga sejak
-`2752c18` tidak ada satu pun panel `index2.htm` yang terisi. Tiga commit
-berturut-turut diserahkan tanpa halaman pernah dibuka.
+| Objek | Tipe | Isi |
+|---|---|---|
+| `index2.htm` | Page with Flow Logic | rangka halaman |
+| `cs2_css_base.htm` | Page Fragment | CSS dasar |
+| `cs2_css_panel.htm` | Page Fragment | CSS panel bawah |
+| `cs2_icons.htm` | Page Fragment | symbol SVG |
+| `cs2_body.htm` | Page Fragment | markup |
+| `cs2_js_core.htm` | Page Fragment | state, init, buyer, daftar SO |
+| `cs2_js_detail.htm` | Page Fragment | tabel Detail Komponen |
+| `cs2_js_kpi.htm` | Page Fragment | kpiGet, Lintasan, tooltip, boot |
+| `dash_prod.htm` | Page with Flow Logic | rangka endpoint |
+| `dp_komp.htm` | Page Fragment | part=komp pengumpulan |
+| `dp_komp_out.htm` | Page Fragment | part=komp perakitan |
+| `dp_hist.htm` | Page Fragment | part=hist |
+| `dp_stock.htm` | Page Fragment | part=stock |
+| `dp_stock_so.htm` | Page Fragment | part=stock daftar SO + JSON |
 
-**Sejak sekarang `index2.htm` diuji lewat tiruan browser sebelum diserahkan:**
-buang tag `<% %>`, timpa `window.kpiGet` dengan stub JSON palsu, sajikan lewat
-`http://localhost`, dan periksa statis dengan `new Function(isiBlokScript)`.
-Prosedur lengkapnya di `report/daily/2026-08-03.md` bagian 6.
+⚠️ `dp_ops.htm` **DIHAPUS 2026-08-05** — objek SE80-nya perlu ikut dihapus.
+
+### 🔴 Yang belum pernah dibuktikan
+
+**Tidak ada satu angka pun yang pernah diverifikasi silang.** Prinsip kerja #4 di
+ROADMAP menuntutnya. Halaman sudah aktif, jadi ini sekarang bisa dan harus
+dikerjakan: bandingkan `komp` dari `part=stock` dengan kartu stok `index.htm`.
+
+Belum diukur juga: waktu jalan tiap `part` (field `ms`), dan perilaku saat cache
+`DPRODKM` hilang.
+
+### Pelajaran yang mengikat
+
+1. **Jangan menulis token BSP di komentar mana pun** — bahkan saat menjelaskan
+   token itu sendiri. Satu delimiter penutup di komentar menggugurkan seluruh
+   blok, dan pesan errornya menunjuk baris yang salah
+2. **Jangan menulis tag HTML lengkap di komentar** — sebuah `script`
+   ber-kurung-sudut sempat menelan 37 KB isi halaman saat dipindai
+3. **`scripts/check_bsp.py` dijalankan SEBELUM menempel ke SE80.** Ia menangkap
+   (1) dan (2) — tapi hanya di komentar ABAP, bukan komentar BSP
+4. **Uji di browser sebelum menyerahkan.** Satu syntax error JS menggugurkan
+   seluruh blok script; pernah lolos tiga commit berturut-turut
 
 ## 5. Peta Perjalanan SO — 🟡 Sebagian
 
