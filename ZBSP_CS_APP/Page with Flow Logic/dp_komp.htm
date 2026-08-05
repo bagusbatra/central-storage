@@ -242,6 +242,43 @@ IF lv_part = 'komp'.
     SORT lt_kuom BY matnr.
   ENDIF.
 
+  " ===== Jumlah pada Sales Order (VBAP-KWMENG) =====
+  " Dipakai kolom OUT di UI: out = jumlah SO - stok yang masih ada.
+  "
+  " 🔴 PERINGATAN YANG WAJIB IKUT KE UI: KWMENG adalah kuantitas PRODUK JADI
+  "    pada item Sales Order, sedangkan baris tabel ini adalah KOMPONEN.
+  "    Kalau satu produk butuh lebih dari satu keping komponen, kedua angka
+  "    itu TIDAK sebanding dan OUT jadi indikatif, bukan tepat. User memilih
+  "    KWMENG dengan sadar (2026-08-05); peringatannya ditampilkan di kaki
+  "    tabel, JANGAN dihapus.
+  "
+  " Bila lv_k_item kosong, seluruh item SO dijumlahkan — UI selalu mengirim
+  " item, jadi ini hanya jaring pengaman.
+  TYPES: BEGIN OF ty_kvbap,
+           kwmeng TYPE vbap-kwmeng,
+           vrkme  TYPE vbap-vrkme,
+         END OF ty_kvbap.
+  DATA: lt_kvbap TYPE STANDARD TABLE OF ty_kvbap WITH DEFAULT KEY,
+        ls_kvbap TYPE ty_kvbap,
+        lv_soqty TYPE p LENGTH 15 DECIMALS 3,
+        lv_souom TYPE vbap-vrkme.
+
+  IF lv_k_item IS INITIAL.
+    SELECT kwmeng vrkme FROM vbap
+      INTO CORRESPONDING FIELDS OF TABLE lt_kvbap
+      WHERE vbeln = lv_k_so.
+  ELSE.
+    SELECT kwmeng vrkme FROM vbap
+      INTO CORRESPONDING FIELDS OF TABLE lt_kvbap
+      WHERE vbeln = lv_k_so AND posnr = lv_k_item.
+  ENDIF.
+  LOOP AT lt_kvbap INTO ls_kvbap.
+    lv_soqty = lv_soqty + ls_kvbap-kwmeng.
+    IF lv_souom IS INITIAL.
+      lv_souom = ls_kvbap-vrkme.
+    ENDIF.
+  ENDLOOP.
+
   " ===== Qty per TAB: pilih order wakil tiap tahap =====
   TYPES: BEGIN OF ty_kq,
            matnr TYPE mska-matnr,

@@ -126,8 +126,8 @@ mengisinya dengan angka yang artinya dipinjam dari perhitungan lain.
 | Sales Order | bar **5 segmen** (IN·Machining·Banding·Sanding·Selesai); SO yang tuntas seluruhnya **disaring keluar**, jumlahnya dilaporkan |
 | Detail Komponen | **kosong sampai satu SO diklik**. 4 tab real-stock: Central Storage / Machining / Banding / Sanding |
 
-Kolom Detail Komponen: `KOMPONEN | REAL STOCK & SLOC | QTY TARGET | QTY DEL |
-PROGRES | JADWAL`. Baris **terurut keterlambatan**, paling telat di atas, dan
+Kolom Detail Komponen: `KOMPONEN | REAL STOCK & SLOC | OUT | QTY TARGET |
+QTY DEL | PROGRES | JADWAL`. Baris **terurut keterlambatan**, paling telat di atas, dan
 **bisa dibentangkan** untuk melihat BOM order tahap itu (mirip daftar Components
 di COOIS): material, deskripsi, qty butuh vs sudah diambil.
 
@@ -145,6 +145,13 @@ ditandai "ditandai hapus", tidak dibuang.
   "berdasarkan real stock". Satu-satunya jejaknya di segmen hijau bar kartu SO
 - ⚠️ Sanding tidak punya DISPO, jadi qty-nya memakai **order paling akhir**
   sebagai wakil. Diperingatkan di kaki tabel saat tab itu dibuka
+- **Kolom OUT** = jumlah Sales Order (`VBAP-KWMENG`) − stok yang masih ada,
+  dibatasi bawah di 0. 🔴 **INDIKATIF, bukan tepat**: KWMENG adalah kuantitas
+  *produk jadi* di item SO, sedangkan baris tabel adalah *komponen*. Kalau satu
+  produk butuh lebih dari satu keping, keduanya tidak sebanding — dan stok
+  komponen bisa MELEBIHI jumlah SO, yang ditampilkan sebagai `0` dengan
+  keterangan "stok > jumlah SO", bukan angka negatif. Peringatannya ada di kaki
+  tabel; **jangan dihapus**
 
 ### Endpoint `dash_prod.htm`
 

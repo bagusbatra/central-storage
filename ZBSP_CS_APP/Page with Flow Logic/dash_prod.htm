@@ -81,7 +81,8 @@
 *&   part=bom   -> {"ok":1,"aufnr":"..","rows":[{mat,txt,b,a,u,lok}],"ms":n}
 *&                 param: aufnr=   komponen BOM satu order (RESB)
 *&                 b butuh (BDMNG) · a diambil (ENMNG) · lok ditandai hapus
-*&   part=komp  -> {"ok":1,"so":"..","item":"..","rows":[
+*&   part=komp  -> {"ok":1,"so":"..","item":"..","soqty":n,"souom":"..",
+*&                  "rows":[
 *&                  {mat,txt,in,mc,bd,sd,uom,
 *&                   st:[{l,q}], q:{in|mc|bd|sd:{t,d,g,dd}}}],"ms":n}
 *&                 param: so= item=   WAJIB so; tanpa itu rows kosong.
