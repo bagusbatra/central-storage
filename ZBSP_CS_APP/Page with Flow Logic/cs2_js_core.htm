@@ -178,12 +178,15 @@ function renderSOList() {
            komponen yang stoknya terpecah antar SLoc terhitung di lebih dari
            satu segmen, sehingga totalnya bisa melebihi komp dan bar akan
            meluber kalau dibagi komp. */
+        /* Warna dirujuk lewat token --st-*, bukan hex: bar ini, legenda di
+           kepala panel, tab Detail Komponen, dan kartu Lintasan Produksi
+           WAJIB berubah bersama. Definisinya di cs2_css_base.htm. */
         var seg = [
-            { v: so.in || 0, c: '#f59e0b', n: 'IN 2KCS' },
-            { v: so.mc || 0, c: '#2563eb', n: 'Machining' },
-            { v: so.bd || 0, c: '#8b5cf6', n: 'Banding' },
-            { v: so.sd || 0, c: '#06b6d4', n: 'Sanding' },
-            { v: so.dn || 0, c: '#10b981', n: 'Selesai' }
+            { v: so.in || 0, c: 'var(--st-in)',  n: 'IN 2KCS' },
+            { v: so.mc || 0, c: 'var(--st-mc)',  n: 'Machining' },
+            { v: so.bd || 0, c: 'var(--st-bd)',  n: 'Banding' },
+            { v: so.sd || 0, c: 'var(--st-sd)',  n: 'Sanding' },
+            { v: so.dn || 0, c: 'var(--st-out)', n: 'Selesai' }
         ];
         var segTot = 0, si;
         for (si = 0; si < seg.length; si++) { segTot += seg[si].v; }
@@ -216,11 +219,11 @@ function renderSOList() {
             '<div class="so-item-footer">' +
                 '<span>' + so.pcs + ' pcs</span>' +
                 '<span class="so-seg-num">' +
-                    '<b style="color:#f59e0b;">' + (so.in || 0) + '</b> &middot; ' +
-                    '<b style="color:#2563eb;">' + (so.mc || 0) + '</b> &middot; ' +
-                    '<b style="color:#8b5cf6;">' + (so.bd || 0) + '</b> &middot; ' +
-                    '<b style="color:#06b6d4;">' + (so.sd || 0) + '</b> &middot; ' +
-                    '<b style="color:#10b981;">' + (so.dn || 0) + '</b>' +
+                    '<b style="color:var(--st-in-deep);">'  + (so.in || 0) + '</b> &middot; ' +
+                    '<b style="color:var(--st-mc-deep);">'  + (so.mc || 0) + '</b> &middot; ' +
+                    '<b style="color:var(--st-bd-deep);">'  + (so.bd || 0) + '</b> &middot; ' +
+                    '<b style="color:var(--st-sd-deep);">'  + (so.sd || 0) + '</b> &middot; ' +
+                    '<b style="color:var(--st-out-deep);">' + (so.dn || 0) + '</b>' +
                 '</span>' +
             '</div>';
         soListContainer.appendChild(item);

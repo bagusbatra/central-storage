@@ -27,14 +27,17 @@
 <main class="content">
 <div class="dashboard-container">
 
+    <%-- --card-accent / --card-accent-soft: warna pita kiri + chip ikon.
+         Ditulis di markup, bukan CSS, supaya menambah kartu baru cukup satu
+         atribut tanpa menambah pemilih ber-id di berkas CSS. --%>
     <section class="summary-cards">
-        <div class="card">
-            <div class="card-title">BUYER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Buyer ber-stok nyata</span><span class='ct-r'>Jumlah <b>buyer berbeda</b> yang punya stok di salah satu dari enam storage location.</span><span class='ct-r'>Persen di tiap tombol filter = komponen buyer itu yang <b>sudah keluar dari 2KCS</b>, dibagi seluruh komponennya.</span><span class='ct-src'>MSKA &rarr; VBAK-KUNNR &rarr; KNA1-NAME1<br>sample customer 2000000004 dibuang</span>"><svg class="ic"><use xlink:href="#fa-users"></use></svg></span></div>
+        <div class="card" style="--card-accent:#8b5cf6; --card-accent-soft:#f5f3ff;">
+            <div class="card-title">BUYER<span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Buyer ber-stok nyata</span><span class='ct-r'>Jumlah <b>buyer berbeda</b> yang punya stok di salah satu dari enam storage location.</span><span class='ct-r'>Persen di tiap tombol filter = komponen buyer itu yang <b>sudah keluar dari 2KCS</b>, dibagi seluruh komponennya.</span><span class='ct-src'>MSKA &rarr; VBAK-KUNNR &rarr; KNA1-NAME1<br>sample customer 2000000004 dibuang</span>"><svg class="ic"><use xlink:href="#fa-users"></use></svg></span></div>
             <div class="card-value" id="kpi-buyer">-</div>
             <div class="card-sub" id="kpi-buyer-sub">memuat&hellip;</div>
         </div>
-        <div class="card">
-            <div class="card-title">SALES ORDER <span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sales Order ber-stok nyata</span><span class='ct-r'>Jumlah <b>SO berbeda</b> yang punya stok di delapan SLoc. Sub-teks memerinci isinya: berapa komponen dan berapa pcs.</span><span class='ct-r'>Komponen = kombinasi unik <b>SO + Item + Material</b>. Material sama di dua SO dihitung dua kali; lintas SLoc dihitung sekali.</span><span class='ct-src'>MSKA &middot; SOBKZ=E &middot; KALAB&gt;0</span><span class='ct-warn'>Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg></span></div>
+        <div class="card" style="--card-accent:#2563eb; --card-accent-soft:#eff6ff;">
+            <div class="card-title">SALES ORDER<span class="tip-anchor icon-top-right" data-tip="<span class='ct-h'>Sales Order ber-stok nyata</span><span class='ct-r'>Jumlah <b>SO berbeda</b> yang punya stok di delapan SLoc. Sub-teks memerinci isinya: berapa komponen dan berapa pcs.</span><span class='ct-r'>Komponen = kombinasi unik <b>SO + Item + Material</b>. Material sama di dua SO dihitung dua kali; lintas SLoc dihitung sekali.</span><span class='ct-src'>MSKA &middot; SOBKZ=E &middot; KALAB&gt;0</span><span class='ct-warn'>Angka pcs menjumlahkan qty lintas material, jadi satuannya campur (PC + M2 + dst). Indikatif, bukan kuantitas satu UoM.</span>"><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg></span></div>
             <div class="card-value" id="kpi-so">-</div>
             <div class="card-sub" id="kpi-so-sub">memuat&hellip;</div>
         </div>
@@ -56,7 +59,11 @@
         </div>
 
         <div class="wip-flow-container">
+            <%-- --stg / --stg-soft / --stg-deep = identitas warna tahap.
+                 Nilainya sengaja di markup: satu kotak = satu tahap = satu
+                 tempat mengubah warnanya. Lihat token --st-* di cs2_css_base. --%>
             <div class="storage-box tip-anchor" id="in-box"
+                 style="--stg:#f59e0b; --stg-soft:#fffbeb; --stg-deep:#92400e;"
                  data-tip="<span class='ct-h'>IN &mdash; masuk dari Storage</span><span class='ct-r'>Komponen yang stoknya masih berada di <b>2KCS</b>, storage awal. Belum bergerak ke lini produksi mana pun.</span><span class='ct-src'>MSKA saldo &middot; cacah komponen</span>">
                 <svg class="ic"><use xlink:href="#fa-warehouse"></use></svg>
                 <div class="storage-num" id="in-num">-</div>
@@ -66,7 +73,8 @@
 
             <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
 
-            <div class="center-box active" id="mc-box">
+            <div class="center-box active" id="mc-box"
+                 style="--stg:#2563eb; --stg-soft:#eff6ff; --stg-deep:#1d4ed8;">
                 <div class="center-header">
                     <span><svg class="ic"><use xlink:href="#fa-table-cells"></use></svg> Machining Center</span>
                 </div>
@@ -90,7 +98,8 @@
             <svg class="ic flow-arrow"><use xlink:href="#fa-arrow-right"></use></svg>
 
             <%-- SATU kartu, DUA area terpisah (permintaan user 2026-08-03) --%>
-            <div class="center-box" id="ebs-box">
+            <div class="center-box" id="ebs-box"
+                 style="--stg:#8b5cf6; --stg-soft:#f5f3ff; --stg-deep:#6d28d9;">
                 <div class="center-header">
                     <span><svg class="ic"><use xlink:href="#fa-border-all"></use></svg> Banding &amp; Sanding</span>
                 </div>
@@ -111,7 +120,10 @@
                         </div>
                         <div class="stage-sloc">IN 22E2 &rarr; OUT 22E3</div>
                     </div>
-                    <div class="stage-area tip-anchor" id="sd-tip">
+                    <%-- Sanding menimpa --stg kartu induknya (ungu) dengan
+                         cyan: satu kartu, dua tahap, dua warna. --%>
+                    <div class="stage-area tip-anchor" id="sd-tip"
+                         style="--stg:#06b6d4; --stg-soft:#ecfeff; --stg-deep:#0e7490;">
                         <div class="stage-name">Sanding</div>
                         <div class="stage-line">
                             <span class="stage-lbl"><span class="dot orange"></span> IN</span>
@@ -137,6 +149,7 @@
                  sini berarti meminjam arti dari sumber lain, dan itu yang
                  dulu membuat kartu OUT selalu 0 tanpa ketahuan. --%>
             <div class="storage-box tip-anchor" id="out-box"
+                 style="--stg:#10b981; --stg-soft:#ecfdf5; --stg-deep:#047857;"
                  data-tip="<span class='ct-h'>OUT &mdash; keluar dari cakupan</span><span class='ct-r'>Kotak ini <b>sengaja tanpa angka</b>. Tidak ada sumber data yang menghitung barang keluar dari enam SLoc yang dipantau.</span><span class='ct-warn'>Kosong berarti TIDAK DIHITUNG, bukan nol. Jangan diisi dengan angka yang artinya dipinjam dari perhitungan lain.</span>">
                 <svg class="ic"><use xlink:href="#fa-box-open"></use></svg>
                 <div>OUT &bull; ke Storage</div>
@@ -156,12 +169,15 @@
         <div class="so-head">
             <h2><svg class="ic"><use xlink:href="#fa-file-invoice"></use></svg> Sales Order
                 <small class="hint">klik untuk menyaring komponen</small></h2>
+            <%-- Warna diambil dari token --st-*, bukan hex lepas: legenda ini,
+                 tab Detail Komponen, dan kartu Lintasan Produksi harus berubah
+                 bersama-sama kalau palet tahap diubah. --%>
             <div class="so-legend">
-                <span><i style="background:#f59e0b"></i>IN</span>
-                <span><i style="background:#2563eb"></i>Machining</span>
-                <span><i style="background:#8b5cf6"></i>Banding</span>
-                <span><i style="background:#06b6d4"></i>Sanding</span>
-                <span><i style="background:#10b981"></i>OUT</span>
+                <span><i style="background:var(--st-in)"></i>IN</span>
+                <span><i style="background:var(--st-mc)"></i>Machining</span>
+                <span><i style="background:var(--st-bd)"></i>Banding</span>
+                <span><i style="background:var(--st-sd)"></i>Sanding</span>
+                <span><i style="background:var(--st-out)"></i>OUT</span>
             </div>
             <div class="so-head-line">
                 <span id="so-buyer-label" class="so-head-buyer">Semua Buyer</span>
@@ -194,10 +210,10 @@
         <%-- Lima tab = lima tahap, warnanya sama dengan bar kartu Sales
              Order supaya mata langsung menghubungkan keduanya. --%>
         <div class="tab-filters">
-            <button class="tab-btn active" data-tab="in"><i style="background:#f59e0b"></i>Central Storage<span class="cnt" id="cnt-in"></span></button>
-            <button class="tab-btn" data-tab="mc"><i style="background:#2563eb"></i>Machining<span class="cnt" id="cnt-mc"></span></button>
-            <button class="tab-btn" data-tab="bd"><i style="background:#8b5cf6"></i>Banding<span class="cnt" id="cnt-bd"></span></button>
-            <button class="tab-btn" data-tab="sd"><i style="background:#06b6d4"></i>Sanding<span class="cnt" id="cnt-sd"></span></button>
+            <button class="tab-btn active" data-tab="in" style="--tb:#f59e0b; --tb-soft:#fffbeb; --tb-deep:#92400e;"><i style="background:var(--st-in)"></i>Central Storage<span class="cnt" id="cnt-in"></span></button>
+            <button class="tab-btn" data-tab="mc" style="--tb:#2563eb; --tb-soft:#eff6ff; --tb-deep:#1d4ed8;"><i style="background:var(--st-mc)"></i>Machining<span class="cnt" id="cnt-mc"></span></button>
+            <button class="tab-btn" data-tab="bd" style="--tb:#8b5cf6; --tb-soft:#f5f3ff; --tb-deep:#6d28d9;"><i style="background:var(--st-bd)"></i>Banding<span class="cnt" id="cnt-bd"></span></button>
+            <button class="tab-btn" data-tab="sd" style="--tb:#06b6d4; --tb-soft:#ecfeff; --tb-deep:#0e7490;"><i style="background:var(--st-sd)"></i>Sanding<span class="cnt" id="cnt-sd"></span></button>
         </div>
 
         <div class="table-wrapper">

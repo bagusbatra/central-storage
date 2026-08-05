@@ -12,15 +12,57 @@
     :root {
         --bg-main: #f0f4f8;
         --bg-card: #ffffff;
+        --bg-subtle: #f8fafc;
         --border-color: #e2e8f0;
+        --border-strong: #cbd5e1;
         --text-main: #334155;
         --text-muted: #64748b;
+        --text-strong: #0f172a;
 
+        /* ---- WARNA SEMANTIK TAHAP — satu-satunya sumber kebenaran ----
+           Dulu lima warna ini ditulis langsung di cs2_body.htm (legenda SO
+           dan tombol tab) sehingga tidak bisa dipakai ulang di kartu center
+           maupun tabel. Sekarang: satu tahap = satu warna di SELURUH halaman.
+             base = solid (garis, titik, bar)
+             soft = latar tint (kartu aktif, tab aktif)
+             deep = teks di atas tint (kontras aman) */
+        --st-in:   #f59e0b;  --st-in-soft:  #fffbeb;  --st-in-deep:  #92400e;
+        --st-mc:   #2563eb;  --st-mc-soft:  #eff6ff;  --st-mc-deep:  #1d4ed8;
+        --st-bd:   #8b5cf6;  --st-bd-soft:  #f5f3ff;  --st-bd-deep:  #6d28d9;
+        --st-sd:   #06b6d4;  --st-sd-soft:  #ecfeff;  --st-sd-deep:  #0e7490;
+        --st-out:  #10b981;  --st-out-soft: #ecfdf5;  --st-out-deep: #047857;
+
+        /* ---- WARNA STATUS — sengaja DIPISAH dari warna tahap.
+           Amber di sini berarti "terpilih/aksi UI", bukan tahap IN. Dua arti
+           yang dulu memakai satu hex sekarang punya nama masing-masing. */
         --color-blue: #2563eb;
         --color-green: #10b981;
         --color-orange: #f59e0b;
         --color-red: #ef4444;
+        --accent: #b45309;
+        --accent-soft: #fef3c7;
 
+        --shadow-sm: 0 1px 2px rgba(15,23,42,.04), 0 1px 3px rgba(15,23,42,.06);
+        --shadow-md: 0 4px 12px rgba(15,23,42,.07), 0 1px 3px rgba(15,23,42,.05);
+        --radius: 10px;
+        --tr: 140ms cubic-bezier(.4,0,.2,1);
+    }
+
+    /* Angka yang berubah saat filter diganti TIDAK boleh melompat lebarnya.
+       Digit proporsional membuat "1.148" lebih sempit dari "2.007". */
+    .card-value, .storage-num, .stage-val, .stk-qty, .so-pct-val {
+        font-variant-numeric: tabular-nums;
+    }
+
+    /* Fokus keyboard: halaman ini dipakai di lantai produksi lewat tablet /
+       keyboard, dan sebelumnya tidak ada indikator fokus sama sekali. */
+    :focus-visible {
+        outline: 2px solid var(--color-blue);
+        outline-offset: 2px;
+        border-radius: 4px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+        * { animation: none !important; transition: none !important; }
     }
 
     * {
@@ -67,12 +109,26 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: #1e40af;              /* Blue-800 */
+        background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 55%, #1d4ed8 100%);
         color: #ffffff;
         padding: 14px 24px;
         border-radius: 0;
         border: none;
         margin: 0;
+        position: relative;
+        box-shadow: var(--shadow-md);
+    }
+    /* Garis 3px berisi urutan tahap: legenda alur produksi yang selalu
+       terlihat, sekaligus pengikat warna untuk seluruh halaman di bawahnya. */
+    .main-header::after {
+        content: "";
+        position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+        background: linear-gradient(90deg,
+            var(--st-in)  0%,   var(--st-in)  20%,
+            var(--st-mc)  20%,  var(--st-mc)  40%,
+            var(--st-bd)  40%,  var(--st-bd)  60%,
+            var(--st-sd)  60%,  var(--st-sd)  80%,
+            var(--st-out) 80%);
     }
     .header-left {
         display: flex;
@@ -80,11 +136,12 @@
         gap: 14px;
     }
     .logo-box {
-        background: #b45309;              /* amber — sengaja tetap, kontras di biru */
+        background: linear-gradient(135deg, #f59e0b, #b45309);
+        box-shadow: 0 2px 8px rgba(180,83,9,.35);
         color: white;
         width: 40px;
         height: 40px;
-        border-radius: 6px;
+        border-radius: 8px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -114,9 +171,16 @@
         font-weight: 600;
         color: #ffffff;
     }
-    /* --color-green (#10b981) terlalu gelap di atas biru — dinaikkan lokal */
+    /* --color-green (#10b981) terlalu gelap di atas biru — dinaikkan lokal.
+       Denyutnya menandakan halaman hidup: satu-satunya animasi berulang di
+       seluruh halaman, dan ia dimatikan oleh prefers-reduced-motion. */
     .main-header .status-indicator .dot.green {
         background: #4ade80;
+        animation: hdr-ping 2.4s ease-out infinite;
+    }
+    @keyframes hdr-ping {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(74,222,128,.7); }
+        70%      { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
     }
 
     /* CARD SYSTEM */
@@ -125,32 +189,58 @@
         /* Dua kartu saja sejak 2026-08-04. Lebarnya DIBATASI, bukan 1fr:
            dua kartu yang direntangkan selebar layar terlihat seperti
            panel kosong yang gagal terisi. */
-        grid-template-columns: repeat(2, minmax(200px, 300px));
+        /* dinaikkan dari 300px: angka 26px terasa sesak di kartu 300px */
+        grid-template-columns: repeat(2, minmax(220px, 320px));
         gap: 12px;
     }
     .card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 8px;
-        padding: 12px;
+        border-radius: var(--radius);
+        padding: 14px 14px 14px 16px;
         position: relative;
+        overflow: hidden;
+        box-shadow: var(--shadow-sm);
+        transition: box-shadow var(--tr), transform var(--tr);
     }
+    /* pita kiri 4px — warnanya diatur per kartu lewat --card-accent di markup */
+    .card::before {
+        content: "";
+        position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+        background: var(--card-accent, var(--color-blue));
+    }
+    .card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
     .card-title {
         font-size: 10px;
         font-weight: 600;
         color: var(--text-muted);
+        letter-spacing: .06em;
+        text-transform: uppercase;
         margin-bottom: 4px;
     }
+    /* Ikon abu #cbd5e1 nyaris tak terlihat. Dijadikan chip bertint senada
+       pita kartu, sehingga tetap sekunder tapi tidak hilang. */
     .icon-top-right {
         position: absolute;
-        top: 12px;
-        right: 12px;
-        color: #cbd5e1;
-        font-size: 14px;
+        top: 10px;
+        right: 10px;
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--card-accent-soft, var(--st-mc-soft));
+        color: var(--card-accent, var(--color-blue));
+        font-size: 13px;
+        transition: background var(--tr);
     }
+    .card:hover .icon-top-right { background: var(--bg-subtle); }
     .card-value {
-        font-size: 24px;
+        font-size: 26px;
         font-weight: 700;
+        color: var(--text-strong);
+        letter-spacing: -0.02em;
         margin-bottom: 2px;
     }
     .card-sub {
@@ -170,6 +260,9 @@
     }
     .tip-anchor { cursor: help; }
     .tip-anchor .ic { color: #cbd5e1; }
+    /* chip ikon kartu KPI juga ber-class tip-anchor: warnanya harus ikut
+       --card-accent, bukan abu default di atas. */
+    .icon-top-right.tip-anchor .ic { color: inherit; }
     .ct-h { display: block; font-size: 11px; font-weight: 700; margin-bottom: 6px;
             padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.14); }
     .ct-r { display: block; font-size: 10.5px; color: #cbd5e1; margin-bottom: 4px; }
@@ -183,8 +276,9 @@
     .filter-section {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 8px;
+        border-radius: var(--radius);
         padding: 12px;
+        box-shadow: var(--shadow-sm);
     }
     .filter-header {
         display: flex;
@@ -196,35 +290,46 @@
         color: var(--text-muted);
     }
     .btn-all-buyer {
-        background: #b45309;
+        background: var(--accent);
         color: white;
         border: none;
-        padding: 4px 10px;
-        border-radius: 4px;
+        padding: 5px 12px;
+        border-radius: 999px;
         cursor: pointer;
         font-size: 11px;
+        font-weight: 600;
+        transition: background var(--tr), box-shadow var(--tr);
     }
+    .btn-all-buyer:hover { background: #92400e; box-shadow: 0 2px 8px rgba(180,83,9,.3); }
     .filter-buttons {
         display: flex;
         flex-wrap: wrap;
         gap: 6px;
     }
     .filter-btn {
-        background: #f8fafc;
+        background: var(--bg-subtle);
         border: 1px solid var(--border-color);
-        padding: 6px 10px;
-        border-radius: 4px;
+        padding: 6px 12px;
+        border-radius: 999px;
         font-size: 11px;
         cursor: pointer;
         display: flex;
         gap: 5px;
         align-items: center;
+        transition: background var(--tr), border-color var(--tr),
+                    transform var(--tr), box-shadow var(--tr);
     }
-    .filter-btn:hover { background: #f1f5f9; }
+    .filter-btn:hover {
+        background: #f1f5f9;
+        border-color: var(--border-strong);
+        transform: translateY(-1px);
+    }
     .filter-btn.active {
-        background: #fef3c7;
-        border-color: #d97706;
+        background: var(--accent-soft);
+        border-color: var(--accent);
+        color: var(--st-in-deep);
         font-weight: 600;
+        box-shadow: 0 1px 4px rgba(180,83,9,.18);
     }
     .filter-btn .pct { color: var(--text-muted); font-size: 9px; font-weight: 400; }
 
@@ -232,8 +337,9 @@
     .wip-section {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 8px;
+        border-radius: var(--radius);
         padding: 16px;
+        box-shadow: var(--shadow-sm);
     }
     .section-title-container {
         display: flex;
@@ -274,20 +380,26 @@
         .storage-box { flex: 1 1 100%; }
         #mc-box, #ebs-box { flex: 1 1 100%; }
     }
+    /* --stg / --stg-soft / --stg-deep diset PER KOTAK di cs2_body.htm.
+       Nilai cadangan di bawah dipakai kalau atribut itu hilang, supaya
+       kotak tetap terbaca (abu) alih-alih kehilangan warna sama sekali. */
     .storage-box {
-        border: 1px dashed var(--border-color);
-        border-radius: 6px;
+        border: 1px dashed var(--stg, var(--border-strong));
+        background: var(--stg-soft, var(--bg-subtle));
+        border-radius: var(--radius);
         padding: 12px 10px;
         text-align: center;
         min-width: 118px;
         color: var(--text-muted);
         font-size: 11px;
         cursor: help;
+        transition: background var(--tr), border-color var(--tr), box-shadow var(--tr);
     }
+    .storage-box:hover { box-shadow: var(--shadow-sm); }
     .storage-num {
-        font-size: 20px;
+        font-size: 22px;
         font-weight: 700;
-        color: var(--text-main);
+        color: var(--stg-deep, var(--text-main));
         line-height: 1.1;
         margin-bottom: 2px;
     }
@@ -297,28 +409,36 @@
         margin-top: 3px;
         font-family: monospace;
     }
-    .storage-box .ic { font-size: 16px; margin-bottom: 4px; color: #94a3b8; }
-    .flow-arrow { color: #cbd5e1; font-size: 14px; }
+    .storage-box .ic { font-size: 18px; margin-bottom: 4px; color: var(--stg, #94a3b8); }
+    .flow-arrow { color: var(--border-strong); font-size: 16px; }
     .center-box {
         flex: 1;
-        border: 2px solid var(--border-color);
-        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        /* garis atas = identitas tahap kartu ini */
+        border-top: 3px solid var(--stg, var(--border-strong));
+        border-radius: var(--radius);
         padding: 12px;
-        background: #f8fafc;
+        background: var(--bg-card);
+        box-shadow: var(--shadow-sm);
         cursor: pointer;
         position: relative;
+        transition: box-shadow var(--tr), border-color var(--tr), transform var(--tr);
     }
+    .center-box:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+    /* Kartu terpilih: cincin setebal 2px berwarna tahapnya sendiri.
+       Dulu abu #475569 — terpilih terlihat sama untuk semua center. */
     .center-box.active {
-        border-color: #475569;
-        background: #ffffff;
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+        border-color: var(--stg, var(--border-strong));
+        box-shadow: 0 0 0 2px var(--stg-soft, var(--bg-subtle)), var(--shadow-md);
     }
     .center-header {
         display: flex;
         justify-content: space-between;
-        font-weight: 600;
+        font-weight: 700;
         font-size: 12px;
+        color: var(--stg-deep, var(--text-strong));
     }
+    .center-header .ic { color: var(--stg, var(--text-muted)); }
     .center-header .sub { font-size: 10px; color: var(--text-muted); font-weight: 400; }
     /* ---- satu tahap: antri + selesai + bar + keterangan SLoc ----
        Menggantikan .center-body/.wip-number yang hanya sanggup menampilkan
@@ -326,13 +446,17 @@
        angka (antri & selesai) dengan SLoc-nya masing-masing. */
     .center-body { margin: 8px 0; }
     .stage-area { margin-top: 8px; cursor: help; }
-    .stage-name {
+    /* Dipagari .stage-area: class .stage-name dipakai DUA kali di aplikasi ini
+       — judul tahap di kartu center (di sini) dan nama tahap di baris yang
+       dibentangkan (cs2_css_panel.htm). Panel disisipkan setelah berkas ini,
+       jadi tanpa pagar ini aturan panel yang menang di kedua tempat. */
+    .stage-area .stage-name {
         font-size: 10px;
         font-weight: 700;
-        color: var(--text-main);
+        color: var(--stg-deep, var(--text-main));
         margin-bottom: 5px;
         padding-bottom: 3px;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 2px solid var(--stg, var(--border-color));
     }
     .stage-line {
         display: flex;
@@ -342,7 +466,7 @@
         margin-bottom: 3px;
     }
     .stage-lbl { color: var(--text-muted); display: flex; align-items: center; gap: 5px; }
-    .stage-val { font-weight: 700; font-size: 15px; }
+    .stage-val { font-weight: 700; font-size: 16px; color: var(--text-strong); }
     /* "+?" = riwayat MSEG belum tiba. Sengaja BUKAN angka final: menampilkan
        saldo saja sebagai kalau itu total akan mengecilkan "selesai". */
     .stage-pending { font-size: 10px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
@@ -362,15 +486,18 @@
     }
 
     .progress-bar-container {
-        height: 6px;
-        background: #e2e8f0;
-        border-radius: 3px;
+        height: 7px;
+        background: #eef2f7;
+        border-radius: 4px;
         display: flex;
         overflow: hidden;
     }
-    .pb-done { background-color: var(--color-green); }
-    .pb-wip { background-color: var(--color-blue); }
-    .pb-queue { background-color: var(--color-orange); }
+    /* Lebar bar diisi JS lewat style.width. Transisinya membuat perubahan
+       filter terbaca sebagai pergerakan, bukan lompatan. */
+    .progress-bar-container > div { transition: width 420ms cubic-bezier(.4,0,.2,1); }
+    .pb-done  { background: linear-gradient(90deg, #34d399, var(--st-out)); }
+    .pb-wip   { background: linear-gradient(90deg, #60a5fa, var(--st-mc)); }
+    .pb-queue { background: linear-gradient(90deg, #fbbf24, var(--st-in)); }
 
     .legend-container {
         display: flex;

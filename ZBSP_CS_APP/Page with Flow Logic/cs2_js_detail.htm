@@ -39,11 +39,19 @@ var kompState   = 'idle';   /* idle | load | ok | err | wait */
    meminta ulang ke server. */
 var BOM = {};
 var kompReqSeq  = 0;        /* penanda urutan permintaan — lihat loadKomp() */
+/* Penjaga agar pemulihan 'DPRODKM' tidak berputar tanpa henti.
+   ⚠️ DIRESET setiap kali pengambilan BERHASIL. Kalau tidak, penjaganya
+      berarti "satu kali per pemuatan halaman" — padahal dashboard bisa
+      dibiarkan terbuka berjam-jam, dan kehilangan cache berikutnya tidak
+      akan pernah dipulihkan lagi. */
 var kompRetried = false;
 
 var TAB_NAMA  = { in: 'Central Storage', mc: 'Machining',
                   bd: 'Banding', sd: 'Sanding' };
-var TAB_WARNA = { in: '#f59e0b', mc: '#2563eb', bd: '#8b5cf6', sd: '#06b6d4' };
+/* Token, bukan hex: dipakai sebagai nilai style inline pada bar PROGRES,
+   sehingga warnanya selalu sama dengan tab aktif dan kartu tahapnya. */
+var TAB_WARNA = { in: 'var(--st-in)', mc: 'var(--st-mc)',
+                  bd: 'var(--st-bd)', sd: 'var(--st-sd)' };
 var TAB_URUT  = ['in', 'mc', 'bd', 'sd'];
 /* SLoc milik tiap tahap — dipakai menebalkan baris stok yang termasuk tab
    aktif. Keempatnya punya SLoc; itulah arti "berdasarkan real stock". */
@@ -108,6 +116,7 @@ function loadKomp() {
             }
             KOMP = d.rows || [];
             kompState = 'ok';
+            kompRetried = false;      /* episode gagal selesai — penjaga dilepas */
             renderComponentTable();
         });
 }
@@ -192,13 +201,33 @@ function centerName() {
     return TAB_NAMA[selectedTab] || selectedTab;
 }
 
-/* Umur data, bukan jam render halaman. Keduanya bisa berbeda beberapa menit
-   karena jawaban dilayani dari cache 5 menit — dan selisih itulah yang dulu
-   disembunyikan: halaman menampilkan jam sekarang untuk data yang lama. */
+/* Umur data, bukan jam render halaman — dan umur yang BERJALAN, bukan beku.
+   DATA_AGE adalah umur saat jawaban tiba; waktu yang berlalu sejak itu
+   ditambahkan di sini. Halaman ini tidak menyegarkan datanya sendiri, jadi
+   tanpa penambahan itu ia akan menulis "data 3 menit lalu" selamanya. */
+function usiaDetik() {
+    if (typeof DATA_AGE !== 'number') { return 0; }
+    var lewat = 0;
+    if (DATA_AGE_AT) {
+        lewat = Math.floor(((new Date()).getTime() - DATA_AGE_AT) / 1000);
+        if (lewat < 0) { lewat = 0; }
+    }
+    return DATA_AGE + lewat;
+}
+
 function usiaData() {
-    if (typeof DATA_AGE !== 'number' || DATA_AGE <= 0) { return 'data baru dihitung'; }
-    if (DATA_AGE < 60) { return 'data ' + DATA_AGE + ' detik lalu'; }
-    return 'data ' + Math.floor(DATA_AGE / 60) + ' menit lalu';
+    var d = usiaDetik();
+    if (!DATA_AGE_AT) { return 'memuat data&hellip;'; }
+    var teks;
+    if (d < 60) { teks = 'data ' + d + ' detik lalu'; }
+    else { teks = 'data ' + Math.floor(d / 60) + ' menit lalu'; }
+    /* Lewat TTL berarti cache sudah kedaluwarsa: memuat ulang halaman akan
+       memberi angka baru. Dikatakan, bukan dibiarkan menua diam-diam. */
+    if (d > DATA_TTL) {
+        teks = '<span class="usia-basi">&#9888; ' + teks +
+               ' &mdash; muat ulang halaman untuk angka terbaru</span>';
+    }
+    return teks;
 }
 
 /* Kolom REAL STOCK & SLOC — SLoc dan kuantitasnya digabung satu kolom.

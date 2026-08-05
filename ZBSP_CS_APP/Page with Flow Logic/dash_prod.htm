@@ -175,6 +175,15 @@ IF lv_part = 'komp' OR lv_part = 'bom'.
   lv_fresh     = 'X'.
 ENDIF.
 
+" TTL dikirim ke UI supaya ia tahu kapan sebuah jawaban dianggap basi,
+" TANPA menyalin angkanya ke JavaScript. Menyalin berarti dua sumber
+" kebenaran yang akan berbeda diam-diam begitu lc_ttl diubah.
+" Dipasang di RANGKA, sebelum fragment mana pun menulis keluaran — header
+" harus diset sebelum ada isi.
+DATA lv_ttl_c TYPE string.
+lv_ttl_c = |{ lc_ttl }|.
+response->set_header_field( name = 'X-Data-Ttl' value = lv_ttl_c ).
+
 GET TIME STAMP FIELD lv_now.
 
 " ===== Baca cache =====

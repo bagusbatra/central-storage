@@ -177,10 +177,24 @@ ditandai "ditandai hapus", tidak dibuang.
 
 ### Batas yang tidak boleh dinaikkan diam-diam
 
-`lc_maxso = 500` · `lc_maxkmp = 400` · `lc_maxkm2 = 2000` · `lc_bulan = 3` ·
-`lc_bulan_so = 6` ·
-TTL cache 300 dtk. Kalau terlampaui, UI **wajib** mengatakannya
-(`solist_more`, `solist_done`, `so_old`).
+**Yang masih hidup:**
+
+| Konstanta | Nilai | Membatasi |
+|---|---|---|
+| `lc_maxso` | 500 | panjang daftar SO yang dikirim; sisanya lewat `solist_more` |
+| `lc_bulan` | 3 | umur gerakan (MSEG `budat`) & order (AFPO `gstrp`) |
+| `lc_bulan_so` | 6 | umur Sales Order (`VBAK-ERDAT`) |
+| `lc_ttl` | 300 dtk | umur cache SHARED BUFFER |
+
+Kalau sebuah batas terlampaui, UI **wajib** mengatakannya —
+`solist_more`, `solist_done`, `so_old`.
+
+⚠️ **`lc_maxord`, `lc_maxkmp`, `lc_maxkm2` sudah MATI** — tinggal deklarasi,
+nol pemakai. `lc_maxord` dipakai `part=ops` yang dihapus; dua lainnya dipakai
+`part=komp` versi lama sebelum ia ditulis ulang jadi per-SO. Dokumen ini sempat
+mencantumkan keduanya sebagai batas aktif (2026-08-05) — **itu keliru**.
+`part=komp` sekarang **tanpa batas sama sekali**; aman karena selalu discope ke
+satu SO+Item, tapi itu satu-satunya endpoint tanpa pagar.
 
 ### Daftar objek SE80
 

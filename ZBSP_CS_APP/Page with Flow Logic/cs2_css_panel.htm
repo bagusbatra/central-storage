@@ -31,7 +31,8 @@
     .so-section {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 8px;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
         padding: 16px;
         height: 560px;
         display: flex;
@@ -67,28 +68,36 @@
         padding-right: 4px;
     }
     .so-all-bar {
-        background: #f8fafc;
+        background: linear-gradient(90deg, var(--st-mc-soft), var(--bg-subtle));
         border: 1px solid var(--border-color);
-        border-radius: 4px;
+        border-radius: 6px;
         padding: 6px 12px;
         display: flex;
         justify-content: space-between;
         font-weight: 600;
         font-size: 11px;
+        color: var(--text-strong);
     }
     .so-item-box {
         border: 1px solid var(--border-color);
-        border-radius: 6px;
+        border-radius: 8px;
         padding: 10px 12px;
         background: #ffffff;
         cursor: pointer;
+        transition: border-color var(--tr), background var(--tr),
+                    box-shadow var(--tr), transform var(--tr);
     }
-    .so-item-box:hover { border-color: #94a3b8; background: #f8fafc; }
+    .so-item-box:hover {
+        border-color: var(--border-strong);
+        background: var(--bg-subtle);
+        box-shadow: var(--shadow-sm);
+        transform: translateX(2px);
+    }
     /* SO terpilih -> tabel Detail Komponen menyempit ke SO+Item ini saja */
     .so-item-box.active {
-        border-color: #d97706;
-        background: #fffbeb;
-        box-shadow: inset 3px 0 0 #d97706;
+        border-color: var(--accent);
+        background: var(--st-in-soft);
+        box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
     }
     .so-clear-note {
         font-size: 10px;
@@ -107,13 +116,16 @@
     .so-pct-val { font-weight: 700; }
     .so-progress-bar {
         height: 8px;
-        background: #e2e8f0;
+        background: #eef2f7;
         border-radius: 4px;
         margin: 8px 0;
         display: flex;
         overflow: hidden;
+        /* garis dalam tipis: tanpa ini segmen paling terang (IN amber) terlihat
+           menyatu dengan latar bar dan panjangnya sulit dinilai */
+        box-shadow: inset 0 0 0 1px rgba(15,23,42,.05);
     }
-    .so-bar-part { height: 100%; }
+    .so-bar-part { height: 100%; transition: width 420ms cubic-bezier(.4,0,.2,1); }
     .so-seg-num b { font-weight: 700; }
     .so-legend {
         display: flex;
@@ -137,7 +149,8 @@
     .component-detail-section {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
-        border-radius: 8px;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
         padding: 16px;
         height: 560px;
         display: flex;
@@ -163,11 +176,21 @@
     }
     .search-box-container input {
         width: 100%;
-        padding: 5px 8px 5px 26px;
+        padding: 6px 8px 6px 26px;
         border: 1px solid var(--border-color);
-        border-radius: 4px;
+        border-radius: 999px;
         font-size: 11px;
         outline: none;
+        background: var(--bg-subtle);
+        transition: border-color var(--tr), background var(--tr), box-shadow var(--tr);
+    }
+    .search-box-container input:hover { border-color: var(--border-strong); }
+    /* outline dimatikan di atas, jadi keadaan fokus HARUS digambar di sini —
+       kalau tidak, kotak cari jadi satu-satunya kontrol tanpa tanda fokus. */
+    .search-box-container input:focus {
+        background: var(--bg-card);
+        border-color: var(--color-blue);
+        box-shadow: 0 0 0 3px rgba(37,99,235,.12);
     }
     .tab-filters {
         display: flex;
@@ -186,12 +209,13 @@
     /* ---- kolom PROGRES: Qty Del terhadap Qty Target ---- */
     .qty-bar {
         height: 7px;
-        background: #e2e8f0;
+        background: #eef2f7;
         border-radius: 4px;
         overflow: hidden;
         margin-bottom: 3px;
+        box-shadow: inset 0 0 0 1px rgba(15,23,42,.05);
     }
-    .qty-bar span { display: block; height: 100%; }
+    .qty-bar span { display: block; height: 100%; transition: width 420ms cubic-bezier(.4,0,.2,1); }
     .qty-pct { font-size: 10px; color: var(--text-muted); }
     /* ---- kolom REAL STOCK & SLOC ----
        SLoc dan qty digabung dalam satu kolom; satu baris per SLoc karena
@@ -211,8 +235,13 @@
     }
     /* SLoc yang termasuk tahap tab aktif ditebalkan — sisanya tetap
        ditampilkan supaya posisi barang terlihat utuh, bukan sepotong. */
-    .stk-line.here .stk-loc { background: #f1f5f9; color: #1e293b; font-weight: 700; }
-    .stk-qty { font-weight: 600; color: #1e293b; white-space: nowrap; }
+    .stk-line.here .stk-loc {
+        background: var(--st-mc-soft);
+        color: var(--st-mc-deep);
+        font-weight: 700;
+        box-shadow: inset 0 0 0 1px #dbeafe;
+    }
+    .stk-qty { font-weight: 600; color: var(--text-strong); white-space: nowrap; }
     .stk-none { font-size: 10px; color: var(--text-muted); }
 
     /* ---- kolom JADWAL ---- */
@@ -221,9 +250,9 @@
     .jw-ok    { color: var(--text-muted); }
     .jw-date  { font-size: 9px; color: var(--text-muted); font-family: monospace; display: block; }
     /* ---- baris BOM yang dibentangkan (mirip daftar Components COOIS) ---- */
-    .comp-row { cursor: pointer; }
-    .comp-row:hover { background: #f8fafc; }
-    .comp-row.open { background: #fffbeb; }
+    .comp-row { cursor: pointer; transition: background var(--tr); }
+    .comp-row:hover { background: var(--st-mc-soft); }
+    .comp-row.open { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
     .caret {
         display: inline-block;
         width: 10px;
@@ -262,6 +291,8 @@
         padding: 1px 4px;
     }
 
+    .usia-basi { color: #b45309; font-weight: 600; }
+
     .komp-empty {
         text-align: center;
         color: var(--text-muted);
@@ -269,6 +300,10 @@
         font-size: 11px;
         line-height: 1.7;
     }
+    /* Tab aktif memakai warna TAHAP-nya sendiri (--tb* diset di cs2_body.htm),
+       bukan amber seragam. Dengan begitu tab "Banding" yang aktif berwarna
+       sama persis dengan kartu Banding di Lintasan Produksi dan segmen ungu
+       di bar Sales Order — tiga tempat, satu warna, satu arti. */
     .tab-btn {
         background: transparent;
         border: none;
@@ -276,12 +311,15 @@
         font-size: 11px;
         cursor: pointer;
         color: var(--text-muted);
-        border-radius: 4px;
+        border-radius: 999px;
+        transition: background var(--tr), color var(--tr), box-shadow var(--tr);
     }
+    .tab-btn:hover { background: var(--bg-subtle); color: var(--text-main); }
     .tab-btn.active {
-        background: #fef3c7;
-        color: #b45309;
-        font-weight: 600;
+        background: var(--tb-soft, var(--accent-soft));
+        color: var(--tb-deep, var(--accent));
+        font-weight: 700;
+        box-shadow: inset 0 0 0 1px var(--tb, var(--accent));
     }
     .table-wrapper {
         flex: 1 1 auto;
@@ -299,9 +337,14 @@
         font-size: 10px;
         font-weight: 600;
         color: var(--text-muted);
+        letter-spacing: .04em;
         border-bottom: 1px solid var(--border-color);
         position: sticky;
         top: 0;
+        z-index: 1;
+        /* Tanpa bayangan, baris yang tergulir tampak "menempel" pada header
+           sticky dan sulit dibedakan dari barisnya sendiri. */
+        box-shadow: 0 1px 0 var(--border-color), 0 4px 6px -4px rgba(15,23,42,.12);
     }
     .component-table td {
         padding: 10px 12px;
@@ -309,6 +352,17 @@
         font-size: 11px;
         vertical-align: middle;
     }
+    /* Zebra SANGAT halus (#fbfcfe): cukup untuk memandu mata menyusuri baris
+       selebar enam kolom, tidak cukup untuk terlihat sebagai warna.
+
+       Pemilih anak-langsung ( > ) WAJIB: tabel BOM yang dibentangkan bersarang
+       di dalam td tabel ini, jadi pemilih keturunan biasa akan ikut menyetrip
+       baris BOM di atas latar .stage-cell.
+       Dua baris berikutnya menaikkan kekhususan hover/open supaya tidak kalah
+       oleh zebra — :nth-child menambah satu tingkat kekhususan. */
+    .component-table > tbody > tr:nth-child(even) { background: #fbfcfe; }
+    .component-table > tbody > tr.comp-row:hover { background: var(--st-mc-soft); }
+    .component-table > tbody > tr.comp-row.open  { background: var(--accent-soft); }
     .comp-name { font-weight: 600; display: block; color: #1e293b; }
     /* block, bukan inline: di kolom SO/ITEM baris atasnya bukan .comp-name
        sehingga tanpa ini keduanya menempel jadi "0010440item 000010". */
@@ -323,15 +377,17 @@
         display: inline-block;
     }
     .status-badge {
-        padding: 3px 8px;
-        border-radius: 4px;
+        padding: 3px 9px;
+        border-radius: 999px;
         font-size: 10px;
+        font-weight: 600;
+        letter-spacing: .02em;
         display: inline-block;
         border: 1px solid transparent;
     }
-    .status-badge.antri { background: #fff7ed; border-color: #ffedd5; color: #c2410c; }
-    .status-badge.dikerjakan { background: #eff6ff; border-color: #dbeafe; color: #1d4ed8; }
-    .status-badge.selesai { background: #ecfdf5; border-color: #d1fae5; color: #047857; }
+    .status-badge.antri { background: var(--st-in-soft); border-color: #fde68a; color: var(--st-in-deep); }
+    .status-badge.dikerjakan { background: var(--st-mc-soft); border-color: #bfdbfe; color: var(--st-mc-deep); }
+    .status-badge.selesai { background: var(--st-out-soft); border-color: #a7f3d0; color: var(--st-out-deep); }
 
     .table-footer-note {
         font-size: 10px;
@@ -347,9 +403,9 @@
        membuktikan 86,1% order hanya punya 1 operasi, jadi daftar VORNR
        hampir selalu berisi satu baris dan tidak berguna. Daftar tahap
        menjadikannya peta perjalanan komponen. */
-    .comp-row { cursor: pointer; }
-    .comp-row:hover { background: #f8fafc; }
-    .comp-row.open { background: #fffbeb; }
+    .comp-row { cursor: pointer; transition: background var(--tr); }
+    .comp-row:hover { background: var(--st-mc-soft); }
+    .comp-row.open { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
     .caret {
         display: inline-block;
         width: 10px;
@@ -372,8 +428,9 @@
         line-height: 16px;
         text-align: center;
         border-radius: 50%;
-        background: #e2e8f0;
-        color: #475569;
+        background: var(--st-mc-soft);
+        color: var(--st-mc-deep);
+        box-shadow: inset 0 0 0 1px #dbeafe;
         font-size: 9px;
         font-weight: 700;
         margin-right: 6px;

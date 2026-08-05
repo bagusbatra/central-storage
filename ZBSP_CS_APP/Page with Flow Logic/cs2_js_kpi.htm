@@ -18,7 +18,9 @@
    ==================================================================== */
 /* onOk(data, umurDetik). umurDetik = 0 kalau jawaban baru dihitung; > 0
    kalau dilayani dari cache. Dibaca dari header X-Data-Age, bukan dari isi
-   JSON — lihat alasannya di dash_prod.htm. */
+   JSON — lihat alasannya di dash_prod.htm.
+   X-Data-Ttl ikut dibaca supaya UI tahu kapan jawaban dianggap basi tanpa
+   menyalin angka lc_ttl ke sini. */
 function kpiGet(url, onOk) {
     var x = window.XMLHttpRequest ? new XMLHttpRequest()
                                   : new ActiveXObject('Microsoft.XMLHTTP');
@@ -26,7 +28,11 @@ function kpiGet(url, onOk) {
     x.onreadystatechange = function () {
         if (x.readyState !== 4) { return; }
         var umur = 0;
-        try { umur = parseInt(x.getResponseHeader('X-Data-Age'), 10) || 0; } catch (e) { }
+        try {
+            umur = parseInt(x.getResponseHeader('X-Data-Age'), 10) || 0;
+            var t = parseInt(x.getResponseHeader('X-Data-Ttl'), 10);
+            if (t > 0) { DATA_TTL = t; }
+        } catch (e) { }
         if (x.status === 200) {
             try { onOk(eval('(' + x.responseText + ')'), umur); return; } catch (e) { }
         }
@@ -76,10 +82,20 @@ function kpiNum(n) {
    MSEG menambahkan yang PERNAH lewat tapi stoknya sudah nol, sehingga
    angkanya mengikuti pergerakan barang, bukan sekadar memotret posisi.
    ==================================================================== */
-/* Umur data part=stock dalam detik; 0 = baru dihitung. */
+/* Umur data part=stock SAAT TIBA, dalam detik. 0 = baru dihitung.
+   ⚠️ Ini angka BEKU. Umur yang sebenarnya bertambah terus selama halaman
+      dibiarkan terbuka, dan halaman ini TIDAK menyegarkan diri sendiri.
+      Karena itu DATA_AGE_AT mencatat kapan angka ini tiba, dan usiaData()
+      menambahkan waktu yang berlalu sejak saat itu. Tanpa itu, kaki tabel
+      akan menulis "data 3 menit lalu" selamanya — persis kebohongan yang
+      diperbaiki 2026-08-05 pagi, muncul lagi dalam bentuk lain. */
 var DATA_AGE = 0;
+var DATA_AGE_AT = 0;       /* Date.now() saat jawaban tiba */
+var DATA_TTL = 300;        /* diganti nilai sebenarnya dari header X-Data-Ttl */
 
-/* Penjaga satu-kali untuk pemulihan 'DPRODKM' — lihat catatan di part=hist. */
+/* Penjaga agar pemulihan 'DPRODKM' tidak berputar tanpa henti — lihat
+   catatan di part=hist. DIRESET setiap kali part=hist berhasil, sama seperti
+   kompRetried di cs2_js_detail.htm dan dengan alasan yang sama. */
 var histRetried = false;
 
 var LINTASAN = {
@@ -255,6 +271,7 @@ function loadKpi() {
            sudah beberapa menit lalu, sehingga jam yang ditampilkan seolah
            menjanjikan data baru. */
         DATA_AGE = umur;
+        DATA_AGE_AT = (new Date()).getTime();
         renderDetailFooter(-1);
 
         /* Jendela waktu dinyatakan di legenda Lintasan Produksi — di situ
@@ -308,6 +325,7 @@ function loadKpi() {
                             LINTASAN.mcg = h2.mcgone || 0;
                             LINTASAN.bdg = h2.bdgone || 0;
                             LINTASAN.sdg = h2.sdgone || 0;
+                            histRetried = false;
                         } else {
                             LINTASAN.mcg = 0; LINTASAN.bdg = 0; LINTASAN.sdg = 0;
                         }
@@ -324,16 +342,28 @@ function loadKpi() {
             LINTASAN.mcg = h.mcgone || 0;
             LINTASAN.bdg = h.bdgone || 0;
             LINTASAN.sdg = h.sdgone || 0;
+            histRetried = false;      /* episode gagal selesai — penjaga dilepas */
             drawCenters();
         });
     });
 
 }
 
+/* Kaki tabel digambar ulang berkala supaya umur data ikut bertambah.
+   Hanya menyentuh teks — TIDAK ada permintaan jaringan, jadi tidak menambah
+   beban SAP. Halaman sengaja tidak menyegarkan datanya sendiri; yang
+   diperbarui cuma kejujuran angkanya. */
+function mulaiJamUsia() {
+    setInterval(function () {
+        if (DATA_AGE_AT) { renderDetailFooter(-1); }
+    }, 30000);
+}
+
 function boot() {
     tipBindDelegated();
     init();
     loadKpi();
+    mulaiJamUsia();
 }
 
 if (window.addEventListener) {
