@@ -23,8 +23,9 @@ IF lv_part = 'stock'.
       AND sobkz = 'E'
       AND kalab > 0.
 
-  " Buang sample customer
-  TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr, END OF ty_vbak.
+  " Buang sample customer, dan SO yang lebih tua dari lc_bulan_so
+  TYPES: BEGIN OF ty_vbak, vbeln TYPE vbak-vbeln, kunnr TYPE vbak-kunnr,
+                           erdat TYPE vbak-erdat, END OF ty_vbak.
   DATA: lt_vbak  TYPE STANDARD TABLE OF ty_vbak WITH DEFAULT KEY, ls_vbak TYPE ty_vbak,
         lt_vbeln TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY.
   LOOP AT lt_mska INTO ls_mska.
@@ -32,7 +33,7 @@ IF lv_part = 'stock'.
   ENDLOOP.
   SORT lt_vbeln. DELETE ADJACENT DUPLICATES FROM lt_vbeln.
   IF lt_vbeln IS NOT INITIAL.
-    SELECT vbeln kunnr FROM vbak INTO TABLE lt_vbak
+    SELECT vbeln kunnr erdat FROM vbak INTO TABLE lt_vbak
       FOR ALL ENTRIES IN lt_vbeln
       WHERE vbeln = lt_vbeln-table_line.
     SORT lt_vbak BY vbeln.
@@ -46,9 +47,27 @@ IF lv_part = 'stock'.
   DATA: lt_stok TYPE STANDARD TABLE OF ty_stok WITH DEFAULT KEY,
         ls_stok TYPE ty_stok.
 
+  " ⚠️ SO yang lebih tua dari lc_bulan_so DIBUANG DI SINI, sebelum lt_stok
+  "    terbentuk. Karena SELURUH panel halaman ini diturunkan dari lt_stok,
+  "    satu saringan di titik ini otomatis mengecilkan buyer, komponen,
+  "    daftar SO, dan Lintasan Produksi sekaligus — itu memang yang diminta.
+  "
+  " ⚠️ SO yang TIDAK punya baris VBAK tetap DIPERTAHANKAN. Tanpa ERDAT umurnya
+  "    tidak bisa dinilai, dan menyembunyikan data yang tidak bisa dinilai
+  "    lebih berbahaya daripada menampilkannya — sama seperti perlakuan order
+  "    tanpa Bas. start date di Detail Komponen.
+  "
+  " Jumlah SO yang dibuang DICACAH dan dilaporkan lewat so_old.
+  DATA: lt_so_old TYPE STANDARD TABLE OF vbak-vbeln WITH DEFAULT KEY,
+        lv_so_old TYPE i.
   LOOP AT lt_mska INTO ls_mska.
     READ TABLE lt_vbak INTO ls_vbak WITH KEY vbeln = ls_mska-vbeln BINARY SEARCH.
     IF sy-subrc = 0 AND ls_vbak-kunnr = lc_sample.
+      CONTINUE.
+    ENDIF.
+    IF sy-subrc = 0 AND ls_vbak-erdat IS NOT INITIAL
+                    AND ls_vbak-erdat < lv_sofrom.
+      APPEND ls_mska-vbeln TO lt_so_old.
       CONTINUE.
     ENDIF.
     CLEAR ls_stok.
@@ -60,6 +79,8 @@ IF lv_part = 'stock'.
     COLLECT ls_stok INTO lt_stok.
   ENDLOOP.
   SORT lt_stok BY vbeln posnr matnr lgort.
+  SORT lt_so_old. DELETE ADJACENT DUPLICATES FROM lt_so_old.
+  lv_so_old = lines( lt_so_old ).
 
   " Hitung: SO distinct, komponen distinct (vbeln+posnr+matnr), total pcs.
   " lt_stok satu baris per SLoc -> komponen HARUS dihitung dgn deteksi ganti

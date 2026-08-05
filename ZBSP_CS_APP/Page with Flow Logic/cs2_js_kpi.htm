@@ -284,6 +284,8 @@ function loadKpi() {
             SO_DATA = d.solist;
             soMore = d.solist_more || 0;
             soDone = d.solist_done || 0;
+            soOld  = d.so_old || 0;
+            soFrom = d.sofrom || '';
         }
         updateLabels();
         renderSOList();

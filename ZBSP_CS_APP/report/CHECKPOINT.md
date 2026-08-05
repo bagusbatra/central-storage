@@ -155,9 +155,18 @@ ditandai "ditandai hapus", tidak dibuang.
 | `komp` | komponen SATU SO+Item | tidak di-cache (selalu discope) |
 | `bom` | komponen BOM (RESB) SATU order — saat baris dibentangkan | tidak di-cache |
 
-- **Jendela waktu `lc_bulan` = 3 bulan** membatasi MSEG (`budat`) dan AFPO
-  (`gstrp`). ⚠️ **MSKA tidak bisa dibatasi** — saldo stok tidak punya tanggal,
-  dan justru itu query terberat (~15 dtk). Jendelanya dinyatakan di legenda UI
+- **DUA jendela waktu, jangan tertukar:**
+  - `lc_bulan_so` = **6 bulan** — umur Sales Order (`VBAK-ERDAT`). SO yang lebih
+    tua **tidak ditarik sama sekali**. Disaring sebelum `lt_stok` terbentuk,
+    jadi seluruh panel ikut mengecil: buyer, komponen, daftar SO, Lintasan.
+    SO tanpa baris VBAK **tetap dipertahankan** — umurnya tidak bisa dinilai,
+    dan menyembunyikan yang tidak bisa dinilai lebih berbahaya. Jumlah yang
+    dibuang dilaporkan lewat `so_old`
+  - `lc_bulan` = **3 bulan** — umur gerakan & order; membatasi MSEG (`budat`)
+    dan AFPO (`gstrp`)
+- ⚠️ **MSKA tidak bisa dibatasi tanggal** — saldo stok tidak punya tanggal, dan
+  justru itu query terberat (~15 dtk). Jendela SO 6 bulan menguranginya secara
+  tidak langsung, lewat pembuangan baris sesudah SELECT — bukan di WHERE
 - **Umur data** dikirim lewat header `X-Data-Age` (2026-08-05), bukan disisipkan
   ke JSON: jawaban dari cache diteruskan apa adanya
 - `part=hist` & `part=komp` membaca `DPRODKM` dari `part=stock`. Kalau hilang,
@@ -169,8 +178,9 @@ ditandai "ditandai hapus", tidak dibuang.
 ### Batas yang tidak boleh dinaikkan diam-diam
 
 `lc_maxso = 500` · `lc_maxkmp = 400` · `lc_maxkm2 = 2000` · `lc_bulan = 3` ·
+`lc_bulan_so = 6` ·
 TTL cache 300 dtk. Kalau terlampaui, UI **wajib** mengatakannya
-(`solist_more`, `solist_done`).
+(`solist_more`, `solist_done`, `so_old`).
 
 ### Daftar objek SE80
 

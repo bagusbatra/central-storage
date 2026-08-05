@@ -42,7 +42,11 @@
 *&    masih ada di git kalau suatu saat dibutuhkan lagi.
 *&
 *& ===== JENDELA WAKTU =====
-*& lc_bulan (3) membatasi DUA query terberat:
+*& DUA jendela, jangan tertukar:
+*&   lc_bulan_so (6) — umur SALES ORDER (VBAK-ERDAT). SO yang lebih tua
+*&                     tidak ditarik sama sekali, jadi seluruh angka halaman
+*&                     ikut mengecil: buyer, komponen, SO, Lintasan.
+*&   lc_bulan (3)    — umur GERAKAN & ORDER, membatasi dua query terberat:
 *&   part=hist  MSEG ⨝ MKPF  -> budat >= awal bulan, 3 bulan ke belakang
 *&   part=stock AFKO ⨝ AFPO  -> gstrp >= tanggal yang sama
 *& MSKA TIDAK bisa dibatasi: saldo stok tidak punya tanggal sama sekali.
@@ -69,7 +73,7 @@
 *& ===== BENTUK JAWABAN =====
 *&   part=stock -> {"ok":1,"komp":n,"pcs":n,"so":n,"buyers":n,
 *&                  "in":n,"mcq":n,"mcd":n,"bdq":n,"bdd":n,"sdq":n,"sdd":n,
-*&                  "dfrom":"YYYYMMDD",
+*&                  "dfrom":"YYYYMMDD","sofrom":"YYYYMMDD","so_old":n,
 *&                  "solist_more":n,"solist_done":n,
 *&                  "solist":[{so,item,bid,buyer,komp,pcs,in,mc,bd,sd,dn}],
 *&                  "buyer":[{id,name,pct,komp,so}],"ms":n}
@@ -107,7 +111,12 @@ CONSTANTS: lc_werks  TYPE werks_d    VALUE '2000',
            " Jendela waktu data (ketetapan user 2026-08-04). Dipakai MSEG
            " (part=hist) dan AFKO-GSTRP (part=stock). Menaikkannya berarti
            " menaikkan beban query — ubah sadar-sadar, jangan diam-diam.
-           lc_bulan  TYPE i          VALUE 3.
+           lc_bulan  TYPE i          VALUE 3,
+           " Umur Sales Order. SO yang dibuat lebih lama dari ini TIDAK
+           " ditarik sama sekali (ketetapan user 2026-08-05). BEDA dengan
+           " lc_bulan di atas: yang itu membatasi GERAKAN & ORDER, yang ini
+           " membatasi SO-nya. Dua jendela berbeda, sengaja.
+           lc_bulan_so TYPE i        VALUE 6.
 
 TYPES: BEGIN OF ty_soit,
          vbeln TYPE mska-vbeln,
@@ -243,6 +252,20 @@ ELSE.
   lv_yy = lv_yy - 1.
 ENDIF.
 lv_dfrom = lv_yy && lv_mm && '01'.
+
+" Batas bawah umur Sales Order — cara hitung sama, jendela berbeda.
+DATA: lv_sofrom TYPE d,
+      lv_syy    TYPE n LENGTH 4,
+      lv_smm    TYPE n LENGTH 2.
+lv_syy = sy-datum(4).
+lv_smm = sy-datum+4(2).
+IF lv_smm > lc_bulan_so.
+  lv_smm = lv_smm - lc_bulan_so.
+ELSE.
+  lv_smm = lv_smm + 12 - lc_bulan_so.
+  lv_syy = lv_syy - 1.
+ENDIF.
+lv_sofrom = lv_syy && lv_smm && '01'.
 
 " Header di-set SEKARANG, sebelum fragment mana pun disisipkan. Setelah
 " pemecahan, tiap fragment yang dilewati bisa menyumbang keluaran kosong;

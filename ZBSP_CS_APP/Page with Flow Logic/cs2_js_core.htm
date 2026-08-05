@@ -42,6 +42,10 @@ var soMore = 0;
    (ketetapan user 2026-08-04). Dicacah supaya bisa dikatakan, bukan
    dihilangkan diam-diam. */
 var soDone = 0;
+/* SO yang lebih tua dari jendela lc_bulan_so — disaring di server. Dicacah
+   supaya bisa dikatakan, bukan dihilangkan diam-diam. */
+var soOld  = 0;
+var soFrom = '';
 var searchQuery = '';
 
 /* Sales Order yang sedang dipilih; null = belum ada, dan Detail Komponen
@@ -226,9 +230,11 @@ function renderSOList() {
     if (shown === 0) {
         soListContainer.innerHTML =
             '<div style="padding:16px; text-align:center; color:var(--text-muted); font-size:11px;">' +
-            (soDone > 0
-                ? 'Tidak ada Sales Order yang masih berjalan.<br>' + kpiNum(soDone) +
-                  ' SO+Item sudah selesai dan tidak ditampilkan.'
+            (soDone > 0 || soOld > 0
+                ? 'Tidak ada Sales Order yang masih berjalan.' +
+                  (soDone > 0 ? '<br>' + kpiNum(soDone) + ' SO+Item sudah selesai.' : '') +
+                  (soOld > 0 ? '<br>' + kpiNum(soOld) + ' SO lebih tua dari jendela ' +
+                               (soFrom ? tglPanjang(soFrom) : '') + '.' : '')
                 : 'Tidak ada Sales Order yang cocok') +
             '</div>';
         return;
@@ -246,8 +252,17 @@ function renderSOList() {
         soListContainer.appendChild(note);
     }
 
-    /* Yang disaring karena sudah selesai dikatakan terpisah dari yang
-       terpotong batas — dua sebab berbeda, jangan digabung jadi satu angka. */
+    /* Tiga sebab berbeda kenapa sebuah SO tidak terlihat: sudah selesai,
+       terpotong batas, atau lebih tua dari jendela. Dikatakan TERPISAH —
+       digabung jadi satu angka, tidak ada yang tahu harus berbuat apa. */
+    if (soOld > 0) {
+        var oldNote = document.createElement('div');
+        oldNote.style.cssText = 'font-size:10px; color:var(--text-muted); margin-top:6px;' +
+            'padding-top:6px; border-top:1px dashed var(--border-color);';
+        oldNote.innerHTML = kpiNum(soOld) + ' Sales Order lebih tua dari ' +
+            (soFrom ? tglPanjang(soFrom) : 'jendela') + ' tidak ditarik.';
+        soListContainer.appendChild(oldNote);
+    }
     if (soDone > 0) {
         var doneNote = document.createElement('div');
         doneNote.style.cssText = 'font-size:10px; color:var(--text-muted); margin-top:6px;' +
